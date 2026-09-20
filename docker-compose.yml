@@ -1,0 +1,102 @@
+# Manzi Junior — stack complète 24/7 sur un seul VPS.
+#   docker compose up -d --build
+#   docker compose logs -f orchestrator
+#   docker compose exec orchestrator node dist/cli.js seo_daily   # test manuel
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: manzi
+      POSTGRES_USER: manzi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manzi -d manzi"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    # Jamais exposé sur l'hôte : accessible uniquement depuis le réseau interne.
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sandbox
+    container_name: manzi-sandbox
+    restart: unless-stopped
+    init: true
+    volumes:
+      - work:/work
+    tmpfs:
+      - /tmp:size=2g
+    # Durcissement : pas de privilèges, capacités vidées, RAM/CPU bornés.
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2
+    # Sortie internet nécessaire (npm, git, sites à scraper) mais isolé de la DB.
+    networks: [egress]
+    # Accès au tunnel SSH inverse de ton Chrome (BROWSER_CDP_URL=http://host.docker.internal:9222).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.orchestrator
+    container_name: manzi-orchestrator
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://manzi:${POSTGRES_PASSWORD}@db:5432/manzi
+      SANDBOX_CONTAINER: manzi-sandbox
+      MCP_CONFIG_PATH: /app/mcp.json
+    volumes:
+      - ./agent/mcp.json:/app/mcp.json:ro
+      - ./secrets:/secrets:ro
+      # Accès au démon Docker uniquement pour `docker exec` vers le sandbox.
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
+    depends_on:
+      db:
+        condition: service_healthy
+      sandbox:
+        condition: service_started
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:8787:8787"   # /healthz, local uniquement (Uptime Kuma / curl)
+    networks: [internal, egress]
+
+  # Sauvegarde quotidienne de la mémoire (dump gzip, rotation 14 jours).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          pg_dump -h db -U manzi manzi | gzip > /backups/manzi-$(date +%F).sql.gz
+          find /backups -name '*.sql.gz' -mtime +14 -delete
+          sleep 86400
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+volumes:
+  pgdata:
+  work:
+
+networks:
+  internal:
+    internal: true   # aucune route vers l'extérieur
+  egress:

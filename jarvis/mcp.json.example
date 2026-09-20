@@ -1,0 +1,26 @@
+{
+  "servers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://api.githubcopilot.com/mcp/", "--header", "Authorization: Bearer ${GITHUB_TOKEN}"],
+      "allow": ["list_issues", "get_issue", "create_issue", "list_pull_requests", "get_pull_request", "list_commits", "search_code"]
+    },
+    "vercel": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.vercel.com", "--header", "Authorization: Bearer ${VERCEL_TOKEN}"],
+      "allow": ["list_projects", "list_deployments", "get_deployment", "get_deployment_build_logs"]
+    },
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "env": { "GMAIL_OAUTH_PATH": "${HOME}/.jarvis/gcp-oauth.keys.json", "GMAIL_CREDENTIALS_PATH": "${HOME}/.jarvis/gmail-credentials.json" },
+      "allow": ["search_emails", "read_email", "draft_email", "send_email", "modify_email"]
+    },
+    "gcal": {
+      "command": "npx",
+      "args": ["-y", "@cocal/google-calendar-mcp"],
+      "env": { "GOOGLE_OAUTH_CREDENTIALS": "${HOME}/.jarvis/gcp-oauth.keys.json" },
+      "allow": ["list-calendars", "list-events", "search-events", "get-freebusy", "create-event", "update-event", "delete-event"]
+    }
+  }
+}

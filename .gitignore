@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# manzi junior
+!.env.example
+/secrets/
+/backups/
+/agent/dist/
+/agent/mcp.json
+node_modules/
+/jarvis/.venv/
+__pycache__/
+*.sqlite
+/jarvis/.env
+/jarvis/mcp.json
