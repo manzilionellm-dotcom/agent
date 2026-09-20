@@ -8,10 +8,11 @@ import { makeSandboxTools } from "../tools/sandbox.js";
 import { makeCoderTool } from "../tools/coder.js";
 import { makeGitTools } from "../tools/git.js";
 import { webSearchTool, webFetchTool, makeScrapeTool } from "../tools/web.js";
-import { xSearchTool } from "../tools/x.js";
+import { xProfileTool } from "../tools/x.js";
 import { searchTools } from "../tools/search.js";
 import { makeAuditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
+import { makeBrowserTool } from "../tools/browser.js";
 
 /**
  * Dix rôles. Chacun a : un modèle, un niveau d'effort, un budget, ses outils,
@@ -36,7 +37,7 @@ export type RoleName =
 export type Role = {
   name: RoleName;
   description: string;
-  model: "planner" | "worker";
+  model: "planner" | "worker" | "critical";
   effort: Effort;
   budgetUsd: number;
   maxIterations: number;
@@ -67,7 +68,7 @@ export const ROLES: Record<RoleName, Role> = {
     needsSandbox: false,
     mcpServers: [],
     system: `${BASE_RULES}\nRôle : chercheur. Triangule chaque affirmation sur 2 sources minimum ; date toutes les données.`,
-    tools: (c) => [...core("researcher"), ...claudeWeb(), ...searchTools(), xSearchTool],
+    tools: (c) => [...core("researcher"), ...claudeWeb(), ...searchTools(), xProfileTool, makeBrowserTool(c)],
   },
   scraper: {
     name: "scraper",
@@ -79,7 +80,7 @@ export const ROLES: Record<RoleName, Role> = {
     needsSandbox: true,
     mcpServers: [],
     system: `${BASE_RULES}\nRôle : scraper. Retourne des données STRUCTURÉES (JSON) avec URL source et horodatage par champ. Respecte robots.txt ; un site qui bloque est signalé, pas forcé.`,
-    tools: (c) => [...core("scraper"), ...claudeWeb(), ...searchTools(), makeScrapeTool(c), ...makeSandboxTools(c).all],
+    tools: (c) => [...core("scraper"), ...claudeWeb(), ...searchTools(), makeScrapeTool(c), makeBrowserTool(c), ...makeSandboxTools(c).all],
   },
   competitor_watch: {
     name: "competitor_watch",
@@ -91,7 +92,7 @@ export const ROLES: Record<RoleName, Role> = {
     needsSandbox: false,
     mcpServers: [],
     system: `${BASE_RULES}\nRôle : veille concurrentielle. Compare systématiquement avec l'état précédent en mémoire (recall_facts) et ne remonte que les DELTAS.`,
-    tools: () => [...core("competitor_watch"), ...claudeWeb(), ...searchTools(), xSearchTool, alertTool],
+    tools: () => [...core("competitor_watch"), ...claudeWeb(), ...searchTools(), xProfileTool, alertTool],
   },
   seo_writer: {
     name: "seo_writer",
@@ -108,7 +109,7 @@ export const ROLES: Record<RoleName, Role> = {
   coder: {
     name: "coder",
     description: "Implémentation de code dans le dépôt, tests verts, commits atomiques sur une branche dédiée.",
-    model: "planner",
+    model: "critical",
     effort: "high",
     budgetUsd: 4,
     maxIterations: 40,
@@ -127,12 +128,12 @@ export const ROLES: Record<RoleName, Role> = {
     needsSandbox: true,
     mcpServers: ["github"],
     system: `${BASE_RULES}\nRôle : QA. Tu ne modifies pas le code ; tu exécutes, tu lis, tu rapportes. Verdict binaire en tête du <result> : GO ou NO-GO, avec preuves (sorties de commandes).`,
-    tools: (c) => [...core("qa"), ...makeSandboxTools(c).all, makeGitTools(c).ensureRepo, makeAuditTool(c)],
+    tools: (c) => [...core("qa"), ...makeSandboxTools(c).all, makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c)],
   },
   publisher: {
     name: "publisher",
     description: "Intègre du contenu (articles, données) dans le dépôt au bon format et commit.",
-    model: "worker",
+    model: "critical",
     effort: "medium",
     budgetUsd: 2,
     maxIterations: 40,
@@ -144,7 +145,7 @@ export const ROLES: Record<RoleName, Role> = {
   deployer: {
     name: "deployer",
     description: "Pousse la branche, suit le déploiement Vercel, vérifie les URL en production.",
-    model: "worker",
+    model: "critical",
     effort: "medium",
     budgetUsd: 1,
     maxIterations: 25,

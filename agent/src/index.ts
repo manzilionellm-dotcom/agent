@@ -8,20 +8,23 @@ import { spentToday } from "./memory/store.js";
 import { connectMcpServers, disconnectMcpServers, mcpStatus } from "./mcp/registry.js";
 import { findMission, MISSIONS } from "./missions/index.js";
 import { buildAndDeliverReport } from "./missions/report.js";
-import { launch, startScheduler, withLock } from "./scheduler.js";
+import { launch, startScheduler, stopScheduler, scheduledJobs, withLock, listSchedules } from "./scheduler.js";
 import { runSwarm } from "./swarm/coordinator.js";
 import { sandboxExec } from "./tools/sandbox.js";
+import { handleChat } from "./channels/chat.js";
+import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 
 /**
  * Point d'entrée du démon. Ordre : config → migrations → MCP → sandbox check →
- * scheduler → API HTTP locale.
+ * scheduler (mode manual : rien sans ordre) → API HTTP.
  *
- * API (127.0.0.1 uniquement, Bearer ORCHESTRATOR_TOKEN) — consommée par Jarvis :
+ * API (Bearer ORCHESTRATOR_TOKEN, sauf /healthz et le webhook WhatsApp signé) :
  *   GET  /healthz
- *   GET  /missions                 liste + prochaine exécution
- *   POST /missions/:name           lance une mission (async, 202)
- *   POST /swarm  {objective}       lance un essaim (async, 202) → GET /swarm/:id
- *   GET  /reports/latest           dernier rapport du matin (markdown)
+ *   POST /chat {peer, text}          conversation (Jarvis, curl) — mêmes outils que WhatsApp
+ *   GET  /missions · POST /missions/:name · POST /report
+ *   POST /swarm {objective} · GET /swarm/:id
+ *   GET  /reports/latest · GET /schedules
+ *   GET|POST /whatsapp/webhook       Meta Cloud API ou Twilio (signature vérifiée, liste blanche)
  */
 
 const swarms = new Map<string, { status: "running" | "done" | "failed"; objective: string; result?: unknown; error?: string; startedAt: string }>();
@@ -35,29 +38,85 @@ function authorized(req: IncomingMessage): boolean {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-}
-
 function json(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, jobs: ReturnType<typeof startScheduler>): Promise<void> {
+/* --- WhatsApp ---------------------------------------------------------------- */
+
+async function whatsappWebhook(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const cfg = config();
+  if (!whatsappEnabled()) return json(res, 404, { error: "WhatsApp désactivé" });
+
+  if (req.method === "GET" && cfg.WHATSAPP_PROVIDER === "meta") {
+    // Vérification du webhook par Meta.
+    if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === cfg.WHATSAPP_VERIFY_TOKEN) {
+      res.writeHead(200, { "content-type": "text/plain" });
+      return void res.end(url.searchParams.get("hub.challenge") ?? "");
+    }
+    return json(res, 403, { error: "verify token invalide" });
+  }
+  if (req.method !== "POST") return json(res, 405, {});
+
+  const raw = await readRawBody(req);
+  let inbound;
+  if (cfg.WHATSAPP_PROVIDER === "meta") {
+    if (!verifyMetaSignature(raw, req.headers["x-hub-signature-256"] as string | undefined)) {
+      logger.warn("webhook meta : signature invalide");
+      return json(res, 401, {});
+    }
+    inbound = parseMetaWebhook(JSON.parse(raw.toString("utf8") || "{}"));
+  } else {
+    const params = Object.fromEntries(new URLSearchParams(raw.toString("utf8")));
+    const publicUrl = (cfg.PUBLIC_URL ?? "").replace(/\/$/, "") + url.pathname;
+    if (!verifyTwilioSignature(publicUrl, params, req.headers["x-twilio-signature"] as string | undefined)) {
+      logger.warn("webhook twilio : signature invalide (PUBLIC_URL correct ?)");
+      return json(res, 401, {});
+    }
+    inbound = parseTwilioWebhook(params);
+  }
+  // Répondre 200 tout de suite : Meta/Twilio réessaient sinon, et le raisonnement prend des secondes.
+  res.writeHead(200, { "content-type": cfg.WHATSAPP_PROVIDER === "twilio" ? "text/xml" : "application/json" });
+  res.end(cfg.WHATSAPP_PROVIDER === "twilio" ? "<Response></Response>" : "{}");
+
+  const allowed = allowedNumbers();
+  for (const m of inbound) {
+    if (!allowed.has(m.from)) {
+      logger.warn({ from: m.from }, "whatsapp : numéro non autorisé, ignoré");
+      continue;
+    }
+    void markRead(m.id);
+    void handleChat({ channel: "whatsapp", peer: m.from, text: m.text, extId: m.id })
+      .then((reply) => (reply ? sendWhatsApp(m.from, reply) : undefined))
+      .catch((e) => logger.error({ err: String(e) }, "whatsapp chat"));
+  }
+}
+
+/* --- API ----------------------------------------------------------------------- */
+
+async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/whatsapp/webhook") return whatsappWebhook(req, res, url);
   if (req.method === "GET" && url.pathname === "/healthz") {
     const spent = await spentToday().catch(() => -1);
-    return json(res, spent < 0 ? 500 : 200, { ok: spent >= 0, spentTodayUsd: spent, mcp: mcpStatus(), jobs: jobs.map((j) => ({ pattern: j.getPattern(), next: j.nextRun() })) });
+    return json(res, spent < 0 ? 500 : 200, { ok: spent >= 0, mode: config().AUTONOMY_MODE, spentTodayUsd: spent, mcp: mcpStatus(), whatsapp: config().WHATSAPP_PROVIDER, jobs: scheduledJobs() });
   }
   if (!authorized(req)) return json(res, 401, { error: "Bearer ORCHESTRATOR_TOKEN requis" });
 
-  if (req.method === "GET" && url.pathname === "/missions") {
-    return json(res, 200, MISSIONS.map((m) => ({ name: m.name, cron: m.cron, model: m.model, budgetUsd: m.budgetUsd })));
+  const body = async () => JSON.parse((await readRawBody(req)).toString("utf8") || "{}") as Record<string, unknown>;
+
+  if (req.method === "POST" && url.pathname === "/chat") {
+    const b = await body();
+    const text = typeof b.text === "string" ? b.text : "";
+    const peer = typeof b.peer === "string" && b.peer ? b.peer : "api";
+    if (!text.trim()) return json(res, 400, { error: "text requis" });
+    return json(res, 200, { reply: await handleChat({ channel: "api", peer, text }) });
   }
+  if (req.method === "GET" && url.pathname === "/missions") {
+    return json(res, 200, MISSIONS.map((m) => ({ name: m.name, defaultCron: m.cron, model: m.model, budgetUsd: m.budgetUsd })));
+  }
+  if (req.method === "GET" && url.pathname === "/schedules") return json(res, 200, { mode: config().AUTONOMY_MODE, schedules: await listSchedules(), jobs: scheduledJobs() });
   const mission = url.pathname.match(/^\/missions\/([a-z_]+)$/);
   if (req.method === "POST" && mission) {
     const m = findMission(mission[1]!);
@@ -70,12 +129,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, jobs: ReturnTyp
     return json(res, 202, { started: "report" });
   }
   if (req.method === "POST" && url.pathname === "/swarm") {
-    const body = await readJson(req);
-    const objective = typeof body.objective === "string" ? body.objective.trim() : "";
+    const b = await body();
+    const objective = typeof b.objective === "string" ? b.objective.trim() : "";
     if (objective.length < 10) return json(res, 400, { error: "objective (≥10 caractères) requis" });
     const id = `sw_${Date.now().toString(36)}`;
     swarms.set(id, { status: "running", objective, startedAt: new Date().toISOString() });
-    void runSwarm(objective, { budgetUsd: typeof body.budgetUsd === "number" ? body.budgetUsd : undefined })
+    void runSwarm(objective, { budgetUsd: typeof b.budgetUsd === "number" ? b.budgetUsd : undefined })
       .then((r) => swarms.set(id, { ...swarms.get(id)!, status: "done", result: { merged: r.merged, totalUsd: r.totalUsd, wallSeconds: r.wallSeconds, subtasks: r.results.map((x) => ({ id: x.id, role: x.role, status: x.status, seconds: Math.round(x.seconds), usd: x.usage.usd })) } }))
       .catch((e) => swarms.set(id, { ...swarms.get(id)!, status: "failed", error: String(e) }));
     return json(res, 202, { id });
@@ -94,7 +153,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, jobs: ReturnTyp
 
 async function main(): Promise<void> {
   const cfg = config();
-  logger.info({ tz: cfg.TZ, provider: cfg.LLM_PROVIDER, planner: cfg.MODEL_PLANNER, worker: cfg.MODEL_WORKER, pool: cfg.SANDBOX_POOL || "(défaut)" }, "boot");
+  logger.info({ tz: cfg.TZ, mode: cfg.AUTONOMY_MODE, provider: cfg.LLM_PROVIDER, critical: cfg.LLM_PROVIDER_CRITICAL ?? cfg.LLM_PROVIDER, whatsapp: cfg.WHATSAPP_PROVIDER, pool: cfg.SANDBOX_POOL || "(défaut)" }, "boot");
 
   await migrate();
   await connectMcpServers();
@@ -102,21 +161,22 @@ async function main(): Promise<void> {
   const probe = await sandboxExec("node -v && git --version", { timeoutMs: 20_000 });
   if (probe.code !== 0) logger.error({ probe }, "sandbox injoignable — les missions code échoueront");
   else logger.info({ sandbox: probe.stdout.trim().replace(/\n/g, " ") }, "sandbox OK");
-  if (!cfg.ORCHESTRATOR_TOKEN) logger.warn("ORCHESTRATOR_TOKEN absent : API HTTP désactivée (sauf /healthz)");
+  if (!cfg.ORCHESTRATOR_TOKEN) logger.warn("ORCHESTRATOR_TOKEN absent : API HTTP désactivée (sauf /healthz et webhook)");
 
-  const jobs = startScheduler();
+  await startScheduler();
+  if (cfg.HEARTBEAT_ALERTS) startHeartbeat();
 
   const server = createServer((req, res) => {
-    handle(req, res, jobs).catch((err) => {
+    handle(req, res).catch((err) => {
       logger.error({ err: String(err) }, "http");
-      json(res, 500, { error: "erreur interne" });
+      if (!res.headersSent) json(res, 500, { error: "erreur interne" });
     });
   });
   server.listen(cfg.HEALTH_PORT, "0.0.0.0", () => logger.info({ port: cfg.HEALTH_PORT }, "api"));
 
   const shutdown = async (sig: string) => {
     logger.info({ sig }, "arrêt");
-    for (const j of jobs) j.stop();
+    stopScheduler();
     server.close();
     await disconnectMcpServers();
     await closeDb();
@@ -130,3 +190,37 @@ main().catch((err) => {
   logger.fatal({ err: String(err) }, "boot échoué");
   process.exit(1);
 });
+
+/**
+ * Heartbeat : toutes les heures, vérifie DB + sandbox. Alerte UNE fois quand ça casse,
+ * une fois quand ça revient. Ce n'est pas une mission (aucun LLM, aucune action) : un état de santé.
+ */
+function startHeartbeat(): void {
+  let down = false;
+  const check = async () => {
+    let problem = "";
+    try {
+      await db().query("SELECT 1");
+    } catch (e) {
+      problem = `Postgres injoignable (${String(e).slice(0, 120)})`;
+    }
+    if (!problem) {
+      const p = await sandboxExec("true", { timeoutMs: 15_000 });
+      if (p.code !== 0) problem = `sandbox injoignable (${p.stderr.slice(0, 120)})`;
+    }
+    if (problem && !down) {
+      down = true;
+      logger.error({ problem }, "heartbeat: panne");
+      const msg = `⚠️ Manzi Junior : ${problem}. Les missions échoueront jusqu'à réparation (docker compose ps / logs).`;
+      const to = primaryNumber();
+      if (to) await deliverWhatsApp(to, msg).catch(() => false);
+      const { sendTelegram } = await import("./tools/notify.js");
+      await sendTelegram(msg).catch(() => false);
+    } else if (!problem && down) {
+      down = false;
+      const to = primaryNumber();
+      if (to) await deliverWhatsApp(to, "✅ Manzi Junior : de retour en service.").catch(() => false);
+    }
+  };
+  setInterval(() => void check().catch((e) => logger.error({ err: String(e) }, "heartbeat")), 60 * 60_000).unref();
+}

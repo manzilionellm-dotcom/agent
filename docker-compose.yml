@@ -39,6 +39,8 @@ services:
     cpus: 2
     # Sortie internet nécessaire (npm, git, sites à scraper) mais isolé de la DB.
     networks: [egress]
+    # Accès au tunnel SSH inverse de ton Chrome (BROWSER_CDP_URL=http://host.docker.internal:9222).
+    extra_hosts: ["host.docker.internal:host-gateway"]
 
   orchestrator:
     build:

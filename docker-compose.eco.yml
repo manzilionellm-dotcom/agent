@@ -1,0 +1,36 @@
+# Profil ÉCO — Hetzner CX22 (2 vCPU, 4 Go, ~4 €/mois). Un seul sandbox, limites serrées,
+# tunnel Cloudflare gratuit pour le webhook WhatsApp (aucun port ouvert, pas de domaine requis).
+#   docker compose -f docker-compose.yml -f docker-compose.eco.yml up -d --build
+#   ou : ./install.sh --eco
+services:
+  db:
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30", "-c", "work_mem=4MB"]
+    mem_limit: 256m
+
+  sandbox:
+    mem_limit: 2200m
+    cpus: 1.5
+    tmpfs:
+      - /tmp:size=768m
+
+  orchestrator:
+    mem_limit: 512m
+    environment:
+      SWARM_CONCURRENCY: "3"
+      SWARM_BUDGET_USD: "4"
+      MISSION_BUDGET_USD: "1.5"
+      DAILY_BUDGET_USD: "2.5"
+
+  backup:
+    mem_limit: 128m
+
+  # Webhook WhatsApp exposé via Cloudflare Tunnel (gratuit). Crée un tunnel dans Zero Trust,
+  # route <ton-sous-domaine> → http://orchestrator:8787, mets le token dans CLOUDFLARE_TUNNEL_TOKEN.
+  # Sans domaine : un tunnel « quick » fonctionne aussi (voir docs/ECO.md).
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?définir CLOUDFLARE_TUNNEL_TOKEN dans .env}
+    depends_on: [orchestrator]
+    mem_limit: 64m
+    networks: [internal, egress]

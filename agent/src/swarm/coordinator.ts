@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { runAgent, structured, type Usage } from "../llm.js";
+import { runAgent, structured, resolveModel, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { memoryDigest, agentMemoryRoot, openEpisode, closeEpisode } from "../memory/store.js";
 import { ROLES, roleTools, type RoleName } from "./roles.js";
@@ -79,7 +79,7 @@ export async function planSwarm(objective: string, memory: string): Promise<Swar
   const cfg = config();
   const roles = Object.values(ROLES).map((r) => `- ${r.name}: ${r.description}`).join("\n");
   const { value } = await structured<SwarmPlan>({
-    model: cfg.MODEL_PLANNER,
+    ...resolveModel("planner"),
     system: PLANNER_SYSTEM,
     effort: "high",
     schema: PLAN_SCHEMA,
@@ -166,7 +166,7 @@ export async function runSwarm(objective: string, opts: { budgetUsd?: number; si
         : "";
       const task = `Date: ${new Date().toISOString()}\nSous-tâche ${s.id} — ${s.title}\n\n${s.spec}\n\nCritères d'acceptation:\n${s.acceptance.map((a) => `- ${a}`).join("\n")}${depContext}\n\n<memoire>\n${await memoryDigest(6_000, agentMemoryRoot(s.role))}\n</memoire>`;
       const res = await runAgent({
-        model: role.model === "planner" ? cfg.MODEL_PLANNER : cfg.MODEL_WORKER,
+        ...resolveModel(role.model),
         system: role.system,
         task,
         tools: roleTools(role, container),
@@ -228,7 +228,7 @@ export async function runSwarm(objective: string, opts: { budgetUsd?: number; si
 async function mergeResults(plan: SwarmPlan, results: SubtaskResult[]): Promise<string> {
   const cfg = config();
   const { value } = await structured<{ deliverable: string; human_actions: string[]; open_issues: string[] }>({
-    model: cfg.MODEL_PLANNER,
+    ...resolveModel("planner"),
     system: "Tu es le coordinateur. Fusionne les résultats des sous-agents en UN livrable cohérent, résous les contradictions en citant la source la plus fiable, liste les actions qui exigent une validation humaine et les points ouverts. Français, dense.",
     effort: "high",
     schema: {

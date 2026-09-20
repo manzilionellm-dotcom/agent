@@ -55,8 +55,35 @@ export function priceOf(model: string, u: Anthropic.Beta.Messages.BetaUsage): nu
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
+export type Provider = "anthropic" | "openai_compat";
+export type ModelKind = "planner" | "worker" | "critical" | "chat";
+
+/**
+ * Routage modèle/fournisseur par type de travail.
+ *   planner  : planification, fusion, missions d'analyse       → LLM_PROVIDER / MODEL_PLANNER
+ *   worker   : veille, scraping, tri, rapport                   → LLM_PROVIDER / MODEL_WORKER
+ *   critical : missions qui ÉCRIVENT DU CODE et DÉPLOIENT       → LLM_PROVIDER_CRITICAL / MODEL_CRITICAL
+ *   chat     : conversation WhatsApp                            → LLM_PROVIDER / MODEL_CHAT
+ * Mode éco : DeepSeek partout sauf critical (Claude Sonnet 5).
+ */
+export function resolveModel(kind: ModelKind): { provider: Provider; model: string } {
+  const c = config();
+  switch (kind) {
+    case "critical":
+      return { provider: c.LLM_PROVIDER_CRITICAL ?? c.LLM_PROVIDER, model: c.MODEL_CRITICAL ?? c.MODEL_PLANNER };
+    case "chat":
+      return { provider: c.LLM_PROVIDER, model: c.MODEL_CHAT ?? c.MODEL_WORKER };
+    case "worker":
+      return { provider: c.LLM_PROVIDER, model: c.MODEL_WORKER };
+    default:
+      return { provider: c.LLM_PROVIDER, model: c.MODEL_PLANNER };
+  }
+}
+
 export type AgentRunOptions = {
   model: string;
+  /** Fournisseur pour cet appel ; défaut LLM_PROVIDER. */
+  provider?: Provider;
   system: string;
   /** Instruction de mission (tout le cahier des charges en une fois). */
   task: string;
@@ -71,7 +98,7 @@ export type AgentRunOptions = {
 
 export type AgentRunResult = {
   finalText: string;
-  stopReason: Anthropic.Beta.Messages.BetaMessage["stop_reason"] | "budget_exceeded";
+  stopReason: Anthropic.Beta.Messages.BetaMessage["stop_reason"] | "budget_exceeded" | "loop_detected" | "timeout";
   usage: Usage;
   messages: Anthropic.Beta.Messages.BetaMessageParam[];
 };
@@ -84,7 +111,7 @@ export class BudgetExceededError extends Error {
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const cfg = config();
-  if (cfg.LLM_PROVIDER === "openai_compat") {
+  if ((opts.provider ?? cfg.LLM_PROVIDER) === "openai_compat") {
     const { runOpenAICompat } = await import("./llm/openaiCompat.js");
     return runOpenAICompat(opts);
   }
@@ -113,11 +140,27 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
   let last: Anthropic.Beta.Messages.BetaMessage | undefined;
   let stop: AgentRunResult["stopReason"] = "end_turn";
+  const callCounts = new Map<string, number>();
 
   try {
     for await (const stream of runner) {
       const message = await stream.finalMessage();
       last = message;
+      // Détection de boucle : le même appel d'outil (nom + arguments) 3 fois → on arrête.
+      let looping = false;
+      for (const b of message.content) {
+        if (b.type === "tool_use") {
+          const key = b.name + JSON.stringify(b.input);
+          const n = (callCounts.get(key) ?? 0) + 1;
+          callCounts.set(key, n);
+          if (n >= 3) looping = true;
+        }
+      }
+      if (looping) {
+        logger.warn("boucle détectée : même appel d'outil répété 3 fois — arrêt");
+        stop = "loop_detected";
+        break;
+      }
       usage.iterations += 1;
       usage.inputTokens += message.usage.input_tokens;
       usage.outputTokens += message.usage.output_tokens;
@@ -156,6 +199,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     if (err instanceof BudgetExceededError) {
       return { finalText: textOf(last), stopReason: "budget_exceeded", usage, messages: runner.params.messages };
     }
+    if (opts.signal?.aborted) {
+      logger.warn("mission interrompue (timeout mural ou annulation)");
+      return { finalText: textOf(last), stopReason: "timeout", usage, messages: runner.params.messages };
+    }
     if (err instanceof Anthropic.RateLimitError) {
       logger.error({ err }, "rate limit persistant après retries");
     }
@@ -185,12 +232,13 @@ export function textOf(msg: Anthropic.Beta.Messages.BetaMessage | undefined): st
  */
 export async function structured<T>(opts: {
   model: string;
+  provider?: Provider;
   system: string;
   prompt: string;
   schema: { type: "json_schema"; schema: Record<string, unknown> };
   effort?: Effort;
 }): Promise<{ value: T; usd: number }> {
-  if (config().LLM_PROVIDER === "openai_compat") {
+  if ((opts.provider ?? config().LLM_PROVIDER) === "openai_compat") {
     const { structuredOpenAICompat } = await import("./llm/openaiCompat.js");
     return structuredOpenAICompat<T>({ model: opts.model, system: opts.system, prompt: opts.prompt, schema: opts.schema.schema });
   }

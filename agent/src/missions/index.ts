@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
-import { runAgent, type Effort, type Usage } from "../llm.js";
+import { runAgent, resolveModel, structured, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { OPERATOR_SYSTEM } from "../prompts.js";
 import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, openEpisode, closeEpisode } from "../memory/store.js";
@@ -10,10 +10,11 @@ import { bashTool, readFileTool, writeFileTool } from "../tools/sandbox.js";
 import { coderTool } from "../tools/coder.js";
 import { ensureRepoTool, pushDeployTool } from "../tools/git.js";
 import { webSearchTool, webFetchTool, scrapePageTool } from "../tools/web.js";
-import { xSearchTool } from "../tools/x.js";
+import { xProfileTool } from "../tools/x.js";
 import { searchTools } from "../tools/search.js";
 import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
+import { browserTool } from "../tools/browser.js";
 
 /**
  * Une mission = un cahier des charges + un jeu d'outils + un budget.
@@ -25,7 +26,8 @@ export type Mission = {
   name: string;
   /** cron 5 champs, dans le fuseau TZ de la config. */
   cron: string;
-  model: "planner" | "worker";
+  /** critical = écrit du code et/ou déploie → fournisseur/modèle critiques (Claude en mode éco). */
+  model: "planner" | "worker" | "critical";
   effort: Effort;
   budgetUsd: number;
   maxIterations: number;
@@ -40,7 +42,7 @@ export type MissionContext = { now: Date; memory: string; siteUrl: string; repo:
 const CORE_TOOLS = [memoryTool, rememberFact, recallFacts, taskTool];
 const SANDBOX_TOOLS = [bashTool, readFileTool, writeFileTool];
 const CLAUDE_WEB = () => (config().LLM_PROVIDER === "anthropic" ? [webSearchTool, webFetchTool] : []);
-const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, xSearchTool];
+const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, browserTool, xProfileTool];
 
 export const MISSIONS: Mission[] = [
   {
@@ -55,7 +57,7 @@ export const MISSIONS: Mission[] = [
     task: ({ now }) => `Date: ${now.toISOString()}.
 Mission VEILLE quotidienne (IPTV légal, streaming, SEO, concurrents du comparateur, actualité réglementaire ARCOM/UE).
 1. Relis /memories/veille/sources.md (crée-le s'il n'existe pas avec 10 sources fiables).
-2. Cherche les nouveautés des dernières 24 h : web_search (5-8 requêtes ciblées), x_search (3 requêtes : opérateurs lang:fr -is:retweet min_faves:5).
+2. Cherche les nouveautés des dernières 24 h : web_search (5-8 requêtes ciblées), x_profile (profils X des concurrents et médias listés dans /memories/veille/sources.md ; best-effort, gratuit).
 3. Pour chaque fait nouveau et vérifiable (prix, lancement, panne, décision juridique) : remember_fact avec source et confiance.
 4. Mets à jour /memories/veille/derniers-signaux.md (max 30 lignes, les plus récents en haut).
 5. Propose 3 sujets d'articles SEO à forte intention de recherche, avec mot-clé principal et angle, dans /memories/seo/backlog.md (ajoute, ne remplace pas).
@@ -64,7 +66,7 @@ Critère de succès : au moins 5 faits sourcés enregistrés, backlog SEO enrich
   {
     name: "seo_daily",
     cron: "30 6 * * *",
-    model: "planner",
+    model: "critical",
     effort: "high",
     budgetUsd: 4,
     maxIterations: 60,
@@ -77,6 +79,7 @@ Mission ARTICLE SEO du jour.
 3. Recherche 4-6 sources récentes (web_search/web_fetch). Aucun chiffre sans source.
 4. Rédige l'article (frontmatter complet : title ≤ 60 car., description ≤ 155 car., slug, date, tags, sources). Ajoute 2-3 liens internes vers des pages existantes du site.
    GEO (Generative Engine Optimization, pour être cité par ChatGPT/Perplexity/AI Overviews) : réponse directe dans les 2 premières phrases de chaque H2, entités nommées explicites, chiffres datés et sourcés, FAQ en fin d'article avec schéma FAQPage JSON-LD, auteur identifié, date de mise à jour visible.
+4b. Contrôle d'originalité et de cannibalisation : cherche (web_search/tavily_search) deux phrases distinctives de ton article entre guillemets ; si l'une existe déjà en ligne, reformule. Vérifie qu'aucune page existante du site ne cible déjà le même mot-clé principal (sinon, enrichis l'existante au lieu d'en créer une nouvelle).
 5. Délègue au codeur (delegate_coding_task) l'intégration : fichier au bon format, build (npm run build) vert, lint vert, commit.
 6. git_push_and_deploy et vérifie que l'URL finale répond 200 (web_fetch).
 7. Mets à jour /memories/seo/publies.md (date, slug, mot-clé) et le backlog.
@@ -85,7 +88,7 @@ Critère de succès : article en ligne, build vert, URL vérifiée.`,
   {
     name: "iptv_comparator",
     cron: "0 4 * * 1,4",
-    model: "planner",
+    model: "critical",
     effort: "high",
     budgetUsd: 5,
     maxIterations: 80,
@@ -120,7 +123,7 @@ Critère de succès : zéro e-mail urgent non signalé.`,
   {
     name: "repo_maintenance",
     cron: "0 3 * * 0",
-    model: "planner",
+    model: "critical",
     effort: "high",
     budgetUsd: 4,
     maxIterations: 60,
@@ -164,7 +167,7 @@ Critère de succès : tous les concurrents relevés ou marqués « injoignable �
     budgetUsd: 4,
     maxIterations: 50,
     mcpServers: ["github"],
-    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, auditTool, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool],
+    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, auditTool, browserTool, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool],
     task: ({ now, siteUrl, repo }) => `Date: ${now.toISOString()}. Site: ${siteUrl}. Dépôt: ${repo}.
 Mission AUDIT DE SITE hebdomadaire (technique, SEO, contenu, données structurées, performance, conversion).
 1. site_audit sur la page d'accueil, la page comparateur, 2 articles récents et 1 page profonde (mobile). Desktop sur l'accueil.
@@ -207,7 +210,8 @@ export function findMission(name: string): Mission | undefined {
 
 export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
   const cfg = config();
-  const episodeId = await openEpisode(m.name, { model: m.model, effort: m.effort });
+  const target = resolveModel(m.model);
+  const episodeId = await openEpisode(m.name, { model: target.model, provider: target.provider, effort: m.effort });
   const log = logger.child({ mission: m.name, episode: episodeId });
   log.info("mission démarrée");
 
@@ -222,26 +226,70 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
   const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${m.task(ctx)}\n\n<memoire>\n${ctx.memory}\n</memoire>`;
   const tools = [...m.tools, ...mcpToolsFor(m.mcpServers, { allowIrreversible: m.allowIrreversible })];
 
+  // Timeout mural : une mission qui traîne (site qui ne répond pas, build infini) est arrêtée proprement.
+  const timeout = AbortSignal.timeout(cfg.MISSION_TIMEOUT_MIN * 60_000);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
   try {
     const res = await runAgent({
-      model: m.model === "planner" ? cfg.MODEL_PLANNER : cfg.MODEL_WORKER,
+      model: target.model,
+      provider: target.provider,
       system: OPERATOR_SYSTEM,
       task,
       tools,
       effort: m.effort,
       maxIterations: m.maxIterations,
       budgetUsd: m.budgetUsd,
-      signal: opts.signal,
+      signal,
       onTurn: (msg, usage) => log.info({ stop: msg.stop_reason, iter: usage.iterations, usd: usage.usd.toFixed(3) }, "tour"),
     });
-    const status = res.stopReason === "budget_exceeded" ? "budget" : res.stopReason === "refusal" ? "failed" : "ok";
-    await closeEpisode(episodeId, status, res.finalText, res.usage, status === "ok" ? undefined : `stop=${res.stopReason}`);
-    log.info({ status, usd: res.usage.usd.toFixed(3), iterations: res.usage.iterations }, "mission terminée");
-    return { text: res.finalText, usage: res.usage, status };
+    let status: "ok" | "failed" | "budget" = res.stopReason === "budget_exceeded" ? "budget" : ["refusal", "loop_detected", "timeout"].includes(res.stopReason ?? "") ? "failed" : "ok";
+    let text = res.finalText;
+
+    // Vérification indépendante : un « juge » relit le résumé final contre le cahier des charges.
+    // Il ne peut pas voir ce que l'agent n'a pas rapporté, mais il attrape les missions qui
+    // déclarent « fait » sans preuve (URL, sortie de commande, chiffre). Coût ≈ 0,01 $.
+    if (cfg.VERIFY_MISSIONS && status === "ok") {
+      const verdict = await verify(m, text).catch((e) => (log.warn({ err: String(e) }, "juge indisponible"), undefined));
+      if (verdict) {
+        res.usage.usd += verdict.usd;
+        text += `\n\n<verification>\nscore=${verdict.score}/10 ${verdict.pass ? "PASS" : "FAIL"}\n${verdict.issues.map((i) => `- ${i}`).join("\n") || "- rien à signaler"}\n</verification>`;
+        if (!verdict.pass) {
+          status = "failed";
+          log.warn({ score: verdict.score, issues: verdict.issues }, "mission rejetée par le juge");
+        }
+      }
+    }
+    await closeEpisode(episodeId, status, text, res.usage, status === "ok" ? undefined : `stop=${res.stopReason}`);
+    log.info({ status, usd: res.usage.usd.toFixed(3), iterations: res.usage.iterations, stop: res.stopReason }, "mission terminée");
+    return { text, usage: res.usage, status };
   } catch (err) {
     const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, usd: 0, iterations: 0 };
     await closeEpisode(episodeId, "failed", "", usage, String(err));
     log.error({ err: String(err) }, "mission en erreur");
     return { text: "", usage, status: "failed" };
   }
+}
+
+type Verdict = { score: number; pass: boolean; issues: string[]; usd: number };
+
+/** Juge indépendant (modèle worker, effort bas) : preuves présentes ? critères de succès atteints ? rien d'inventé ? */
+async function verify(m: Mission, finalText: string): Promise<Verdict> {
+  const spec = m.task({ now: new Date(), memory: "", siteUrl: config().SITE_URL ?? "", repo: config().GITHUB_REPO });
+  const { value, usd } = await structured<{ score: number; pass: boolean; issues: string[] }>({
+    ...resolveModel("worker"),
+    effort: "low",
+    system:
+      "Tu es un vérificateur sévère mais juste. On te donne le cahier des charges d'une mission et le compte rendu final de l'agent. Note de 0 à 10 : le critère de succès est-il atteint avec des PREUVES concrètes (URL, sortie de commande, chiffres sourcés, fichiers nommés) ? Un compte rendu qui affirme sans preuve, contredit le cahier des charges, ou contient des chiffres non sourcés est pénalisé. pass = score ≥ 6. Liste les problèmes en une ligne chacun (max 6). Ne juge pas le style.",
+    schema: {
+      type: "json_schema",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["score", "pass", "issues"],
+        properties: { score: { type: "integer", minimum: 0, maximum: 10 }, pass: { type: "boolean" }, issues: { type: "array", items: { type: "string" }, maxItems: 6 } },
+      },
+    },
+    prompt: `<cahier_des_charges>\n${spec.slice(0, 6000)}\n</cahier_des_charges>\n\n<compte_rendu>\n${finalText.slice(0, 12_000) || "(vide)"}\n</compte_rendu>`,
+  });
+  return { ...value, usd };
 }

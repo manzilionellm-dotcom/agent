@@ -85,9 +85,13 @@ export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunRe
   ];
   let finalText = "";
   let stop: AgentRunResult["stopReason"] = "end_turn";
+  const callCounts = new Map<string, number>();
 
   for (let iter = 0; iter < (opts.maxIterations ?? 60); iter++) {
-    if (opts.signal?.aborted) break;
+    if (opts.signal?.aborted) {
+      stop = "timeout";
+      break;
+    }
     const res = await client.chat.completions.create({
       model: opts.model,
       messages,
@@ -113,6 +117,19 @@ export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunRe
 
     if (!msg.tool_calls?.length) {
       if (choice.finish_reason === "length") stop = "max_tokens";
+      break;
+    }
+    let looping = false;
+    for (const call of msg.tool_calls) {
+      if (call.type !== "function") continue;
+      const key = call.function.name + call.function.arguments;
+      const n = (callCounts.get(key) ?? 0) + 1;
+      callCounts.set(key, n);
+      if (n >= 3) looping = true;
+    }
+    if (looping) {
+      logger.warn("boucle détectée (openai_compat) — arrêt");
+      stop = "loop_detected";
       break;
     }
 

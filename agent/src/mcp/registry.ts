@@ -7,6 +7,8 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { z } from "zod";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { untrusted } from "../safety.js";
+import { requestApproval } from "../channels/approvals.js";
 
 /**
  * Registre MCP : chaque serveur (GitHub, Gmail, Google Calendar, Vercel, …)
@@ -73,7 +75,18 @@ export async function connectMcpServers(): Promise<void> {
         const allowed = cfg.allow.length ? tools.filter((t) => cfg.allow.includes(t.name)) : tools;
         // Le SDK MCP type callTool en union (résultat legacy `toolResult`) ; on adapte à l'interface attendue.
         const like: MCPClientLike = { callTool: (p) => client.callTool(p) as Promise<MCPCallToolResultLike> };
-        const runnable: BetaRunnableTool<any>[] = mcpTools(allowed, like).map((t) => Object.assign(t, { name: `${name}__${t.name}` }));
+        const runnable: BetaRunnableTool<any>[] = mcpTools(allowed, like).map((t) => {
+          const original = t.run;
+          const full = `${name}__${t.name}`;
+          // Les contenus lus via MCP (e-mails, issues, pages) sont des données externes.
+          return Object.assign(t, {
+            name: full,
+            run: async (args: Record<string, unknown>, ctx?: unknown) => {
+              const out = await (original as (a: Record<string, unknown>, c?: unknown) => Promise<unknown>)(args, ctx);
+              return typeof out === "string" ? untrusted(full, out) : (out as never);
+            },
+          });
+        });
         connected.set(name, { name, client, cfg, tools: runnable });
         logger.info({ server: name, tools: runnable.map((t) => t.name) }, "mcp connecté");
       } catch (err) {
@@ -95,11 +108,17 @@ export function mcpToolsFor(servers: string[], opts: { allowIrreversible?: boole
     for (const t of c.tools) {
       const bare = t.name.slice(s.length + 2);
       if (c.cfg.confirm.includes(bare) && !opts.allowIrreversible) {
-        const dry = Object.assign({}, t, {
-          run: async (args: Record<string, unknown>) =>
-            `DRY-RUN (outil irréversible non autorisé dans cette mission). Appel prévu: ${t.name}(${JSON.stringify(args).slice(0, 1500)}). Décris cette action dans le rapport pour validation humaine.`,
+        // Outil irréversible : approbation par WhatsApp (code à renvoyer) ; sinon dry-run.
+        const original = t.run;
+        const gated = Object.assign({}, t, {
+          run: async (args: Record<string, unknown>, ctx?: unknown) => {
+            const decision = await requestApproval(t.name, args);
+            if (decision === "approved") return (original as (a: Record<string, unknown>, c?: unknown) => Promise<unknown>)(args, ctx) as never;
+            if (decision === "denied") return "REFUSÉ par l'opérateur. N'insiste pas ; note-le dans le rapport.";
+            return `EN ATTENTE / DRY-RUN (outil irréversible, pas d'approbation reçue). Appel prévu: ${t.name}(${JSON.stringify(args).slice(0, 1500)}). Décris cette action dans le rapport pour validation humaine.`;
+          },
         }) as BetaRunnableTool<any>;
-        out.push(dry);
+        out.push(gated);
       } else {
         out.push(t);
       }

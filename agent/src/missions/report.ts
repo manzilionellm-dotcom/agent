@@ -1,10 +1,11 @@
 import { config } from "../config.js";
-import { structured } from "../llm.js";
+import { structured, resolveModel } from "../llm.js";
 import { logger } from "../logger.js";
 import { REPORT_SYSTEM } from "../prompts.js";
 import { episodesSince, spentToday, saveReport, markReportDelivered, memoryDigest } from "../memory/store.js";
 import { mcpToolsFor } from "../mcp/registry.js";
 import { sendTelegram } from "../tools/notify.js";
+import { deliverWhatsApp, primaryNumber, whatsappEnabled } from "../channels/whatsapp.js";
 
 /**
  * Rapport du matin : un seul appel structuré (pas d'outils, pas de boucle),
@@ -73,12 +74,15 @@ ${episodes.map((e) => `## ${e.mission} — ${e.status} — ${Number(e.usd).toFix
 ${memory}
 </memoire>`;
 
-  const { value, usd } = await structured<Report>({ model: cfg.MODEL_WORKER, system: REPORT_SYSTEM, prompt, schema: SCHEMA, effort: "medium" });
+  const { value, usd } = await structured<Report>({ ...resolveModel("worker"), system: REPORT_SYSTEM, prompt, schema: SCHEMA, effort: "medium" });
   const md = render(value);
   await saveReport(md);
 
-  // Livraison : Gmail via MCP si disponible, Telegram en secours (ou les deux).
+  // Livraison : WhatsApp (canal principal) → Gmail via MCP → Telegram (secours).
   let delivered = false;
+  if (whatsappEnabled() && primaryNumber()) {
+    delivered = await deliverWhatsApp(primaryNumber()!, md).catch((e) => (logger.error({ err: String(e) }, "whatsapp rapport"), false));
+  }
   const gmail = mcpToolsFor(["gmail"], { allowIrreversible: true }).find((t) => /send/i.test(t.name));
   if (gmail && cfg.REPORT_TO_EMAIL) {
     try {

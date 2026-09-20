@@ -31,6 +31,9 @@ ufw --force enable
 echo "== 5. Durcissement SSH + mises à jour auto"
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+# Tunnel inverse du navigateur (BROWSER_CDP_URL) : le port doit écouter sur toutes les interfaces
+# locales du VPS pour être joignable depuis les conteneurs ; ufw bloque l'extérieur.
+grep -q '^GatewayPorts' /etc/ssh/sshd_config && sed -i 's/^GatewayPorts.*/GatewayPorts clientspecified/' /etc/ssh/sshd_config || echo 'GatewayPorts clientspecified' >> /etc/ssh/sshd_config
 systemctl restart ssh || systemctl restart sshd
 dpkg-reconfigure -f noninteractive unattended-upgrades
 

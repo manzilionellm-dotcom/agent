@@ -2,6 +2,8 @@
 
 Objectif : Manzi Junior tourne sans interruption, survit aux redémarrages, ne dépasse pas ton budget, et tu peux tout restaurer en 5 minutes.
 
+> Profil économique (CX22 à 4 €, 25–45 €/mois tout compris, WhatsApp) : voir `docs/ECO.md`. Ce document décrit le profil complet.
+
 ## 0. Installation en une commande
 
 Sur un VPS Debian 12 / Ubuntu 24.04 (ou ta machine Linux/macOS avec Docker) :
@@ -35,7 +37,7 @@ Disque : 40 Go suffisent (images ~4 Go, volumes `/work` ~2 Go par sandbox, sauve
 | `ANTHROPIC_API_KEY` | console.anthropic.com → API keys | clé de workspace dédié « manzi » (limite de dépense mensuelle réglée dans la console) | usage |
 | `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Fine-grained tokens | **1 dépôt**, Contents RW, Pull requests RW, Issues RW, Metadata R. Expiration 90 j. | 0 |
 | `VERCEL_TOKEN` | vercel.com → Account → Tokens | scope = ton équipe/projet ; `VERCEL_PROJECT` = id `prj_…` (Project settings → General) | 0 (Hobby) / 20 $ (Pro) |
-| `X_BEARER_TOKEN` | developer.x.com → projet → App → Keys | plan **Basic** (recent search, 10 000 tweets lus/mois) | ~100 $/mois — vérifier le tarif courant ; le plan Free ne permet pas la lecture |
+| `X_AUTH_TOKEN` (optionnel) | cookie `auth_token` d'un compte X secondaire (DevTools → Application → Cookies) | améliore `x_profile` ; risque de suspension du compte | 0 |
 | `TAVILY_API_KEY` | app.tavily.com | — | gratuit 1 000 crédits/mois, puis ~30 $/mois |
 | `SERPAPI_API_KEY` | serpapi.com | — | gratuit 100 recherches/mois, puis 75 $/mois (5 000) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | @BotFather → nouveau bot ; chat id via @userinfobot | — | 0 |

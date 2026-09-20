@@ -3,6 +3,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { redactSecrets } from "../safety.js";
 
 /**
  * Sandbox : toute exécution de code passe par `docker exec` dans un conteneur
@@ -59,7 +60,7 @@ export function formatExec(r: ExecResult): string {
   const parts = [`exit=${r.code}${r.timedOut ? " (TIMEOUT)" : ""}`];
   if (r.stdout.trim()) parts.push(`--- stdout ---\n${r.stdout.trim()}`);
   if (r.stderr.trim()) parts.push(`--- stderr ---\n${r.stderr.trim()}`);
-  return parts.join("\n");
+  return redactSecrets(parts.join("\n"));
 }
 
 /** Commandes qu'on refuse même dans le sandbox : le coût d'erreur est trop élevé. */

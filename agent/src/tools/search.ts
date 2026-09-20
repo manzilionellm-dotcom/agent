@@ -1,6 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
+import { untrusted } from "../safety.js";
 
 /**
  * Recherche temps réel côté client : Tavily (par défaut) ou SerpAPI.
@@ -43,7 +44,7 @@ export const tavilySearchTool = betaZodTool({
     if (!res.ok) return `Error: Tavily ${res.status} ${await res.text()}`;
     const data = (await res.json()) as { answer?: string; results?: Array<{ title: string; url: string; content: string; published_date?: string; score?: number }> };
     const lines = (data.results ?? []).map((r) => `- ${r.title}${r.published_date ? ` (${r.published_date.slice(0, 10)})` : ""}\n  ${r.url}\n  ${r.content.replace(/\s+/g, " ").slice(0, 500)}`);
-    return `${data.answer ? `Réponse synthétique: ${data.answer}\n\n` : ""}${lines.join("\n") || "aucun résultat"}`;
+    return untrusted("tavily:" + i.query, `${data.answer ? `Réponse synthétique: ${data.answer}\n\n` : ""}${lines.join("\n") || "aucun résultat"}`);
   },
 });
 
@@ -66,7 +67,7 @@ export const tavilyExtractTool = betaZodTool({
     const data = (await res.json()) as { results?: Array<{ url: string; raw_content: string }>; failed_results?: Array<{ url: string; error: string }> };
     const ok = (data.results ?? []).map((r) => `## ${r.url}\n${r.raw_content.slice(0, i.max_chars_per_url)}`);
     const ko = (data.failed_results ?? []).map((r) => `## ${r.url}\nÉCHEC: ${r.error}`);
-    return [...ok, ...ko].join("\n\n") || "aucun contenu";
+    return untrusted(i.urls.join(", "), [...ok, ...ko].join("\n\n") || "aucun contenu");
   },
 });
 
@@ -100,7 +101,7 @@ export const serpapiSearchTool = betaZodTool({
     const org = (data.organic_results ?? []).map((r) => `${r.position}. ${r.title}\n   ${r.link}\n   ${r.snippet ?? ""}${r.date ? ` (${r.date})` : ""}`);
     const news = (data.news_results ?? []).map((r) => `- ${r.title} — ${r.source ?? ""} ${r.date ?? ""}\n  ${r.link}\n  ${r.snippet ?? ""}`);
     const paa = (data.related_questions ?? []).map((q) => `? ${q.question}`);
-    return [org.join("\n"), news.join("\n"), paa.length ? `Questions associées:\n${paa.join("\n")}` : ""].filter(Boolean).join("\n\n") || "aucun résultat";
+    return untrusted("serpapi:" + i.query, [org.join("\n"), news.join("\n"), paa.length ? `Questions associées:\n${paa.join("\n")}` : ""].filter(Boolean).join("\n\n") || "aucun résultat");
   },
 });
 

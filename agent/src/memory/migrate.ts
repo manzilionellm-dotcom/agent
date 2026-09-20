@@ -56,6 +56,30 @@ const MIGRATIONS: string[] = [
      day   DATE PRIMARY KEY,
      usd   NUMERIC(10,4) NOT NULL DEFAULT 0
    )`,
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+     id      BIGSERIAL PRIMARY KEY,
+     channel TEXT NOT NULL,
+     peer    TEXT NOT NULL,
+     role    TEXT NOT NULL,
+     content TEXT NOT NULL,
+     ext_id  TEXT UNIQUE,
+     ts      TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_peer_ts ON chat_messages (peer, ts DESC)`,
+  `CREATE TABLE IF NOT EXISTS schedules (
+     mission    TEXT PRIMARY KEY,
+     cron       TEXT NOT NULL,
+     created_by TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS approvals (
+     code       TEXT PRIMARY KEY,
+     tool       TEXT NOT NULL,
+     args       TEXT NOT NULL,
+     decision   TEXT,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     decided_at TIMESTAMPTZ
+   )`,
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

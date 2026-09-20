@@ -17,6 +17,7 @@ x-sandbox: &sandbox
   mem_limit: 3g
   cpus: 1.5
   networks: [egress]
+  extra_hosts: ["host.docker.internal:host-gateway"]
 
 services:
   sandbox-1:

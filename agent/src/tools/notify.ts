@@ -2,11 +2,11 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { deliverWhatsApp, primaryNumber, whatsappEnabled } from "../channels/whatsapp.js";
 
 /**
- * Livraison du rapport : Telegram (fiable, gratuit, instantané sur mobile)
- * et/ou Gmail via le serveur MCP (outil `gmail_send_email` exposé au modèle).
- * Telegram est le canal de secours : si Gmail échoue, tu reçois quand même.
+ * Canaux de notification. WhatsApp est le canal principal (channels/whatsapp.ts) ;
+ * Telegram reste un secours gratuit et sans fenêtre de 24 h.
  */
 export async function sendTelegram(markdown: string): Promise<boolean> {
   const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = config();
@@ -40,7 +40,10 @@ export const alertTool = betaZodTool({
   }),
   run: async (i) => {
     const icon = i.severity === "critical" ? "🔴" : i.severity === "warning" ? "🟠" : "🔵";
-    const ok = await sendTelegram(`${icon} ${i.title}\n\n${i.body}${i.source_url ? `\n\n${i.source_url}` : ""}`);
-    return ok ? "alerte envoyée" : "Error: Telegram non configuré ou échec d'envoi — note l'alerte dans le rapport";
+    const text = `${icon} ${i.title}\n\n${i.body}${i.source_url ? `\n\n${i.source_url}` : ""}`;
+    let ok = false;
+    if (whatsappEnabled() && primaryNumber()) ok = await deliverWhatsApp(primaryNumber()!, text);
+    if (!ok) ok = await sendTelegram(text);
+    return ok ? "alerte envoyée" : "Error: aucun canal (WhatsApp/Telegram) n'a accepté l'alerte — note-la dans le rapport";
   },
 });

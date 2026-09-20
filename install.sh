@@ -15,8 +15,8 @@ set -euo pipefail
 
 REPO_URL="${MANZI_REPO:-https://github.com/manzilionellm-dotcom/agent.git}"
 DIR="${MANZI_DIR:-$HOME/manzi-junior}"
-SWARM=0; JARVIS=0
-for a in "$@"; do case "$a" in --swarm) SWARM=1;; --jarvis) JARVIS=1;; esac; done
+SWARM=0; JARVIS=0; ECO=0
+for a in "$@"; do case "$a" in --swarm) SWARM=1;; --jarvis) JARVIS=1;; --eco) ECO=1;; esac; done
 
 say() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -65,16 +65,23 @@ if [ "$PROVIDER" = "openai_compat" ]; then
   [ -n "$(val OPENAI_COMPAT_API_KEY)" ] || missing+=(OPENAI_COMPAT_API_KEY)
   [ -n "$(val TAVILY_API_KEY)" ] || [ -n "$(val SERPAPI_API_KEY)" ] || missing+=("TAVILY_API_KEY ou SERPAPI_API_KEY")
 fi
+[ -n "$(val LLM_PROVIDER_CRITICAL)" ] && [ "$(val LLM_PROVIDER_CRITICAL)" = "anthropic" ] && { [ -n "$(val ANTHROPIC_API_KEY)" ] && [ "$(val ANTHROPIC_API_KEY)" != "sk-ant-..." ] || missing+=("ANTHROPIC_API_KEY (missions critiques)"); }
 [ -n "$(val GITHUB_TOKEN)" ] && [ "$(val GITHUB_TOKEN)" != "github_pat_..." ] || missing+=(GITHUB_TOKEN)
+WA=$(val WHATSAPP_PROVIDER); WA=${WA:-none}
+if [ "$WA" = "meta" ]; then for k in WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN WHATSAPP_APP_SECRET WHATSAPP_VERIFY_TOKEN WHATSAPP_ALLOWED_NUMBERS; do [ -n "$(val $k)" ] || missing+=($k); done; fi
+if [ "$WA" = "twilio" ]; then for k in TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_WHATSAPP_FROM PUBLIC_URL WHATSAPP_ALLOWED_NUMBERS; do [ -n "$(val $k)" ] || missing+=($k); done; fi
+if [ $ECO = 1 ]; then [ -n "$(val CLOUDFLARE_TUNNEL_TOKEN)" ] || missing+=("CLOUDFLARE_TUNNEL_TOKEN (webhook WhatsApp, profil éco)"); fi
 if [ ${#missing[@]} -gt 0 ]; then
   printf '\nRenseignez dans %s/.env : %s\n' "$DIR" "${missing[*]}"
-  printf 'Puis relancez :  cd %s && ./install.sh%s%s\n\n' "$DIR" "$([ $SWARM = 1 ] && echo ' --swarm')" "$([ $JARVIS = 1 ] && echo ' --jarvis')"
+  printf 'Puis relancez :  cd %s && ./install.sh%s%s%s\n\n' "$DIR" "$([ $ECO = 1 ] && echo ' --eco')" "$([ $SWARM = 1 ] && echo ' --swarm')" "$([ $JARVIS = 1 ] && echo ' --jarvis')"
   exit 2
 fi
 
 # 5. Build + run ---------------------------------------------------------------
 COMPOSE=(docker compose -f docker-compose.yml)
+[ $ECO = 1 ] && COMPOSE+=(-f docker-compose.eco.yml)
 [ $SWARM = 1 ] && COMPOSE+=(-f docker-compose.swarm.yml)
+[ $ECO = 1 ] && [ $SWARM = 1 ] && die "--eco et --swarm sont incompatibles (4 Go de RAM)"
 say "Construction des images (5-10 min la première fois : Chromium + Claude Code)"
 "${COMPOSE[@]}" build
 say "Démarrage"
@@ -94,6 +101,7 @@ cat <<EOF
   docker compose exec orchestrator node dist/cli.js report   # rapport du matin maintenant
   docker compose exec orchestrator node dist/cli.js swarm "Relever les tarifs de 10 fournisseurs et mettre à jour le comparateur"
   curl -H "Authorization: Bearer \$(grep ORCHESTRATOR_TOKEN .env | cut -d= -f2)" -X POST http://127.0.0.1:8787/missions/veille
+  # WhatsApp : envoie « salut » au numéro du bot ; « planifie la veille tous les jours à 5h » ; « lance l'audit du site »
 EOF
 
 # 7. Jarvis (optionnel, machine avec micro) -------------------------------------

@@ -17,6 +17,10 @@ Risques : prix (5 $/25 $ par M tokens sur Opus 5), dépendance à un fournisseur
 
 **Quand basculer sur DeepSeek / Kimi / Qwen** : missions de volume à faible enjeu (veille, résumés, extraction) où un coût 5 à 10 fois inférieur compte plus qu'une fiabilité de quelques points ; contraintes de souveraineté ; ou comme second avis. Garde Claude pour le code et la fusion : un déploiement cassé coûte plus qu'une nuit de tokens.
 
+## Routage par type de travail (mode éco)
+
+`resolveModel(kind)` dans `agent/src/llm.ts` : `planner`, `worker`, `chat` → `LLM_PROVIDER`/`MODEL_*` ; `critical` (missions `seo_daily`, `iptv_comparator`, `repo_maintenance`, rôles `coder`/`publisher`/`deployer`) → `LLM_PROVIDER_CRITICAL`/`MODEL_CRITICAL`. Le `.env.example` livre DeepSeek pour le premier groupe et Claude Sonnet 5 pour le second : c'est le compromis coût/fiabilité recommandé (le déploiement cassé coûte plus cher que les tokens économisés).
+
 ## Brancher un autre fournisseur
 
 ```env

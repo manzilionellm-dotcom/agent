@@ -3,6 +3,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { sandboxExec, formatExec, shellQuote } from "./sandbox.js";
+import { untrusted } from "../safety.js";
 
 /**
  * Trois niveaux de lecture du web, du moins cher au plus cher :
@@ -55,7 +56,7 @@ const { chromium } = require('playwright');
 })().catch(e => { console.error(String(e)); process.exit(2); });
 `;
     const r = await sandboxExec(`cd ${config().SANDBOX_WORKDIR} && node -e ${shellQuote(script)}`, { timeoutMs: 90_000, container });
-    return r.code === 0 ? r.stdout || "(page vide)" : formatExec(r);
+    return r.code === 0 ? untrusted(i.url, r.stdout || "(page vide)") : formatExec(r);
   },
   });
 }
