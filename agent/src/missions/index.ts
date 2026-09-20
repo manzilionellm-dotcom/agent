@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import { runAgent, resolveModel, structured, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { OPERATOR_SYSTEM } from "../prompts.js";
-import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, openEpisode, closeEpisode } from "../memory/store.js";
+import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, openEpisode, closeEpisode } from "../memory/store.js";
 import { mcpToolsFor } from "../mcp/registry.js";
 import { bashTool, readFileTool, writeFileTool } from "../tools/sandbox.js";
 import { coderTool } from "../tools/coder.js";
@@ -189,9 +189,10 @@ MISSIONS.push({
   budgetUsd: 2,
   maxIterations: 30,
   mcpServers: ["github"],
-  tools: [...CORE_TOOLS, episodesTool, ...SANDBOX_TOOLS, ensureRepoTool, coderTool],
+  tools: [...CORE_TOOLS, episodesTool, feedbackTool, ...SANDBOX_TOOLS, ensureRepoTool, coderTool],
   task: ({ now, repo }) => `Date: ${now.toISOString()}. Dépôt de l'agent: ${repo}.
 Mission RÉFLEXION QUOTIDIENNE — c'est ainsi que tu évolues. Tu n'es pas ré-entraîné ; tu apprends en révisant tes propres consignes de travail.
+0. read_feedback(7 jours) : les 👍/👎 de l'opérateur priment sur ton propre jugement. Un 👎 avec commentaire devient une règle ou un piège dans le playbook concerné.
 1. read_episodes(24h) : pour chaque mission, note ce qui a réussi, ce qui a échoué, ce qui a coûté trop cher ou bouclé (tours > moyenne, budget dépassé, refus, erreurs d'outil répétées).
 2. Pour chaque mission avec au moins un enseignement : mets à jour /memories/playbooks/<mission>.md (crée-le si absent). Format strict, max 25 lignes par playbook :
    - RÈGLES (ce qui marche, à refaire) — avec la preuve (épisode, date)

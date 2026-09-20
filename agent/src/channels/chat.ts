@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import { runAgent, resolveModel } from "../llm.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
-import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, spentToday } from "../memory/store.js";
+import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, captureFeedback, spentToday } from "../memory/store.js";
 import { MISSIONS, findMission } from "../missions/index.js";
 import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
@@ -148,6 +148,12 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   // Réponse à une demande d'approbation (OUI-XXXX / NON-XXXX) : pas de LLM.
   const approval = await handleApprovalReply(text);
   if (approval) return approval;
+  // « bien » / « nul » (+ commentaire) : retour capturé pour la réflexion, sans LLM.
+  const fb = await captureFeedback(opts.peer, text);
+  if (fb) {
+    await db().query(`INSERT INTO chat_messages(channel, peer, role, content) VALUES ($1,$2,'assistant',$3)`, [opts.channel, opts.peer, fb]);
+    return fb;
+  }
   // Limite de débit par numéro : un téléphone volé ou un webhook rejoué ne vide pas le budget.
   const recent = await db().query<{ n: string }>(`SELECT count(*) AS n FROM chat_messages WHERE peer=$1 AND role='user' AND ts > now() - interval '1 hour'`, [opts.peer]);
   if (Number(recent.rows[0]?.n ?? 0) >= config().CHAT_RATE_LIMIT_PER_HOUR) return "Trop de messages cette heure-ci ; je reprends dans un moment.";
@@ -174,7 +180,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     ...resolveModel("chat"),
     system: CHAT_SYSTEM,
     task,
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, ...controlTools(notify), ...searchTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools()],
     effort: "low",
     maxIterations: 8,
     budgetUsd: 0.5,

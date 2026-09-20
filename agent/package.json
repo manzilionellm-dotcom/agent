@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "migrate": "tsx src/memory/migrate.ts",
-    "mission": "tsx src/cli.ts"
+    "mission": "tsx src/cli.ts",
+    "eval": "tsx src/evals/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",

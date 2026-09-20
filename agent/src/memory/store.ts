@@ -294,3 +294,49 @@ export const episodesTool = betaZodTool({
     return `TAUX DE SUCCÈS (${i.hours} h)\n${head}\n\n${body}`;
   },
 });
+
+/* ------------------------------------------------------------------------ */
+/* 6. Retour de l'opérateur (« bien » / « nul » sur WhatsApp)                */
+/* ------------------------------------------------------------------------ */
+
+const POSITIVE = /^(bien|top|parfait|nickel|super|bravo|merci|ok bien|👍|✅)\b/i;
+const NEGATIVE = /^(nul|bof|mauvais|faux|à revoir|a revoir|pas bon|non|👎|❌)\b/i;
+
+/** Si le texte est un jugement court, l'enregistre (lié au dernier épisode terminé) et retourne un accusé. */
+export async function captureFeedback(peer: string, text: string): Promise<string | undefined> {
+  const t = text.trim();
+  if (t.length > 200) return undefined;
+  const rating = POSITIVE.test(t) ? 1 : NEGATIVE.test(t) ? -1 : 0;
+  if (rating === 0) return undefined;
+  const comment = t.replace(POSITIVE, "").replace(NEGATIVE, "").replace(/^[\s,.:;!-]+/, "").trim() || null;
+  const last = await db().query<{ id: number; mission: string }>(
+    `SELECT id, mission FROM episodes WHERE finished_at IS NOT NULL AND finished_at > now() - interval '24 hours' ORDER BY finished_at DESC LIMIT 1`,
+  );
+  const ep = last.rows[0];
+  await db().query(`INSERT INTO feedback(peer, rating, comment, episode_id, mission) VALUES ($1,$2,$3,$4,$5)`, [peer, rating, comment, ep?.id ?? null, ep?.mission ?? null]);
+  return rating > 0 ? `Noté 👍${ep ? ` (${ep.mission})` : ""}.` : `Noté 👎${ep ? ` (${ep.mission})` : ""}. ${comment ? "" : "Dis-moi en une phrase ce qui n'allait pas, ça servira à la prochaine réflexion."}`.trim();
+}
+
+export const feedbackTool = betaZodTool({
+  name: "read_feedback",
+  description: "Retours de l'opérateur (👍/👎 + commentaire) sur les missions et rapports récents. À lire en priorité lors de la réflexion : c'est le signal le plus fiable de ce qui vaut quelque chose.",
+  inputSchema: z.object({ days: z.number().int().min(1).max(90).default(7) }),
+  run: async (i) => {
+    const r = await db().query<{ rating: number; comment: string | null; mission: string | null; ts: string }>(
+      `SELECT rating, comment, mission, ts FROM feedback WHERE ts > now() - ($1 || ' days')::interval ORDER BY ts DESC LIMIT 100`,
+      [String(i.days)],
+    );
+    if (r.rowCount === 0) return "aucun retour sur la période";
+    const byMission = new Map<string, { up: number; down: number }>();
+    for (const f of r.rows) {
+      const k = f.mission ?? "(général)";
+      const v = byMission.get(k) ?? { up: 0, down: 0 };
+      if (f.rating > 0) v.up++;
+      else v.down++;
+      byMission.set(k, v);
+    }
+    const summary = [...byMission.entries()].map(([m, v]) => `${m}: ${v.up}👍 ${v.down}👎`).join(" · ");
+    const lines = r.rows.map((f) => `- ${f.ts.slice(0, 16)} ${f.rating > 0 ? "👍" : "👎"} ${f.mission ?? ""}${f.comment ? ` — ${f.comment}` : ""}`).join("\n");
+    return `${summary}\n${lines}`;
+  },
+});

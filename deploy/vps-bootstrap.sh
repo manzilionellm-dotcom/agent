@@ -9,6 +9,9 @@
 #   curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
 #     https://raw.githubusercontent.com/<owner>/agent/main/deploy/vps-bootstrap.sh \
 #     | bash -s -- manzi https://github.com/<owner>/agent.git "$GITHUB_TOKEN"
+# Serveur qui héberge DÉJÀ d'autres services (site, apps) : SKIP_HARDENING=1 saute le pare-feu,
+# le durcissement SSH et le swap, pour ne rien casser d'existant. Docker + utilisateur + dépôt +
+# service systemd sont toujours installés.
 set -euo pipefail
 
 USER_NAME="${1:-manzi}"
@@ -31,6 +34,10 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 usermod -aG docker "$USER_NAME"
 
+if [ "${SKIP_HARDENING:-0}" = "1" ]; then
+  echo "== 4-6. SKIP_HARDENING=1 : pare-feu, SSH et swap laissés tels quels (serveur partagé)"
+  grep -q '^GatewayPorts' /etc/ssh/sshd_config || echo "   (tunnel navigateur : ajoute 'GatewayPorts clientspecified' dans /etc/ssh/sshd_config si tu veux BROWSER_CDP_URL)"
+else
 echo "== 4. Pare-feu : SSH seulement (le bot n'expose rien)"
 ufw default deny incoming
 ufw default allow outgoing
@@ -50,6 +57,7 @@ echo "== 6. Swap 2G (les builds Next.js + Chromium en ont besoin sur 4 Go)"
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
 fi
 
 echo "== 7. Dépôt"

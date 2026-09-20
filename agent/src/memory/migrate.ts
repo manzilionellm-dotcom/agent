@@ -80,6 +80,24 @@ const MIGRATIONS: string[] = [
      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
      decided_at TIMESTAMPTZ
    )`,
+  `CREATE TABLE IF NOT EXISTS feedback (
+     id         BIGSERIAL PRIMARY KEY,
+     peer       TEXT NOT NULL,
+     rating     SMALLINT NOT NULL,
+     comment    TEXT,
+     episode_id BIGINT,
+     mission    TEXT,
+     ts         TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS eval_runs (
+     id         BIGSERIAL PRIMARY KEY,
+     ran_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+     cases      INT NOT NULL,
+     passed     INT NOT NULL,
+     avg_score  NUMERIC(4,2) NOT NULL,
+     usd        NUMERIC(10,4) NOT NULL,
+     details    JSONB NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,
