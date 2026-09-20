@@ -20,7 +20,7 @@ FAIT : un modèle ouvert de qualité « agent » (≥ 30 B paramètres) ne tourn
 
 ## 1. Forker
 
-1. GitHub → `manzilionellm-dotcom/agent` → **Fork** (ou crée un dépôt vide et pousse ce code). Rends-le public si tu le souhaites : Settings → Danger zone → Change visibility. Aucun secret n'est dans le dépôt (`.env`, `secrets/`, `agent/mcp.json` sont ignorés par git).
+1. GitHub → `manzilionellm-dotcom/agent` → **Fork** (ou crée un dépôt vide et pousse ce code). Public ou privé, les deux marchent : privé garde tes playbooks et ton historique de missions pour toi (recommandé) ; public rend le code visible mais jamais les secrets (`.env`, `secrets/`, `agent/mcp.json` sont ignorés par git). Active la double authentification sur ton compte GitHub : elle devient obligatoire.
 2. Crée un **fine-grained token** limité à ce dépôt (Contents RW, Pull requests RW, Issues RW, Metadata R) : c'est `GITHUB_TOKEN`.
 
 ## 2. Comptes et clés (30 minutes)
@@ -40,7 +40,13 @@ FAIT : un modèle ouvert de qualité « agent » (≥ 30 B paramètres) ne tourn
 Hetzner Cloud → CX22 (Debian 12, 4 Go, ~4 €). Ajoute ta clé SSH à la création. Puis, en root :
 
 ```bash
+# Dépôt public
 bash <(curl -fsSL https://raw.githubusercontent.com/<toi>/agent/main/deploy/vps-bootstrap.sh) manzi https://github.com/<toi>/agent.git
+
+# Dépôt privé (recommandé si tu ne veux pas exposer tes playbooks) : le token (Contents: Read) sert au téléchargement, au clone et aux mises à jour
+export GITHUB_TOKEN=github_pat_...
+curl -fsSL -H "Authorization: token $GITHUB_TOKEN" https://raw.githubusercontent.com/<toi>/agent/main/deploy/vps-bootstrap.sh \
+  | bash -s -- manzi https://github.com/<toi>/agent.git "$GITHUB_TOKEN"
 ```
 
 Cela installe Docker, crée l'utilisateur `manzi`, ferme tout sauf SSH, active les mises à jour de sécurité, clone ton fork dans `/home/manzi/manzi-junior`, et installe le service systemd.

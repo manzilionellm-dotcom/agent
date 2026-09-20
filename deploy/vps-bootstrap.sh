@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # Bootstrap d'un VPS Debian 12 / Ubuntu 24.04 vierge → Manzi Junior 24/7.
-# Usage (en root) : bash vps-bootstrap.sh <utilisateur> <repo-git-url>
+# Usage (en root) : bash vps-bootstrap.sh <utilisateur> <repo-git-url> [github-token]
+#
+# Dépôt PRIVÉ : passe ton fine-grained token (Contents: Read) en 3e argument ou via
+# GITHUB_TOKEN=... ; il est stocké pour l'utilisateur du bot (git credential store,
+# fichier en 600) afin que le clone ET les `git pull` de install.sh fonctionnent.
+# Pour récupérer ce script depuis un dépôt privé :
+#   curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
+#     https://raw.githubusercontent.com/<owner>/agent/main/deploy/vps-bootstrap.sh \
+#     | bash -s -- manzi https://github.com/<owner>/agent.git "$GITHUB_TOKEN"
 set -euo pipefail
 
 USER_NAME="${1:-manzi}"
 REPO_URL="${2:?URL du dépôt git}"
+GH_TOKEN="${3:-${GITHUB_TOKEN:-}}"
 
 echo "== 1. Système"
 apt-get update && apt-get -y upgrade
@@ -44,6 +53,10 @@ if [ ! -f /swapfile ]; then
 fi
 
 echo "== 7. Dépôt"
+if [ -n "$GH_TOKEN" ]; then
+  # Identifiants GitHub de l'utilisateur du bot : jamais dans l'URL du remote, jamais dans un log.
+  sudo -u "$USER_NAME" -H bash -c "git config --global credential.helper store && umask 077 && printf 'https://x-access-token:%s@github.com\n' '$GH_TOKEN' > ~/.git-credentials"
+fi
 sudo -u "$USER_NAME" -H bash -c "cd ~ && [ -d manzi-junior ] || git clone '$REPO_URL' manzi-junior"
 sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && [ -f .env ] || cp .env.example .env"
 sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && [ -f agent/mcp.json ] || cp agent/mcp.json.example agent/mcp.json"
@@ -75,7 +88,7 @@ systemctl daemon-reload && systemctl enable manzi.service
 cat <<EOF
 
 Terminé. Étapes restantes (manuelles, 10 min) :
-  1. su - $USER_NAME && cd manzi-junior && nano .env      # clés API
+  1. su - $USER_NAME && cd manzi-junior && nano .env      # clés API (ou scp ton .env local ici)
   2. nano agent/mcp.json                             # serveurs MCP voulus
   3. Copier vos fichiers OAuth Google dans ./secrets/ (voir docs/HOSTING.md)
   4. docker compose up -d --build && docker compose logs -f orchestrator

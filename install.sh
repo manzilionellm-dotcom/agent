@@ -3,7 +3,8 @@
 # Manzi Junior — installation en une commande (VPS Debian/Ubuntu ou machine locale)
 #
 #   curl -fsSL https://raw.githubusercontent.com/manzilionellm-dotcom/agent/main/install.sh | bash
-#   ou, depuis un clone :  ./install.sh [--swarm] [--jarvis]
+#   ou, depuis un clone :  ./install.sh [--eco] [--swarm] [--jarvis]
+#   Dépôt privé : GITHUB_TOKEN=github_pat_... ./install.sh --eco  (clone + git pull authentifiés)
 #
 # Ce que ça fait : installe Docker si absent, clone/met à jour le dépôt,
 # génère .env et mcp.json s'ils manquent (avec un token API aléatoire),
@@ -36,6 +37,10 @@ if [ -f "$(pwd)/docker-compose.yml" ] && [ -d "$(pwd)/agent" ]; then
 elif [ -d "$DIR/.git" ]; then
   say "Mise à jour de $DIR"; git -C "$DIR" pull --ff-only
 else
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config --global credential.helper store
+    ( umask 077; printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$HOME/.git-credentials" )
+  fi
   say "Clonage dans $DIR"; git clone "$REPO_URL" "$DIR"
 fi
 cd "$DIR"
