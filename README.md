@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Manzi Junior
 
-## Getting Started
-
-First, run the development server:
+Agent autonome 24/7 : veille web + X, surveillance des concurrents avec alertes, comparateur IPTV, article SEO/GEO quotidien, code → GitHub → Vercel, Gmail/agenda, audit de site, essaim de 10 sous-agents parallèles, couche vocale **Jarvis** (Whisper → Claude → Kokoro, voix féminine française), mémoire Postgres, rapport chaque matin, et auto-révision nocturne de ses propres playbooks.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+curl -fsSL https://raw.githubusercontent.com/manzilionellm-dotcom/agent/main/install.sh | bash
+# puis : ./install.sh --swarm (5 sandboxes)   ·   bash jarvis/install.sh (voix, sur ta machine)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Document | Contenu |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | multi-agents, boucle de raisonnement, mémoire, MCP, sandbox, sécurité, évolution quotidienne |
+| [docs/HOSTING.md](docs/HOSTING.md) | Docker, VPS, clés API, coûts réels, fonctionnement continu, sauvegardes |
+| [docs/SWARM.md](docs/SWARM.md) | les 10 rôles, plan → vagues parallèles → fusion, ce que « ÷10 » veut dire |
+| [docs/JARVIS.md](docs/JARVIS.md) | installation, voix, modes d'éveil, mémoire SQLite, MCP |
+| [docs/MODELS.md](docs/MODELS.md) | Claude par défaut, DeepSeek/Kimi/Qwen en option, corrections de prémisses |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Arborescence : `agent/` (orchestrateur Node), `jarvis/` (voix, Python), `docker/`, `deploy/`, `app/` (site Next.js 16 déployé sur Vercel — voir `AGENTS.md`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Commandes utiles :
 
-## Learn More
+```bash
+docker compose logs -f orchestrator
+docker compose exec orchestrator node dist/cli.js veille | seo_daily | competitor_watch | site_audit | report | reflect
+docker compose exec orchestrator node dist/cli.js swarm "objectif complet…"
+curl -s http://127.0.0.1:8787/healthz | jq
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Site Next.js (`app/`)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Bootstrappé avec `create-next-app` (Next 16, React 19, Tailwind 4). `npm run dev` puis http://localhost:3000. Lire `node_modules/next/dist/docs/` avant de modifier : cette version a des changements cassants.

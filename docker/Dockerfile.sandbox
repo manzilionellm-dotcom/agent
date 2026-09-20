@@ -1,0 +1,27 @@
+# Sandbox : là où le code s'exécute. Contient Node 22, Python 3, git,
+# Chromium + Playwright, Claude Code (sous-agent codeur), Vercel CLI.
+# Tourne en utilisateur non-root, sans capacités, réseau filtré par compose.
+FROM mcr.microsoft.com/playwright:v1.55.0-noble
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NODE_ENV=development \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    npm_config_update_notifier=false
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git python3 python3-pip python3-venv jq ripgrep curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Outils globaux du sandbox.
+RUN npm install -g --no-audit --no-fund @anthropic-ai/claude-code vercel playwright@1.55.0 lighthouse
+
+# Utilisateur dédié + répertoire de travail persistant (volume).
+RUN useradd -m -u 10001 -s /bin/bash bot && mkdir -p /work && chown bot:bot /work
+USER bot
+WORKDIR /work
+
+# Playwright est disponible pour les scripts `node -e` lancés depuis /work.
+RUN cd /work && npm init -y >/dev/null && npm install --no-audit --no-fund playwright@1.55.0 >/dev/null
+
+# Le conteneur reste vivant ; l'orchestrateur y envoie des `docker exec`.
+CMD ["sleep", "infinity"]

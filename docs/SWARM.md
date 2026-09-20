@@ -1,0 +1,59 @@
+# Essaim — 10 sous-agents parallèles
+
+## Lancer
+
+```bash
+# Stack avec 5 sandboxes dédiés (un par agent code en parallèle)
+docker compose -f docker-compose.yml -f docker-compose.swarm.yml up -d --build
+# ou : ./install.sh --swarm
+
+# Un objectif, en ligne de commande
+docker compose exec orchestrator node dist/cli.js swarm \
+  "Relever les tarifs des 10 fournisseurs du comparateur, mettre à jour data/providers.json, vérifier le build, déployer, et me faire un tableau des écarts vs le mois dernier"
+
+# Par l'API (Jarvis fait pareil)
+curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" -H 'content-type: application/json' \
+  -d '{"objective":"…","budgetUsd":12}' http://127.0.0.1:8787/swarm      # → {"id":"sw_…"}
+curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/sw_…
+```
+
+## Comment ça marche (`agent/src/swarm/`)
+
+1. **Plan** — un appel structuré (Opus 5, effort high) transforme l'objectif en 3 à 12 sous-tâches, chacune avec un rôle, un cahier des charges auto-suffisant, des critères d'acceptation et des dépendances. Le DAG est validé (ids uniques, pas de cycle) avant toute exécution.
+2. **Vagues parallèles** — tout ce dont les dépendances sont satisfaites part en même temps, jusqu'à `SWARM_CONCURRENCY` (10). Un rôle qui touche du code prend un conteneur dans `SANDBOX_POOL` (attend s'il n'y en a plus). Chaque sous-agent : son prompt système, sa mémoire (`/memories/agents/<rôle>`), ses outils, son budget ; il reçoit les `<result>` de ses dépendances, rien d'autre.
+3. **Fusion** — le coordinateur relit tous les résultats, tranche les contradictions, produit le livrable, la liste des actions humaines et les points ouverts. Tout est journalisé (`episodes` : `swarm` + `swarm:<rôle>`), avec durée mur et estimation séquentielle pour mesurer le gain.
+
+## Les 10 rôles
+
+| Rôle | Modèle | Sandbox | Outils clés | Livrable |
+|---|---|---|---|---|
+| researcher | Sonnet 5 | non | web/tavily, x_search | synthèse sourcée, 2 sources par affirmation |
+| scraper | Sonnet 5 | oui | scrape_page, tavily_extract | JSON structuré avec URL + horodatage par champ |
+| competitor_watch | Sonnet 5 | non | recherche, recall_facts, send_alert | deltas uniquement, alertes vérifiées |
+| seo_writer | Opus 5 | non | recherche | article complet (frontmatter + corps) dans `/memories/drafts/` |
+| coder | Opus 5 | oui | delegate_coding_task, sandbox, git_ensure_repo | commits sur branche `swarm/<date>-<slug>`, tests verts |
+| qa | Opus 5 | oui | sandbox, site_audit | GO / NO-GO avec preuves |
+| publisher | Sonnet 5 | oui | sandbox, git | contenu intégré au bon format, build vert, commit |
+| deployer | Sonnet 5 | oui | git_push_and_deploy, vercel MCP | URL en prod vérifiée (200 + contenu attendu) |
+| inbox | Sonnet 5 | non | gmail, gcal (dry-run) | tri, brouillons, créneaux |
+| analyst | Opus 5 | oui | sandbox (python/node), site_audit | chiffres calculés par code, méthode visible |
+
+Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effort, budget, outils, prompt). Le planificateur le voit immédiatement.
+
+## Ce que « diviser le temps par dix » veut dire vraiment
+
+FAIT : le gain est proportionnel à la part parallélisable de l'objectif.
+
+- « Relever 10 fournisseurs » → 10 scrapers en parallèle : mur ≈ le plus lent (2–3 min) au lieu de 25 min. Gain ~8×.
+- « Écrire 5 articles » → 5 rédacteurs : gain ~5×, puis 1 publisher + 1 deployer en séquence.
+- « Corriger un bug, tester, déployer » → chaîne coder → qa → deployer : gain 1× (mais la QA indépendante évite un déploiement cassé, ce qui vaut plus que du temps).
+
+Bornes réelles : débit API (tokens/minute) qui plafonne vers 6–8 agents simultanés sur un tier standard ; RAM du VPS (1,5 Go par sandbox actif) ; les sites cibles (cadence). Le coordinateur journalise `wallSeconds` et l'estimation séquentielle : c'est ton chiffre, pas une promesse.
+
+## Garde-fous
+
+- Budget global par essaim (`SWARM_BUDGET_USD`, 15 $ par défaut, surchargeable par appel) ; une sous-tâche qui dépasse coupe net, les dépendantes sont « skipped », la fusion le dit.
+- Une dépendance en échec n'exécute pas ses dépendants (pas de déploiement d'un code que la QA a refusé).
+- Les rôles code ne travaillent jamais sur `main` ; seul `deployer` pousse, uniquement après un GO.
+- Un conteneur sandbox par agent code : pas de collision de fichiers ni de `node_modules`.
+- Les outils MCP irréversibles restent en dry-run sauf pour `deployer` (`allowIrreversible`).

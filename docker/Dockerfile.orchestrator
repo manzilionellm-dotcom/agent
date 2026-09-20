@@ -1,0 +1,24 @@
+# Orchestrateur : Node 22, image minimale, utilisateur non-root,
+# client Docker CLI uniquement (pour `docker exec` vers le sandbox).
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+COPY agent/package.json agent/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY agent/tsconfig.json ./
+COPY agent/src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM node:22-bookworm-slim
+ENV NODE_ENV=production
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl docker.io tini \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./
+# Le groupe docker de l'hôte est mappé au runtime (voir docker-compose: group_add).
+USER node
+HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD curl -fsS http://localhost:8787/healthz || exit 1
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "dist/index.js"]

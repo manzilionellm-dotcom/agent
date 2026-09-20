@@ -1,0 +1,59 @@
+# Surcouche « essaim » : 5 sandboxes dédiés (un par sous-agent code en parallèle).
+#   docker compose -f docker-compose.yml -f docker-compose.swarm.yml up -d --build
+# Dimensionnement : ~1,5 Go RAM par sandbox actif (Chromium + npm). 5 sandboxes ⇒ VPS 16 Go.
+# Les rôles sans code (researcher, competitor_watch, seo_writer, inbox) ne consomment pas de sandbox.
+
+x-sandbox: &sandbox
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.sandbox
+  restart: unless-stopped
+  init: true
+  tmpfs:
+    - /tmp:size=1g
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  pids_limit: 512
+  mem_limit: 3g
+  cpus: 1.5
+  networks: [egress]
+
+services:
+  sandbox-1:
+    <<: *sandbox
+    container_name: manzi-sandbox-1
+    volumes: [work1:/work]
+  sandbox-2:
+    <<: *sandbox
+    container_name: manzi-sandbox-2
+    volumes: [work2:/work]
+  sandbox-3:
+    <<: *sandbox
+    container_name: manzi-sandbox-3
+    volumes: [work3:/work]
+  sandbox-4:
+    <<: *sandbox
+    container_name: manzi-sandbox-4
+    volumes: [work4:/work]
+  sandbox-5:
+    <<: *sandbox
+    container_name: manzi-sandbox-5
+    volumes: [work5:/work]
+
+  orchestrator:
+    environment:
+      SANDBOX_POOL: manzi-sandbox-1,manzi-sandbox-2,manzi-sandbox-3,manzi-sandbox-4,manzi-sandbox-5
+      SWARM_CONCURRENCY: "10"
+    depends_on:
+      sandbox-1: { condition: service_started }
+      sandbox-2: { condition: service_started }
+      sandbox-3: { condition: service_started }
+      sandbox-4: { condition: service_started }
+      sandbox-5: { condition: service_started }
+
+volumes:
+  work1:
+  work2:
+  work3:
+  work4:
+  work5:

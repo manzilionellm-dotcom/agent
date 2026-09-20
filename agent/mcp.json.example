@@ -1,0 +1,39 @@
+{
+  "servers": {
+    "github": {
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" },
+      "allow": [
+        "list_issues", "get_issue", "create_issue", "add_issue_comment",
+        "list_pull_requests", "get_pull_request", "create_pull_request", "get_pull_request_diff",
+        "list_commits", "search_code", "get_file_contents"
+      ],
+      "confirm": ["create_issue", "create_pull_request", "add_issue_comment"]
+    },
+    "gmail": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "env": { "GMAIL_OAUTH_PATH": "/secrets/gcp-oauth.keys.json", "GMAIL_CREDENTIALS_PATH": "/secrets/gmail-credentials.json" },
+      "allow": ["search_emails", "read_email", "list_email_labels", "draft_email", "send_email", "modify_email"],
+      "confirm": ["send_email", "modify_email"]
+    },
+    "gcal": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cocal/google-calendar-mcp"],
+      "env": { "GOOGLE_OAUTH_CREDENTIALS": "/secrets/gcp-oauth.keys.json" },
+      "allow": ["list-calendars", "list-events", "search-events", "get-freebusy", "create-event", "update-event"],
+      "confirm": ["create-event", "update-event", "delete-event"]
+    },
+    "vercel": {
+      "transport": "http",
+      "url": "https://mcp.vercel.com",
+      "headers": { "Authorization": "Bearer ${VERCEL_TOKEN}" },
+      "allow": ["list_deployments", "get_deployment", "get_deployment_build_logs", "get_runtime_logs", "list_projects"],
+      "confirm": [],
+      "enabled": false
+    }
+  }
+}
