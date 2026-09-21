@@ -97,8 +97,11 @@ GH=`$(grep -E '^GITHUB_TOKEN=' /root/.env.manzi | head -1 | cut -d= -f2- | tr -d
 [ -n "`$GH" ] || { echo 'GITHUB_TOKEN absent du .env'; exit 1; }
 
 echo '== bootstrap'
-curl -fsSL -H "Authorization: token `$GH" \
-  "https://raw.githubusercontent.com/manzilionellm-dotcom/agent/`$BR/deploy/vps-bootstrap.sh" \
+# raw.githubusercontent.com ne sait pas couper une branche qui contient un '/'
+# (elle est indistinguable du chemin du fichier) et répond 404. L'API Contents
+# prend la branche en paramètre `ref`, donc sans ambiguïté possible.
+curl -fsSL -H "Authorization: token `$GH" -H 'Accept: application/vnd.github.raw' \
+  "https://api.github.com/repos/manzilionellm-dotcom/agent/contents/deploy/vps-bootstrap.sh?ref=`$BR" \
   -o /root/vps-bootstrap.sh
 bash /root/vps-bootstrap.sh "`$USR" "`$REPO" "`$GH" "`$BR"
 
