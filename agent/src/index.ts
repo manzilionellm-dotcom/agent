@@ -158,7 +158,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
 async function main(): Promise<void> {
   const cfg = config();
-  logger.info({ tz: cfg.TZ, mode: cfg.AUTONOMY_MODE, provider: cfg.LLM_PROVIDER, critical: cfg.LLM_PROVIDER_CRITICAL ?? cfg.LLM_PROVIDER, whatsapp: cfg.WHATSAPP_PROVIDER, pool: cfg.SANDBOX_POOL || "(défaut)" }, "boot");
+  // La longueur du jeton, jamais sa valeur : un 401 sur l'API locale vient presque
+  // toujours d'un jeton absent (0) ou porteur d'un caractère invisible — un \r de
+  // fin de ligne Windows. Sans ce chiffre au démarrage, le diagnostic se fait à
+  // l'aveugle, et l'erreur « jeton requis » ne dit pas que le jeton est là mais faux.
+  logger.info(
+    {
+      tz: cfg.TZ,
+      mode: cfg.AUTONOMY_MODE,
+      provider: cfg.LLM_PROVIDER,
+      critical: cfg.LLM_PROVIDER_CRITICAL ?? cfg.LLM_PROVIDER,
+      whatsapp: cfg.WHATSAPP_PROVIDER,
+      pool: cfg.SANDBOX_POOL || "(défaut)",
+      apiTokenLen: cfg.ORCHESTRATOR_TOKEN?.length ?? 0,
+      apiTokenClean: /^[A-Za-z0-9_-]*$/.test(cfg.ORCHESTRATOR_TOKEN ?? ""),
+    },
+    "boot",
+  );
 
   await migrate();
   await connectMcpServers();
