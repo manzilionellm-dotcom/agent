@@ -139,7 +139,12 @@ let cached: Config | undefined;
 
 export function config(): Config {
   if (cached) return cached;
-  const parsed = Env.safeParse(process.env);
+  // `KEY=` dans un .env donne "" et non `undefined` : sans ce filtre, toute
+  // variable facultative laissée vide échoue à sa validation de format
+  // (e-mail, URL) et empêche le démarrage, alors qu'elle est justement
+  // facultative. Une variable vide vaut « non renseignée ».
+  const env = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== ""));
+  const parsed = Env.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
