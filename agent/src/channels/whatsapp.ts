@@ -15,7 +15,15 @@ import { logger } from "../logger.js";
  * déduplication des identifiants de message.
  */
 
-export type Inbound = { provider: "meta" | "twilio"; from: string; text: string; id: string; name?: string };
+export type Inbound = {
+  provider: "meta" | "twilio";
+  from: string;
+  text: string;
+  id: string;
+  name?: string;
+  /** Pièce jointe à convertir en texte avant le chat (voir channels/media.ts). */
+  media?: { id: string; mime: string; filename?: string; caption?: string; kind: string };
+};
 
 const META_API = "https://graph.facebook.com/v21.0";
 
@@ -63,14 +71,26 @@ export function parseMetaWebhook(body: unknown): Inbound[] {
         const from = String(m.from ?? "").replace(/[^\d]/g, "");
         const id = String(m.id ?? "");
         let text = "";
+        let media: Inbound["media"];
         if (m.type === "text") text = String((m.text as { body?: string })?.body ?? "");
         else if (m.type === "button") text = String((m.button as { text?: string })?.text ?? "");
         else if (m.type === "interactive") {
           const i = m.interactive as { button_reply?: { title?: string }; list_reply?: { title?: string } };
           text = i.button_reply?.title ?? i.list_reply?.title ?? "";
-        } else if (m.type === "audio") text = "[message vocal — non transcrit ; envoie le texte]";
+        } else if (m.type === "image" || m.type === "document" || m.type === "sticker" || m.type === "video") {
+          // La pièce jointe n'est pas téléchargée ici : parser un webhook doit
+          // rester synchrone et sans appel réseau, sinon Meta réessaie l'envoi.
+          const a = m[m.type] as { id?: string; mime_type?: string; filename?: string; caption?: string } | undefined;
+          const kind = m.type === "image" ? "image" : m.type === "document" ? "document" : m.type === "video" ? "vidéo" : "sticker";
+          if (a?.id) media = { id: a.id, mime: a.mime_type ?? "", filename: a.filename, caption: a.caption, kind };
+          text = a?.caption ?? "";
+        } else if (m.type === "audio" || m.type === "voice") {
+          const a = m[m.type] as { id?: string; mime_type?: string } | undefined;
+          if (a?.id) media = { id: a.id, mime: a.mime_type ?? "audio/ogg", kind: "vocal" };
+          else text = "[message vocal illisible]";
+        }
         else text = `[${String(m.type)} non pris en charge]`;
-        if (from && id) out.push({ provider: "meta", from, text, id, name: names.get(from) });
+        if (from && id && (text || media)) out.push({ provider: "meta", from, text, id, name: names.get(from), media });
       }
     }
   }

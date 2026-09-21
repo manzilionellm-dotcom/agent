@@ -117,6 +117,17 @@ const Env = z.object({
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
   /** Nom du modèle de message approuvé pour les envois hors fenêtre 24 h (rapport du matin). */
+  /**
+   * Transcription des messages vocaux : n'importe quelle API compatible OpenAI
+   * `/audio/transcriptions` (OpenAI, Groq, serveur Whisper local). Vide = les
+   * vocaux sont signalés mais pas transcrits. Whisper dans le conteneur
+   * demanderait plus de RAM qu'il n'en reste sur un 4 Go partagé avec Chromium.
+   */
+  TRANSCRIBE_BASE_URL: z.string().url().optional(),
+  TRANSCRIBE_API_KEY: z.string().optional(),
+  TRANSCRIBE_MODEL: z.string().default("whisper-large-v3"),
+  /** Langue attendue des vocaux (code ISO). Améliore nettement la transcription. */
+  JARVIS_LANGUAGE: z.string().default("fr"),
   WHATSAPP_TEMPLATE_NAME: z.string().default("manzi_daily_report"),
   WHATSAPP_TEMPLATE_LANG: z.string().default("fr"),
   // Twilio

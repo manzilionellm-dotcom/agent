@@ -14,6 +14,7 @@ import { runSwarm } from "./swarm/coordinator.js";
 import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
 import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
+import { mediaToText } from "./channels/media.js";
 
 /**
  * Point d'entrée du démon. Ordre : config → migrations → MCP → sandbox check →
@@ -88,7 +89,13 @@ async function whatsappWebhook(req: IncomingMessage, res: ServerResponse, url: U
       continue;
     }
     void markRead(m.id);
-    void handleChat({ channel: "whatsapp", peer: m.from, text: m.text, extId: m.id })
+    // Une pièce jointe est d'abord lue par un modèle qui voit, puis transmise
+    // au chat en texte — le modèle de conversation peut rester textuel.
+    const prepared = m.media
+      ? mediaToText(m.media).then((t) => [t, m.text && m.text !== m.media?.caption ? m.text : ""].filter(Boolean).join("\n\n"))
+      : Promise.resolve(m.text);
+    void prepared
+      .then((text) => handleChat({ channel: "whatsapp", peer: m.from, text, extId: m.id }))
       .then((reply) => (reply ? sendWhatsApp(m.from, reply) : undefined))
       .catch((e) => logger.error({ err: String(e) }, "whatsapp chat"));
   }

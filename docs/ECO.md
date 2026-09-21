@@ -142,23 +142,27 @@ Chaque message coûte 0,001 à 0,01 $ (DeepSeek). Les tâches longues répondent
 
 ## 5. Ton Chrome piloté par le bot (tunnel)
 
-Sur ton PC :
+Deux commandes, une par machine.
 
+**Sur le serveur, une fois :**
 ```bash
-# macOS
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="$HOME/chrome-manzi"
-# Windows (PowerShell)
-& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\chrome-manzi"
-# Linux
-google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/chrome-manzi"
-
-# Tunnel inverse vers le VPS (laisse ouvert)
-ssh -N -R 0.0.0.0:9222:127.0.0.1:9222 manzi@<vps>
+sudo bash deploy/chrome-bridge-server.sh
 ```
+Il demande au sandbox à quelle adresse se résout `host.docker.internal`, met `BROWSER_CDP_URL` à `http://<cette-IP>:9222`, s'assure que sshd accepte `GatewayPorts clientspecified`, ferme le port 9222 côté ufw, et redémarre l'orchestrateur.
 
-FAIT : Chrome ≥ 136 refuse le débogage distant sur ton profil quotidien ; `--user-data-dir` crée un profil dédié. Connecte-toi une fois aux sites voulus dans ce profil : les sessions persistent. Le VPS a `GatewayPorts clientspecified` (fait par `vps-bootstrap.sh`) et `ufw` bloque le port 9222 depuis l'extérieur. `BROWSER_CDP_URL=http://host.docker.internal:9222` dans `.env`. Tunnel fermé = le bot bascule sur son Chromium de sandbox (profil persistant dans `/work/browser-profile`).
+**Sur ton PC Windows, à chaque session de travail :**
+```powershell
+$env:MANZI_HOST='manzi@<ip-du-serveur>'; $env:MANZI_GW='<IP affichée ci-dessus>'; .\chrome-bridge.ps1
+```
+Il ouvre le Chrome du bot, recopie ton profil au premier lancement (donc tes sessions), et maintient le tunnel inverse avec reconnexion automatique. Fenêtre fermée = le bot retombe sur son Chromium de sandbox (profil persistant dans `/work/browser-profile`).
 
-Risque, une ligne : en mode tunnel, le bot agit dans tes comptes connectés ; c'est pour ça que le mode manuel existe.
+Trois détails qui coûtent une soirée chacun si on les ignore :
+
+- **Chrome ≥ 136 refuse `--remote-debugging-port` sur le profil par défaut.** Volontaire, non contournable. D'où le profil dédié — et la copie du profil existant, qui rend cette contrainte indolore.
+- **`BROWSER_CDP_URL` doit porter une IP, pas `host.docker.internal`.** Chrome rejette toute requête de débogage dont l'en-tête `Host` n'est ni `localhost` ni une adresse IP, et le message d'erreur ne dit pas ça.
+- **Le `ssh -R` doit écouter sur la passerelle Docker, jamais sur `0.0.0.0`.** Un `-R` par défaut n'écoute que sur la boucle locale du serveur, où aucun conteneur ne va ; `0.0.0.0` marcherait, et publierait le pilotage de ton navigateur authentifié sur Internet.
+
+Risque, une ligne : en mode tunnel, le bot agit dans tes comptes connectés — `BROWSER_DENY_DOMAINS` exclut les domaines que tu ne veux pas lui laisser, et le mode manuel existe pour ça.
 
 ## 6. Budget mensuel réaliste (profil éco)
 
