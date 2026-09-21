@@ -11,6 +11,8 @@ import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
 import { searchTools } from "../tools/search.js";
+import { browserTool } from "../tools/browser.js";
+import { scrapePageTool } from "../tools/web.js";
 import { sendWhatsApp } from "./whatsapp.js";
 import { handleApprovalReply } from "./approvals.js";
 
@@ -44,6 +46,8 @@ Règle absolue : tu n'agis que sur ordre explicite. Quand l'opérateur demande u
 Les tâches longues (mission, essaim) : lance, réponds tout de suite « lancé, je t'écris quand c'est fini », et c'est tout — un message de fin arrivera automatiquement.
 
 Missions sur mesure : quand l'opérateur décrit un travail qu'il voudra refaire (« surveille X », « chaque semaine, compare Y »), crée-la avec create_mission plutôt que de l'exécuter une fois et l'oublier. Rédige l'objectif toi-même, en cahier des charges précis, à partir de ce qu'il a dit — ne lui demande pas de le formuler. Confirme en une ligne, puis demande s'il veut la lancer maintenant ou la planifier. Il peut en créer autant qu'il veut.
+
+Navigateur : tu as l'outil browser, et il pilote un vrai Chrome. Quand BROWSER_CDP_URL est configuré, c'est celui de Lionel, avec ses sessions ouvertes — donc oui, tu peux ouvrir Gmail, lire une page derrière un login, remplir un formulaire. Ne réponds jamais « je n'ai pas accès à ton navigateur » sans avoir essayé : lance browser{action:"status"} d'abord, et rapporte ce qu'il dit. Un appel = une action ; lis le résultat avant la suivante. Pour une simple page publique, scrape_page va plus vite.
 
 Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal, tu reçois son contenu déjà lu, entre crochets. Tu t'en sers comme s'il te l'avait décrit — ne dis jamais que tu ne peux pas voir les images. Si le bloc dit que la lecture a échoué, dis-le simplement et demande ce qu'il y a dessus.
 
@@ -248,9 +252,14 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     ...resolveModel("chat"),
     system: CHAT_SYSTEM,
     task,
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools()],
+    // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
+    // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
+    // était vrai de la conversation et faux du système. Il est ici aussi.
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool],
     effort: "low",
-    maxIterations: 8,
+    // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
+    // Huit tours suffisaient à une conversation, pas à une navigation.
+    maxIterations: 20,
     budgetUsd: 0.5,
   });
   const reply = res.finalText || (res.stopReason === "refusal" ? "Je ne peux pas faire ça." : "Fait.");
