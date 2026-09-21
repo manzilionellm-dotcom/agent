@@ -87,11 +87,16 @@ if (-not $tok.refresh_token) {
   exit 1
 }
 
-Write-Host "==> Envoi au serveur (les valeurs ne passent pas par l'ecran)" -ForegroundColor Cyan
-$remoteCmd = "cd ~/manzi-junior && bash deploy/set-env.sh " +
-             "GOOGLE_CLIENT_ID=$ClientId GOOGLE_CLIENT_SECRET=$ClientSecret GOOGLE_REFRESH_TOKEN=$($tok.refresh_token)" +
+Write-Host "==> Envoi au serveur par l'entree standard" -ForegroundColor Cyan
+# Les trois valeurs passent par stdin, jamais en argument. Un argument de
+# commande est lisible dans `ps aux` par n'importe quel utilisateur du serveur
+# pendant son execution, et reste dans /proc/<pid>/cmdline. Ce que stdin evite
+# aussi : PSReadLine enregistre sur disque chaque commande tapee ici.
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$remoteCmd = "cd ~/manzi-junior && bash deploy/set-env.sh --stdin" +
              " && docker compose -f docker-compose.yml -f docker-compose.eco.yml up -d --force-recreate orchestrator"
-ssh $Remote $remoteCmd
+$payload = "GOOGLE_CLIENT_ID=$ClientId`nGOOGLE_CLIENT_SECRET=$ClientSecret`nGOOGLE_REFRESH_TOKEN=$($tok.refresh_token)`n"
+$payload | ssh $Remote $remoteCmd
 if ($LASTEXITCODE -ne 0) { Write-Host "L'envoi au serveur a echoue (code $LASTEXITCODE)." -ForegroundColor Red; exit 1 }
 
 Write-Host ""

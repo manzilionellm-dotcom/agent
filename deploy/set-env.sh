@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Écrit des valeurs dans le .env du serveur, sans les afficher.
 #
-#   bash deploy/set-env.sh WHATSAPP_APP_ID=2851... WHATSAPP_APP_SECRET=4e8b...
+#   bash deploy/set-env.sh WHATSAPP_APP_ID=2851...        # valeurs non sensibles
+#   printf 'CLE=secret\n' | bash deploy/set-env.sh --stdin # secrets
+#
+# POUR UN SECRET, UTILISER --stdin. Un argument de ligne de commande est
+# visible dans `ps aux` par tout utilisateur du serveur pendant l'exécution,
+# reste dans /proc/<pid>/cmdline, et — côté Windows — PSReadLine écrit chaque
+# commande tapée dans un fichier sur le disque. « Ça ne s'affiche pas à
+# l'écran » ne veut donc pas dire « personne ne peut le lire ».
 #
 # Pourquoi un script plutôt qu'un `sed` à la main :
 #  - `sed -i` recrée le fichier ; lancé par root sur le .env de manzi, il en
@@ -19,14 +26,30 @@ cd "$DIR"
 say() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ $# -gt 0 ] || die "usage: bash deploy/set-env.sh CLE=valeur [CLE=valeur ...]"
 [ -f .env ] || die "pas de .env dans $DIR"
+
+# Les paires viennent soit des arguments, soit de stdin (une par ligne).
+# `IFS= read -r` : sans le `IFS=` vide, les espaces d'une valeur seraient
+# rognés ; sans `-r`, un antislash serait interprété. Les deux détruiraient
+# silencieusement un secret qui en contient.
+PAIRS=()
+if [ "${1:-}" = "--stdin" ] || [ $# -eq 0 ]; then
+  [ -t 0 ] && die "usage: printf 'CLE=valeur\\n' | bash deploy/set-env.sh --stdin"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}                       # une ligne venue de Windows traîne un \r
+    case "$line" in "" | \#*) continue ;; esac
+    PAIRS+=("$line")
+  done
+  [ ${#PAIRS[@]} -gt 0 ] || die "rien reçu sur stdin"
+else
+  PAIRS=("$@")
+fi
 
 # Un \r de fin de ligne Windows se retrouve collé à chaque valeur et fausse
 # toute comparaison octet à octet, sans jamais apparaître dans un message.
 if grep -q $'\r' .env; then sed 's/\r$//' .env > .env.tmp && cat .env.tmp > .env && rm -f .env.tmp; fi
 
-for pair in "$@"; do
+for pair in "${PAIRS[@]}"; do
   case "$pair" in
     *=*) ;;
     *) die "argument mal formé : « $pair » (attendu CLE=valeur)" ;;
