@@ -2,11 +2,16 @@
 /**
  * Démon navigateur de Manzi Junior (tourne DANS le sandbox, sur 127.0.0.1:9333).
  *
- * Deux modes :
- *   - BROWSER_CDP_URL défini  → se connecte à TON Chrome (Chrome DevTools Protocol) via
+ * Deux modes, dans cet ordre de préférence :
+ *   - BROWSER_CDP_URL défini ET joignable → TON Chrome (Chrome DevTools Protocol) via
  *     tunnel SSH : toutes tes sessions connectées, exactement comme « Claude dans Chrome ».
- *   - sinon                   → Chromium persistant dans /work/browser-profile : les
- *     connexions faites une fois (cookies, localStorage) survivent entre missions.
+ *   - sinon                               → Chromium persistant dans /work/browser-profile :
+ *     les connexions faites une fois (cookies, localStorage) survivent entre missions.
+ *
+ * Le second n'est pas un mode dégradé, c'est le mode normal. Le premier dépend
+ * d'un tunnel ouvert depuis le poste de l'opérateur, donc d'une machine
+ * allumée : le jour où elle dort, échouer laisserait l'agent sans navigateur
+ * du tout. On bascule, et `status` dit lequel tourne réellement.
  *
  * Un seul onglet actif à la fois par défaut (tabs: list/switch/new/close).
  * Auto-arrêt après 15 min sans commande. Le client est bctl.js.
@@ -23,9 +28,15 @@ const SHOTS = "/work/browser-shots";
 
 let browser, context, page, idleTimer;
 
-async function boot() {
+/** Mode réellement retenu au démarrage : "cdp" (Chrome de l'opérateur) ou "profile" (local). */
+let mode = "profile";
+/** Pourquoi le mode CDP a été abandonné, s'il l'a été. Remonté par `status`. */
+let cdpError = null;
+
+async function tryCdp() {
   let cdp = process.env.BROWSER_CDP_URL;
-  if (cdp) {
+  if (!cdp) return false;
+  try {
     // Chrome refuse un en-tête Host qui n'est ni une IP ni localhost : on résout le nom en IP.
     const u = new URL(cdp);
     if (!/^(\d+\.){3}\d+$|^localhost$|^\[/.test(u.hostname)) {
@@ -36,7 +47,23 @@ async function boot() {
     browser = await chromium.connectOverCDP(cdp, { timeout: 15_000 });
     context = browser.contexts()[0] || (await browser.newContext());
     page = context.pages()[0] || (await context.newPage());
-  } else {
+    mode = "cdp";
+    return true;
+  } catch (e) {
+    // Le Chrome de l'opérateur passe par un tunnel depuis son poste : il est
+    // absent dès que ce poste dort. Échouer ici rendait le navigateur mort
+    // pour tout le monde, missions comprises, alors qu'un Chromium local
+    // attend dans le conteneur. On bascule, et on dit pourquoi.
+    cdpError = String(e).slice(0, 300);
+    console.error("CDP injoignable, bascule sur le profil local :", cdpError);
+    browser = undefined;
+    return false;
+  }
+}
+
+async function boot() {
+  if (!(await tryCdp())) {
+    mode = "profile";
     fs.mkdirSync(PROFILE, { recursive: true });
     context = await chromium.launchPersistentContext(PROFILE, {
       headless: true,
@@ -61,6 +88,7 @@ async function boot() {
     }
   }
   fs.mkdirSync(SHOTS, { recursive: true });
+  console.log(`navigateur prêt en mode ${mode}${cdpError ? " (CDP indisponible)" : ""}`);
 }
 
 function touch() {
@@ -104,7 +132,10 @@ const handlers = {
   },
   async back() { await page.goBack({ waitUntil: "domcontentloaded" }); return { url: page.url(), title: await page.title() }; },
   async cookies(a) { const c = await context.cookies(a.url ? [a.url] : undefined); return { count: c.length, domains: [...new Set(c.map((x) => x.domain))] }; },
-  async status() { return { mode: process.env.BROWSER_CDP_URL ? "cdp" : "profile", url: page.url(), tabs: context.pages().length }; },
+  // `status` disait le mode VOULU (la variable d'environnement), pas le mode
+  // obtenu. Quand le tunnel est fermé il annonçait donc "cdp" en servant le
+  // profil local, ce qui envoie chercher la panne à l'exact opposé.
+  async status() { return { mode, cdp_configure: Boolean(process.env.BROWSER_CDP_URL), cdp_erreur: cdpError, url: page.url(), tabs: context.pages().length }; },
 };
 
 boot().then(() => {
