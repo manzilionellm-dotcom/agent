@@ -214,10 +214,15 @@ export function findMission(name: string): Mission | undefined {
 }
 
 /** Outils accordés à une mission créée par l'opérateur, selon le préréglage choisi. */
+// Les outils Google suivent « recherche » et « complet » : une mission que
+// l'opérateur invente — chercher du travail, suivre une commande, relancer un
+// devis — commence presque toujours par une alerte ou un échange reçu par
+// courriel. Les lui refuser l'obligerait à recopier ses mails à la main.
+// `googleTools()` rend une liste vide tant que Google n'est pas configuré.
 const TOOLSET_IMPL: Record<Toolset, () => Mission["tools"]> = {
-  recherche: () => [...CORE_TOOLS, ...WEB_TOOLS],
+  recherche: () => [...CORE_TOOLS, ...WEB_TOOLS, ...googleTools()],
   code: () => [...CORE_TOOLS, ...SANDBOX_TOOLS],
-  complet: () => [...CORE_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS],
+  complet: () => [...CORE_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS, ...googleTools()],
 };
 
 /** Une ligne de `custom_missions` devient une Mission ordinaire : même moteur, mêmes garde-fous. */
