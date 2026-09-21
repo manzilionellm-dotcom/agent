@@ -47,17 +47,22 @@ cd "$DIR"
 
 # 3. Fichiers de config --------------------------------------------------------
 mkdir -p secrets backups && chmod 700 secrets
-if [ ! -f .env ]; then
-  cp .env.example .env
-  TOKEN=$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)
-  PGPASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
-  sed -i.bak "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$PGPASS/" .env
-  grep -q '^ORCHESTRATOR_TOKEN=' .env && sed -i.bak "s/^ORCHESTRATOR_TOKEN=.*/ORCHESTRATOR_TOKEN=$TOKEN/" .env || echo "ORCHESTRATOR_TOKEN=$TOKEN" >> .env
-  GID=$(getent group docker 2>/dev/null | cut -d: -f3 || stat -f %g /var/run/docker.sock 2>/dev/null || echo 999)
-  sed -i.bak "s/^DOCKER_GID=.*/DOCKER_GID=${GID:-999}/" .env
-  rm -f .env.bak
-  say ".env créé (mot de passe Postgres et token API générés)"
-fi
+[ -f .env ] || { cp .env.example .env; say ".env créé à partir de .env.example"; }
+
+# Valeurs générées par la machine : remplies si vides OU encore sur le gabarit.
+# (Un .env écrit à la main garde souvent « change-me… » : sans ceci, Postgres tourne
+#  avec un mot de passe public et l'API locale reste désactivée.)
+rand() { head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+set_if_placeholder() { # $1 = clé, $2 = valeur, $3… = motifs considérés comme « non renseigné »
+  local key="$1" val="$2"; shift 2
+  local cur; cur=$(grep -E "^$key=" .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
+  for bad in "" "$@"; do [ "$cur" = "$bad" ] && { grep -qE "^$key=" .env && sed -i.bak "s|^$key=.*|$key=$val|" .env || printf '%s=%s\n' "$key" "$val" >> .env; rm -f .env.bak; say "$key généré"; return; }; done
+}
+set_if_placeholder POSTGRES_PASSWORD "$(rand 32)" change-me-32-chars-min change-me
+set_if_placeholder ORCHESTRATOR_TOKEN "$(rand 40)"
+GID=$(getent group docker 2>/dev/null | cut -d: -f3 || stat -f %g /var/run/docker.sock 2>/dev/null || echo 999)
+set_if_placeholder DOCKER_GID "${GID:-999}" 999
+chmod 600 .env
 [ -f agent/mcp.json ] || cp agent/mcp.json.example agent/mcp.json
 
 # 4. Clés obligatoires ---------------------------------------------------------
