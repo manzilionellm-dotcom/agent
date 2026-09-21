@@ -50,8 +50,19 @@ ufw allow OpenSSH
 ufw --force enable
 
 echo "== 5. Durcissement SSH + mises à jour auto"
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+# Ne JAMAIS couper l'authentification par mot de passe tant qu'aucune clé n'est en
+# place : sinon ce script enferme l'opérateur hors de sa propre machine, et seule la
+# console du fournisseur permet d'y revenir. Le durcissement s'applique à la
+# ré-exécution suivante, une fois la clé installée.
+if grep -qs '^\(ssh-\|ecdsa-\|sk-ssh\)' /root/.ssh/authorized_keys "/home/$USER_NAME/.ssh/authorized_keys"; then
+  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  echo "   clé SSH détectée : authentification par mot de passe désactivée."
+else
+  echo "   AUCUNE clé SSH : authentification par mot de passe CONSERVÉE."
+  echo "   Installe ta clé, puis relance ce script pour durcir :"
+  echo "     ssh-copy-id root@<ip>    (ou ajoute ta clé publique à ~/.ssh/authorized_keys)"
+fi
 # Tunnel inverse du navigateur (BROWSER_CDP_URL) : le port doit écouter sur toutes les interfaces
 # locales du VPS pour être joignable depuis les conteneurs ; ufw bloque l'extérieur.
 grep -q '^GatewayPorts' /etc/ssh/sshd_config && sed -i 's/^GatewayPorts.*/GatewayPorts clientspecified/' /etc/ssh/sshd_config || echo 'GatewayPorts clientspecified' >> /etc/ssh/sshd_config
