@@ -117,29 +117,34 @@ const Env = z.object({
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
   /** Nom du modèle de message approuvé pour les envois hors fenêtre 24 h (rapport du matin). */
+  WHATSAPP_TEMPLATE_NAME: z.string().default("manzi_daily_report"),
+  WHATSAPP_TEMPLATE_LANG: z.string().default("fr"),
+
+  // --- Transcription des messages vocaux ---------------------------------------
   /**
-   * Transcription des messages vocaux : n'importe quelle API compatible OpenAI
-   * `/audio/transcriptions` (OpenAI, Groq, serveur Whisper local). Vide = les
-   * vocaux sont signalés mais pas transcrits. Whisper dans le conteneur
-   * demanderait plus de RAM qu'il n'en reste sur un 4 Go partagé avec Chromium.
+   * N'importe quelle API compatible OpenAI `/audio/transcriptions` (OpenAI,
+   * Groq, serveur Whisper local). Vide = les vocaux sont signalés mais pas
+   * transcrits. Whisper dans le conteneur demanderait plus de RAM qu'il n'en
+   * reste sur un 4 Go déjà partagé avec Chromium.
    */
-  /**
-   * Gmail + Agenda en direct. Le jeton de rafraîchissement s'obtient une fois
-   * depuis un poste avec navigateur (deploy/google-auth.ps1) ; il ne dépend
-   * ensuite ni de l'adresse IP, ni du poste, ni d'une session ouverte —
-   * contrairement aux cookies d'un navigateur, qu'un changement de pays suffit
-   * à faire invalider par Google.
-   */
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_REFRESH_TOKEN: z.string().optional(),
   TRANSCRIBE_BASE_URL: z.string().url().optional(),
   TRANSCRIBE_API_KEY: z.string().optional(),
   TRANSCRIBE_MODEL: z.string().default("whisper-large-v3"),
   /** Langue attendue des vocaux (code ISO). Améliore nettement la transcription. */
   JARVIS_LANGUAGE: z.string().default("fr"),
-  WHATSAPP_TEMPLATE_NAME: z.string().default("manzi_daily_report"),
-  WHATSAPP_TEMPLATE_LANG: z.string().default("fr"),
+
+  // --- Google (Gmail + Agenda) --------------------------------------------------
+  /**
+   * Le jeton de rafraîchissement s'obtient une fois depuis un poste avec
+   * navigateur (deploy/google-auth.ps1) ; il ne dépend ensuite ni de l'adresse
+   * IP, ni du poste, ni d'une session ouverte — contrairement aux cookies d'un
+   * navigateur, qu'un changement de pays suffit à faire invalider par Google.
+   */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REFRESH_TOKEN: z.string().optional(),
+  /** Jeton de la balise Search Console : prouve la propriété du domaine sans toucher au DNS. */
+  GOOGLE_SITE_VERIFICATION: z.string().optional(),
   // Twilio
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),

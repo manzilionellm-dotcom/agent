@@ -34,11 +34,24 @@ nav a { margin-right: 1.25rem; color: var(--muted); }
 code { background: color-mix(in srgb, var(--fg) 8%, transparent); padding: .1em .35em; border-radius: 3px; font-size: .9em; }
 `;
 
+/**
+ * Balise de validation Google Search Console. Google exige que le domaine
+ * listé dans « Domaines autorisés » de l'écran OAuth lui appartienne
+ * prouvablement. La validation par balise se fait ici, sans enregistrement
+ * DNS — utile quand le domaine, le tunnel et le serveur sont administrés
+ * depuis trois interfaces différentes à une heure du matin.
+ */
+function verification(): string {
+  const v = config().GOOGLE_SITE_VERIFICATION;
+  return v ? `<meta name="google-site-verification" content="${v.replace(/"/g, "&quot;")}">` : "";
+}
+
 function page(title: string, body: string): string {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} — Manzi Junior</title>
 <meta name="robots" content="noindex">
+${verification()}
 <style>${CSS}</style></head><body><main>${body}
 <nav><a href="/">Accueil</a><a href="/privacy">Confidentialité</a><a href="/terms">Conditions</a></nav>
 </main></body></html>`;
