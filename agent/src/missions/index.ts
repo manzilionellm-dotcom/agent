@@ -15,6 +15,7 @@ import { searchTools } from "../tools/search.js";
 import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
 import { browserTool } from "../tools/browser.js";
+import { getCustomMission, type CustomMissionRow, type Toolset } from "./custom.js";
 
 /**
  * Une mission = un cahier des charges + un jeu d'outils + un budget.
@@ -207,6 +208,41 @@ Critère de succès : playbooks à jour avec preuves, métriques 7 jours, aucun 
 
 export function findMission(name: string): Mission | undefined {
   return MISSIONS.find((m) => m.name === name);
+}
+
+/** Outils accordés à une mission créée par l'opérateur, selon le préréglage choisi. */
+const TOOLSET_IMPL: Record<Toolset, () => Mission["tools"]> = {
+  recherche: () => [...CORE_TOOLS, ...WEB_TOOLS],
+  code: () => [...CORE_TOOLS, ...SANDBOX_TOOLS],
+  complet: () => [...CORE_TOOLS, ...WEB_TOOLS, ...SANDBOX_TOOLS],
+};
+
+/** Une ligne de `custom_missions` devient une Mission ordinaire : même moteur, mêmes garde-fous. */
+export function customToMission(r: CustomMissionRow): Mission {
+  return {
+    name: r.name,
+    cron: "", // jamais planifiée d'office : seul un ordre explicite la met dans `schedules`
+    model: r.model,
+    effort: "medium",
+    budgetUsd: r.budget_usd,
+    maxIterations: r.max_iterations,
+    mcpServers: [],
+    allowIrreversible: r.allow_irreversible,
+    tools: TOOLSET_IMPL[r.toolset](),
+    task: ({ now }) =>
+      `Date: ${now.toISOString()}.
+Mission « ${r.name} », définie par l'opérateur le ${String(r.created_at).slice(0, 10)}.
+
+${r.objective}
+
+Si l'objectif est ambigu, retiens la lecture la plus utile et dis-le dans ton compte rendu.
+Termine par un compte rendu court : ce qui a été fait, ce qui a échoué, ce qui reste.`,
+  };
+}
+
+/** Missions intégrées d'abord, puis celles que l'opérateur a créées. */
+export async function resolveMission(name: string): Promise<Mission | undefined> {
+  return findMission(name) ?? (await getCustomMission(name).then((r) => (r ? customToMission(r) : undefined)));
 }
 
 export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {

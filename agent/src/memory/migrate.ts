@@ -98,6 +98,20 @@ const MIGRATIONS: string[] = [
      usd        NUMERIC(10,4) NOT NULL,
      details    JSONB NOT NULL
    )`,
+  // Missions définies par l'opérateur, en base plutôt qu'en dur : il en crée
+  // autant qu'il veut depuis WhatsApp, sans recompiler ni redéployer.
+  `CREATE TABLE IF NOT EXISTS custom_missions (
+     name               TEXT PRIMARY KEY,
+     objective          TEXT NOT NULL,
+     toolset            TEXT NOT NULL DEFAULT 'recherche',
+     model              TEXT NOT NULL DEFAULT 'worker',
+     budget_usd         NUMERIC(6,2) NOT NULL DEFAULT 1.0,
+     max_iterations     INT NOT NULL DEFAULT 30,
+     allow_irreversible BOOLEAN NOT NULL DEFAULT false,
+     created_by         TEXT NOT NULL,
+     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

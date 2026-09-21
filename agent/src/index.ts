@@ -6,7 +6,8 @@ import { migrate } from "./memory/migrate.js";
 import { closeDb, db } from "./memory/db.js";
 import { spentToday } from "./memory/store.js";
 import { connectMcpServers, disconnectMcpServers, mcpStatus } from "./mcp/registry.js";
-import { findMission, MISSIONS } from "./missions/index.js";
+import { resolveMission, MISSIONS } from "./missions/index.js";
+import { listCustomMissions } from "./missions/custom.js";
 import { buildAndDeliverReport } from "./missions/report.js";
 import { launch, startScheduler, stopScheduler, scheduledJobs, withLock, listSchedules } from "./scheduler.js";
 import { runSwarm } from "./swarm/coordinator.js";
@@ -114,12 +115,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { reply: await handleChat({ channel: "api", peer, text }) });
   }
   if (req.method === "GET" && url.pathname === "/missions") {
-    return json(res, 200, MISSIONS.map((m) => ({ name: m.name, defaultCron: m.cron, model: m.model, budgetUsd: m.budgetUsd })));
+    const custom = await listCustomMissions();
+    return json(res, 200, [
+      ...MISSIONS.map((m) => ({ name: m.name, defaultCron: m.cron, model: m.model, budgetUsd: m.budgetUsd, source: "intégrée" })),
+      ...custom.map((m) => ({ name: m.name, defaultCron: "", model: m.model, budgetUsd: m.budget_usd, source: `créée par ${m.created_by}` })),
+    ]);
   }
   if (req.method === "GET" && url.pathname === "/schedules") return json(res, 200, { mode: config().AUTONOMY_MODE, schedules: await listSchedules(), jobs: scheduledJobs() });
-  const mission = url.pathname.match(/^\/missions\/([a-z_]+)$/);
+  const mission = url.pathname.match(/^\/missions\/([a-z0-9_]+)$/);
   if (req.method === "POST" && mission) {
-    const m = findMission(mission[1]!);
+    const m = await resolveMission(mission[1]!);
     if (!m) return json(res, 404, { error: "mission inconnue" });
     void launch(m).catch((e) => logger.error({ err: String(e) }, "mission HTTP"));
     return json(res, 202, { started: m.name });

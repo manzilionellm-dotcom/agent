@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { db } from "./memory/db.js";
 import { spentToday } from "./memory/store.js";
-import { MISSIONS, findMission, runMission, type Mission } from "./missions/index.js";
+import { MISSIONS, findMission, resolveMission, runMission, type Mission } from "./missions/index.js";
 import { buildAndDeliverReport } from "./missions/report.js";
 
 /**
@@ -69,7 +69,7 @@ function runByName(name: string): () => Promise<void> {
       await withLock("report", buildAndDeliverReport);
       return;
     }
-    const m = findMission(name);
+    const m = await resolveMission(name);
     if (m) await launch(m);
   };
 }

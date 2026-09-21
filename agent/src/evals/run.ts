@@ -7,7 +7,7 @@ import { migrate } from "../memory/migrate.js";
 import { closeDb, db } from "../memory/db.js";
 import { connectMcpServers, disconnectMcpServers } from "../mcp/registry.js";
 import { handleChat } from "../channels/chat.js";
-import { findMission, runMission } from "../missions/index.js";
+import { resolveMission, runMission } from "../missions/index.js";
 
 /**
  * Mesure : rejoue les cas de evals/cases.json, note chaque sortie contre ses critères
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
         if (c.kind === "chat") {
           output = await handleChat({ channel: "api", peer: `eval:${c.name}`, text: c.input });
         } else {
-          const m = findMission(c.input);
+          const m = await resolveMission(c.input);
           if (!m) throw new Error(`mission inconnue: ${c.input}`);
           const r = await runMission(m);
           output = r.text;

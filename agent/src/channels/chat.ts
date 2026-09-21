@@ -5,7 +5,8 @@ import { runAgent, resolveModel } from "../llm.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
 import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, captureFeedback, spentToday } from "../memory/store.js";
-import { MISSIONS, findMission } from "../missions/index.js";
+import { MISSIONS, resolveMission } from "../missions/index.js";
+import { listCustomMissions, saveCustomMission, deleteCustomMission, NAME_RE, TOOLSETS, MODELS, type Toolset, type ModelKind } from "../missions/custom.js";
 import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
@@ -34,6 +35,8 @@ Règle absolue : tu n'agis que sur ordre explicite. Quand l'opérateur demande u
 
 Les tâches longues (mission, essaim) : lance, réponds tout de suite « lancé, je t'écris quand c'est fini », et c'est tout — un message de fin arrivera automatiquement.
 
+Missions sur mesure : quand l'opérateur décrit un travail qu'il voudra refaire (« surveille X », « chaque semaine, compare Y »), crée-la avec create_mission plutôt que de l'exécuter une fois et l'oublier. Rédige l'objectif toi-même, en cahier des charges précis, à partir de ce qu'il a dit — ne lui demande pas de le formuler. Confirme en une ligne, puis demande s'il veut la lancer maintenant ou la planifier. Il peut en créer autant qu'il veut.
+
 Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report avant de dire « je ne sais pas ». Les préférences de l'opérateur vont dans remember_fact avec topic 'profil:...'.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer.`;
@@ -43,15 +46,15 @@ type Notify = (text: string) => Promise<void>;
 function controlTools(notify: Notify) {
   const runMission = betaZodTool({
     name: "run_mission",
-    description: `Lance immédiatement une mission (asynchrone). Missions : ${MISSIONS.map((m) => m.name).join(", ")}, report. L'opérateur recevra un message à la fin.`,
+    description: `Lance immédiatement une mission (asynchrone). Missions intégrées : ${MISSIONS.map((m) => m.name).join(", ")}, report. Les missions créées par l'opérateur marchent pareil — list_missions les énumère. L'opérateur recevra un message à la fin.`,
     inputSchema: z.object({ name: z.string() }),
     run: async (i) => {
       if (i.name === "report") {
         void withLock("report", buildAndDeliverReport).then(() => notify("📋 Rapport envoyé.")).catch((e) => notify(`Rapport en échec : ${String(e).slice(0, 200)}`));
         return "rapport lancé";
       }
-      const m = findMission(i.name);
-      if (!m) return `Error: mission inconnue (${MISSIONS.map((x) => x.name).join(", ")})`;
+      const m = await resolveMission(i.name);
+      if (!m) return `Error: mission inconnue (${MISSIONS.map((x) => x.name).join(", ")}, + celles de list_missions)`;
       void launch(m)
         .then((r) => notify(r ? `✅ ${m.name} terminée (${r.status}, ${r.usage.usd.toFixed(2)} $).\n${r.text.slice(0, 1200)}` : `${m.name} : déjà en cours ou plafond journalier atteint.`))
         .catch((e) => notify(`❌ ${m.name} en erreur : ${String(e).slice(0, 200)}`));
@@ -87,7 +90,7 @@ function controlTools(notify: Notify) {
       "Planifie (ou déplanifie) une mission sur ordre de l'opérateur. C'est le SEUL moyen qu'une mission tourne sans ordre direct ; le planning est visible via list_schedules. cron 5 champs en heure locale (ex: '0 5 * * *' = tous les jours 5h ; '30 7 * * 1-5' = 7h30 en semaine), ou 'off' pour retirer.",
     inputSchema: z.object({ name: z.string(), cron: z.string() }),
     run: async (i) => {
-      if (i.name !== "report" && !findMission(i.name)) return "Error: mission inconnue";
+      if (i.name !== "report" && !(await resolveMission(i.name))) return "Error: mission inconnue";
       await setSchedule(i.name, i.cron === "off" ? null : i.cron, "whatsapp");
       return i.cron === "off" ? `${i.name} déplanifiée` : `${i.name} planifiée : ${i.cron}`;
     },
@@ -110,6 +113,61 @@ function controlTools(notify: Notify) {
     run: async () => `${(await spentToday()).toFixed(2)} $ / plafond ${config().DAILY_BUDGET_USD} $`,
   });
 
+  // Créer une mission depuis WhatsApp plutôt que dans le code : l'opérateur en
+  // ajoute autant qu'il veut, elles passent par le même moteur et les mêmes
+  // garde-fous que les neuf missions intégrées.
+  const createMission = betaZodTool({
+    name: "create_mission",
+    description:
+      "Crée (ou remplace) une mission durable définie par l'opérateur. À utiliser dès qu'il décrit un travail récurrent. L'objectif doit être rédigé comme un cahier des charges : quoi faire, sur quoi, et le critère de succès. Réutiliser un nom existant écrase la mission.",
+    inputSchema: z.object({
+      name: z.string().regex(NAME_RE, "minuscules, chiffres et _ ; commence par une lettre ; 3 à 40 caractères"),
+      objective: z.string().min(40, "décris la mission en détail : étapes et critère de succès"),
+      toolset: z
+        .enum(TOOLSETS)
+        .default("recherche")
+        .describe("recherche = web, scraping, navigateur | code = sandbox, fichiers | complet = les deux"),
+      model: z.enum(MODELS).default("worker").describe("worker = courant | planner = raisonnement | critical = écrit du code ou déploie"),
+      budget_usd: z.number().positive().max(10).default(1),
+      max_iterations: z.number().int().min(5).max(120).default(30),
+    }),
+    run: async (i) => {
+      if (MISSIONS.some((m) => m.name === i.name) || i.name === "report") return `Error: « ${i.name} » est une mission intégrée, choisis un autre nom`;
+      await saveCustomMission({
+        name: i.name,
+        objective: i.objective,
+        toolset: i.toolset as Toolset,
+        model: i.model as ModelKind,
+        budgetUsd: i.budget_usd,
+        maxIterations: i.max_iterations,
+        createdBy: "whatsapp",
+      });
+      return `mission « ${i.name} » enregistrée (${i.toolset}, ${i.model}, ${i.budget_usd} $). Lance-la avec run_mission, planifie-la avec schedule_mission.`;
+    },
+  });
+
+  const deleteMission = betaZodTool({
+    name: "delete_mission",
+    description: "Supprime une mission créée par l'opérateur. Les missions intégrées ne sont pas supprimables.",
+    inputSchema: z.object({ name: z.string() }),
+    run: async (i) => ((await deleteCustomMission(i.name)) ? `mission « ${i.name} » supprimée` : `aucune mission créée nommée « ${i.name} »`),
+  });
+
+  const listMissions = betaZodTool({
+    name: "list_missions",
+    description: "Liste toutes les missions : les intégrées et celles créées par l'opérateur.",
+    inputSchema: z.object({}),
+    run: async () => {
+      const custom = await listCustomMissions();
+      return [
+        `intégrées : ${MISSIONS.map((m) => m.name).join(", ")}, report`,
+        custom.length
+          ? `créées par toi :\n${custom.map((m) => `- ${m.name} (${m.toolset}, ${m.model}, ${m.budget_usd} $) : ${m.objective.slice(0, 120)}`).join("\n")}`
+          : "créées par toi : aucune pour l'instant",
+      ].join("\n");
+    },
+  });
+
   const playbooks = betaZodTool({
     name: "show_playbooks",
     description: "Affiche les playbooks (règles que l'agent s'est données lors des réflexions ordonnées). Rien n'est caché.",
@@ -117,7 +175,7 @@ function controlTools(notify: Notify) {
     run: async () => memoryDigest(6_000, "/memories/playbooks"),
   });
 
-  return [runMission, swarm, latestReport, schedule, schedules, spend, playbooks];
+  return [runMission, swarm, latestReport, schedule, schedules, spend, playbooks, createMission, deleteMission, listMissions];
 }
 
 /* ------------------------------------------------------------------------ */

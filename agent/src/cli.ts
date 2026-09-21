@@ -2,7 +2,7 @@ import { logger } from "./logger.js";
 import { migrate } from "./memory/migrate.js";
 import { closeDb } from "./memory/db.js";
 import { connectMcpServers, disconnectMcpServers } from "./mcp/registry.js";
-import { MISSIONS, findMission } from "./missions/index.js";
+import { MISSIONS, resolveMission } from "./missions/index.js";
 import { buildAndDeliverReport } from "./missions/report.js";
 import { launch } from "./scheduler.js";
 import { runSwarm } from "./swarm/coordinator.js";
@@ -36,7 +36,7 @@ if (!name) {
       console.log(`\n=== LIVRABLE ===\n${r.merged}`);
       console.log(`\nTotal: ${r.totalUsd.toFixed(2)} USD, mur ${Math.round(r.wallSeconds)}s, séquentiel estimé ${Math.round(r.results.reduce((a, x) => a + x.seconds, 0))}s`);
     } else {
-      const m = findMission(name);
+      const m = await resolveMission(name);
       if (!m) throw new Error(`mission inconnue: ${name}`);
       await launch(m);
     }
