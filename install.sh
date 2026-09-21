@@ -67,20 +67,37 @@ chmod 600 .env
 
 # 4. Clés obligatoires ---------------------------------------------------------
 missing=()
-val() { grep -E "^$1=" .env | cut -d= -f2- | tr -d '"' ; }
+val() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '"\r' ; }
+# Une valeur restée sur le gabarit ne vaut pas mieux qu'une valeur vide : sans ce
+# filtre l'installation va au bout et le bot meurt au premier appel d'API, avec un
+# message du fournisseur que personne ne rattache au .env.
+filled() {
+  case "$(val "$1")" in
+    "" | *A-REMPLIR* | *REMPLACE* | "sk-..." | "sk-ant-..." | "tvly-..." | "github_pat_...") return 1 ;;
+    *) return 0 ;;
+  esac
+}
+need() { filled "$1" || missing+=("${2:-$1}"); }
+
 PROVIDER=$(val LLM_PROVIDER); PROVIDER=${PROVIDER:-anthropic}
-if [ "$PROVIDER" = "anthropic" ]; then [ -n "$(val ANTHROPIC_API_KEY)" ] && [ "$(val ANTHROPIC_API_KEY)" != "sk-ant-..." ] || missing+=(ANTHROPIC_API_KEY); fi
+if [ "$PROVIDER" = "anthropic" ]; then need ANTHROPIC_API_KEY; fi
 if [ "$PROVIDER" = "openai_compat" ]; then
-  [ -n "$(val OPENAI_COMPAT_BASE_URL)" ] || missing+=(OPENAI_COMPAT_BASE_URL)
-  [ -n "$(val OPENAI_COMPAT_API_KEY)" ] || missing+=(OPENAI_COMPAT_API_KEY)
-  [ -n "$(val TAVILY_API_KEY)" ] || [ -n "$(val SERPAPI_API_KEY)" ] || missing+=("TAVILY_API_KEY ou SERPAPI_API_KEY")
+  need OPENAI_COMPAT_BASE_URL
+  need OPENAI_COMPAT_API_KEY
+  filled TAVILY_API_KEY || filled SERPAPI_API_KEY || missing+=("TAVILY_API_KEY ou SERPAPI_API_KEY")
 fi
-[ -n "$(val LLM_PROVIDER_CRITICAL)" ] && [ "$(val LLM_PROVIDER_CRITICAL)" = "anthropic" ] && { [ -n "$(val ANTHROPIC_API_KEY)" ] && [ "$(val ANTHROPIC_API_KEY)" != "sk-ant-..." ] || missing+=("ANTHROPIC_API_KEY (missions critiques)"); }
-[ -n "$(val GITHUB_TOKEN)" ] && [ "$(val GITHUB_TOKEN)" != "github_pat_..." ] || missing+=(GITHUB_TOKEN)
+# `[ test ] && action` en tête de ligne sort du script sous `set -e` quand le test
+# est faux : ces vérifications restent donc en `if`.
+if [ "$(val LLM_PROVIDER_CRITICAL)" = "anthropic" ]; then need ANTHROPIC_API_KEY "ANTHROPIC_API_KEY (missions critiques)"; fi
+need GITHUB_TOKEN
 WA=$(val WHATSAPP_PROVIDER); WA=${WA:-none}
-if [ "$WA" = "meta" ]; then for k in WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN WHATSAPP_APP_SECRET WHATSAPP_VERIFY_TOKEN WHATSAPP_ALLOWED_NUMBERS; do [ -n "$(val $k)" ] || missing+=($k); done; fi
-if [ "$WA" = "twilio" ]; then for k in TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_WHATSAPP_FROM PUBLIC_URL WHATSAPP_ALLOWED_NUMBERS; do [ -n "$(val $k)" ] || missing+=($k); done; fi
-if [ $ECO = 1 ]; then [ -n "$(val CLOUDFLARE_TUNNEL_TOKEN)" ] || missing+=("CLOUDFLARE_TUNNEL_TOKEN (webhook WhatsApp, profil éco)"); fi
+case "$WA" in
+  meta)   for k in WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN WHATSAPP_APP_SECRET WHATSAPP_VERIFY_TOKEN WHATSAPP_ALLOWED_NUMBERS; do need "$k"; done ;;
+  twilio) for k in TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_WHATSAPP_FROM PUBLIC_URL WHATSAPP_ALLOWED_NUMBERS; do need "$k"; done ;;
+esac
+# Le tunnel n'existe que pour recevoir le webhook WhatsApp. Sans canal WhatsApp il
+# n'y a pas de webhook : l'exiger empêchait d'installer d'abord et de brancher après.
+if [ "$WA" != "none" ]; then need CLOUDFLARE_TUNNEL_TOKEN "CLOUDFLARE_TUNNEL_TOKEN (webhook WhatsApp)"; fi
 if [ ${#missing[@]} -gt 0 ]; then
   printf '\nRenseignez dans %s/.env : %s\n' "$DIR" "${missing[*]}"
   printf 'Puis relancez :  cd %s && ./install.sh%s%s%s\n\n' "$DIR" "$([ $ECO = 1 ] && echo ' --eco')" "$([ $SWARM = 1 ] && echo ' --swarm')" "$([ $JARVIS = 1 ] && echo ' --jarvis')"
