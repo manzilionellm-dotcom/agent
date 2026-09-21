@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Branche le webhook WhatsApp : démarre le tunnel, attend son adresse, et
-# imprime les deux valeurs à recopier dans Meta. À lancer sur le serveur.
+# Branche le webhook WhatsApp : démarre le tunnel, attend son adresse, puis
+# déclare cette adresse à Meta par l'API. À lancer sur le serveur.
 #
 #   bash deploy/whatsapp-up.sh
 #
-# Ce que ce script ne fait pas : parler à Meta. La configuration du webhook
-# se fait à la main dans l'interface — Meta n'expose pas d'API pour ça sans
-# vérification d'entreprise. Le script produit donc exactement ce qu'il faut
-# coller, plutôt que de décrire où cliquer.
+# Avec WHATSAPP_APP_ID et WHATSAPP_WABA_ID dans le .env, plus rien n'est à
+# cliquer : le script enregistre lui-même l'URL de rappel, le jeton de
+# vérification et l'abonnement au champ « messages ». C'est ce qui rend le
+# tunnel « quick » utilisable au quotidien — son adresse change à chaque
+# redémarrage, et chaque exécution de ce script la redéclare.
+# Sans ces deux identifiants, le script retombe sur l'ancien comportement :
+# il imprime les valeurs à recopier à la main.
 set -euo pipefail
 
 DIR="${MANZI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -57,30 +60,109 @@ fi
 
 say "santé de l'orchestrateur"
 for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 3; done
+curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 || die "l'orchestrateur ne répond pas : ${COMPOSE[*]} logs orchestrator"
 
-cat <<EOF
+CALLBACK="$PUBLIC/whatsapp/webhook"
+VERIFY=$(val WHATSAPP_VERIFY_TOKEN)
+APP_ID=$(val WHATSAPP_APP_ID)
+WABA_ID=$(val WHATSAPP_WABA_ID)
+GRAPH="https://graph.facebook.com/v21.0"
+
+# On rejoue ici, à l'identique, la vérification que Meta va faire : même URL,
+# même jeton, même défi. Meta, lui, ne répond que « URL de rappel non valide »,
+# sans distinguer un tunnel qui ne route pas d'un jeton qui ne correspond pas.
+say "vérification du webhook depuis l'extérieur"
+ECHO=""
+for _ in $(seq 1 20); do
+  ECHO=$(curl -fsS --max-time 10 -G "$CALLBACK" \
+           --data-urlencode "hub.mode=subscribe" \
+           --data-urlencode "hub.verify_token=$VERIFY" \
+           --data-urlencode "hub.challenge=manzi-ping" 2>/dev/null || true)
+  [ "$ECHO" = "manzi-ping" ] && break
+  sleep 3
+done
+[ "$ECHO" = "manzi-ping" ] || die "$CALLBACK ne renvoie pas le défi (reçu: '${ECHO:-rien}').
+  Soit le tunnel ne route pas   : ${COMPOSE[*]} logs $SERVICE
+  Soit WHATSAPP_VERIFY_TOKEN du .env diffère de celui que lit l'orchestrateur :
+                                 ${COMPOSE[*]} up -d --force-recreate orchestrator"
+
+# Meta répond `{"success":true}` aux deux appels ci-dessous, et un objet
+# `error` détaillé sinon. On garde le corps de la réponse : c'est la seule
+# chose qui dit *pourquoi* l'enregistrement a échoué.
+graph_ok() { case "$1" in *'"success":true'* | *'"success": true'*) return 0 ;; *) return 1 ;; esac; }
+
+if [ -n "$APP_ID" ] && [ -n "$WABA_ID" ]; then
+  # Le jeton d'application (`app_id|app_secret`) suffit pour déclarer le
+  # webhook, et évite de faire dépendre cette étape du jeton utilisateur.
+  say "déclaration de l'URL de rappel auprès de Meta"
+  R=$(curl -sS --max-time 30 -X POST "$GRAPH/$APP_ID/subscriptions" \
+        --data-urlencode "object=whatsapp_business_account" \
+        --data-urlencode "callback_url=$CALLBACK" \
+        --data-urlencode "verify_token=$VERIFY" \
+        --data-urlencode "fields=messages" \
+        --data-urlencode "access_token=$APP_ID|$(val WHATSAPP_APP_SECRET)" || true)
+  graph_ok "$R" || die "Meta a refusé l'URL de rappel : $R"
+
+  # Déclarer le webhook ne suffit pas : le compte WhatsApp doit encore être
+  # abonné à l'application, sinon les messages entrants ne partent nulle part.
+  # Cet appel-là exige le jeton permanent (scope whatsapp_business_management).
+  say "abonnement du compte WhatsApp à l'application"
+  R=$(curl -sS --max-time 30 -X POST "$GRAPH/$WABA_ID/subscribed_apps" \
+        -H "Authorization: Bearer $(val WHATSAPP_ACCESS_TOKEN)" || true)
+  graph_ok "$R" || die "abonnement refusé : $R"
+
+  cat <<EOF
+
+────────────────────────────────────────────────────────────────
+WEBHOOK EN PLACE — rien à cliquer dans Meta
+
+  Callback URL  :  $CALLBACK
+  Champ abonné  :  messages
+  Compte WhatsApp $WABA_ID abonné à l'app $APP_ID
+────────────────────────────────────────────────────────────────
+
+Écris « salut » sur WhatsApp au numéro du bot : il doit répondre.
+EOF
+else
+  cat <<EOF
 
 ────────────────────────────────────────────────────────────────
 À RECOPIER DANS META
   developers.facebook.com → ton app → WhatsApp → Configuration
 
-  Callback URL  :  $PUBLIC/whatsapp/webhook
-  Verify token  :  $(val WHATSAPP_VERIFY_TOKEN)
+  Callback URL  :  $CALLBACK
+  Verify token  :  $VERIFY
 
   Puis « Vérifier et enregistrer », et abonne-toi au champ « messages ».
-────────────────────────────────────────────────────────────────
 
-Ensuite, écris sur WhatsApp au numéro du bot : il doit répondre.
+  (Renseigne WHATSAPP_APP_ID et WHATSAPP_WABA_ID dans le .env et ce
+   script fera ces deux étapes tout seul, à chaque exécution.)
+────────────────────────────────────────────────────────────────
+EOF
+fi
+
+cat <<EOF
+
 Si rien n'arrive, regarde ce qui entre :
   ${COMPOSE[*]} logs -f orchestrator | grep -i whatsapp
 EOF
 
 if [ "$SERVICE" = tunnel-quick ]; then
-  cat <<'EOF'
+  if [ -n "$APP_ID" ] && [ -n "$WABA_ID" ]; then
+    cat <<'EOF'
+
+Cette adresse est temporaire : elle change à chaque redémarrage du tunnel.
+Relancer ce script suffit alors à la redéclarer à Meta. Pour une adresse qui
+ne bouge pas, crée un tunnel nommé (Cloudflare Zero Trust, domaine requis) et
+mets son jeton dans CLOUDFLARE_TUNNEL_TOKEN — ce script basculera dessus seul.
+EOF
+  else
+    cat <<'EOF'
 
 Cette adresse est temporaire : elle change à chaque redémarrage du tunnel,
-et le webhook Meta est alors à refaire. Pour une adresse fixe, crée un tunnel
-nommé (Cloudflare Zero Trust, domaine requis) et mets son jeton dans
+et le webhook Meta est alors à refaire à la main. Pour une adresse fixe, crée
+un tunnel nommé (Cloudflare Zero Trust, domaine requis) et mets son jeton dans
 CLOUDFLARE_TUNNEL_TOKEN — ce script basculera dessus tout seul.
 EOF
+  fi
 fi

@@ -86,8 +86,8 @@ Le **numéro de test** que Meta prête suffit : il écrit à 5 destinataires vé
 1. developers.facebook.com → Mes apps → Créer une app → type « Business » → ajouter le produit **WhatsApp**. Meta impose un portefeuille business ; le nom doit correspondre au nom public exact de l'entreprise, majuscule comprise, sinon il est refusé.
 2. Onglet *API Setup* : note le **Phone number ID** (`WHATSAPP_PHONE_NUMBER_ID`). Le jeton affiché à côté expire en 24 h — utile pour un premier essai, inutilisable ensuite.
 3. **Jeton permanent** : Business Settings → Utilisateurs système → créer `manzi-bot` (Administrateur) → lui affecter l'app **et** le compte WhatsApp en contrôle total → Générer un jeton, expiration *Jamais*, permissions `whatsapp_business_messaging` et `whatsapp_business_management` → `WHATSAPP_ACCESS_TOKEN`. Sans l'affectation des deux actifs, le jeton est créé mais n'a droit à rien.
-4. Paramètres de l'app → *Paramètres de base* → **Clé secrète** → `WHATSAPP_APP_SECRET`. **Obligatoire** : le serveur rejette tout message entrant non signé, c'est ce qui empêche un inconnu de faire parler le bot.
-5. Choisis une chaîne aléatoire → `WHATSAPP_VERIFY_TOKEN`.
+4. Paramètres de l'app → *Paramètres de base* → **Clé secrète** → `WHATSAPP_APP_SECRET`, et **Identifiant de l'application** → `WHATSAPP_APP_ID`. **Obligatoire** : le serveur rejette tout message entrant non signé, c'est ce qui empêche un inconnu de faire parler le bot.
+5. Choisis une chaîne aléatoire → `WHATSAPP_VERIFY_TOKEN`. Note aussi le **WABA ID** (*WhatsApp* → *Configuration de l'API*, sous le Phone number ID) → `WHATSAPP_WABA_ID` : c'est ce qui permet à l'étape 9 de se passer de l'interface.
 6. **Enregistrer le numéro auprès de l'API** — l'étape que rien ne signale, et sans laquelle tout envoi échoue sur `(#133010) Account not registered` :
    ```bash
    curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/register" \
@@ -103,13 +103,24 @@ Le **numéro de test** que Meta prête suffit : il écrit à 5 destinataires vé
      -d '{"messaging_product":"whatsapp","to":"<TON_NUMERO>","type":"template","template":{"name":"hello_world","language":{"code":"en_US"}}}'
    ```
    Si le téléphone sonne, le jeton, le numéro et l'autorisation sont bons — trois causes d'échec éliminées d'un coup. Tant que tu n'as pas répondu, Meta n'autorise que des modèles préapprouvés ; ta première réponse ouvre une fenêtre de 24 h pendant laquelle le bot écrit librement.
-9. **Le webhook, en une commande** — elle démarre le tunnel, attend son adresse et imprime ce qu'il faut coller :
+9. **Le webhook, en une commande** — elle démarre le tunnel, attend son adresse, rejoue la vérification que Meta va faire, puis déclare l'adresse à Meta et abonne le compte WhatsApp à l'app :
    ```bash
    bash deploy/whatsapp-up.sh
    ```
-   Avec `CLOUDFLARE_TUNNEL_TOKEN` (tunnel nommé, domaine requis) l'adresse est fixe. Sans jeton, un tunnel *quick* en tire une au hasard en `*.trycloudflare.com` : rien à acheter, mais elle change à chaque redémarrage et le webhook est alors à refaire.
-   Colle ensuite dans Meta → Configuration : **Callback URL** = l'adresse + `/whatsapp/webhook`, **Verify token** = `WHATSAPP_VERIFY_TOKEN`, puis abonne-toi au champ **messages**.
+   Avec `WHATSAPP_APP_ID` et `WHATSAPP_WABA_ID`, il n'y a **rien à cliquer** : le script fait les deux appels (`POST /{app-id}/subscriptions` avec le jeton d'application `app_id|app_secret`, puis `POST /{waba-id}/subscribed_apps` avec le jeton permanent). Sans ces deux identifiants, il retombe sur l'ancien comportement et imprime les valeurs à recopier.
+
+   Les deux appels sont nécessaires, et c'est le piège : déclarer l'URL de rappel ne suffit pas. Sans `subscribed_apps`, Meta vérifie le webhook, répond `success`, et les messages entrants ne partent nulle part — aucune erreur, aucun journal, juste un bot muet.
+
+   Avec `CLOUDFLARE_TUNNEL_TOKEN` (tunnel nommé, domaine requis) l'adresse est fixe. Sans jeton, un tunnel *quick* en tire une au hasard en `*.trycloudflare.com` : rien à acheter, mais elle change à chaque redémarrage — relancer cette commande suffit alors à redéclarer la nouvelle adresse.
 10. **Modèle pour les envois hors fenêtre 24 h** (rapport du matin, alertes si tu n'as rien écrit la veille) : WhatsApp Manager → Message templates → créer `manzi_daily_report`, catégorie *Utility*, langue `fr`, corps : `Rapport Manzi Junior : {{1}}`. Approbation en quelques minutes à quelques heures. Coût : quelques centimes par envoi ; les réponses dans les 24 h suivant ton message sont gratuites.
+
+### Ce que le numéro de test ne fait pas
+
+Trois plafonds, à connaître avant de construire dessus plutôt qu'après :
+
+- Le numéro de test prêté par Meta **expire** (de l'ordre de 90 jours) et n'écrit qu'aux **5 destinataires déclarés**. Pour un agent qui parle à son propriétaire, c'est sans effet ; pour écrire à des clients, il faut passer à *Configuration de la production* avec un numéro à soi.
+- Ce numéro ne doit **pas déjà être actif sur WhatsApp** (application normale ou Business) : l'enregistrer sur la Cloud API détache le compte existant, et les conversations sont perdues. Prends un numéro neuf.
+- Sans **vérification d'entreprise** : 250 conversations *business-initiated* par 24 h. Les réponses dans la fenêtre de 24 h n'y comptent pas. Suffisant pour un agent personnel, bloquant dès qu'il y a des clients.
 
 ### Option B — Twilio
 
