@@ -245,7 +245,30 @@ export async function resolveMission(name: string): Promise<Mission | undefined>
   return findMission(name) ?? (await getCustomMission(name).then((r) => (r ? customToMission(r) : undefined)));
 }
 
-export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
+/**
+ * La consigne du jour, écrite par l'opérateur au moment où il lance la mission.
+ *
+ * Elle est injectée ici plutôt que dans chaque `task()` : une mission décrit un
+ * métier durable (« écrire l'article SEO du jour »), la consigne décrit une
+ * intention ponctuelle (« aujourd'hui on vend à Uppsala »). Les mélanger
+ * obligerait à modifier neuf gabarits pour ajouter une variable, et à les
+ * remodifier à chaque mission créée depuis WhatsApp.
+ *
+ * Sa précédence est dite explicitement : sans cela le modèle suit le gabarit,
+ * qui est plus long et plus détaillé, et la consigne est traitée comme une
+ * remarque de contexte.
+ */
+export function withBrief(task: string, brief?: string): string {
+  if (!brief?.trim()) return task;
+  return `${task}
+
+<consigne_de_l_operateur>
+${brief.trim()}
+</consigne_de_l_operateur>
+Cette consigne est l'ordre du jour. Là où elle contredit les étapes ci-dessus — sujet, cible, angle, ton, priorité — c'est elle qui prime. Le reste du mode opératoire (sources, vérifications, critère de succès, publication) reste dû.`;
+}
+
+export async function runMission(m: Mission, opts: { signal?: AbortSignal; brief?: string } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
   const cfg = config();
   const target = resolveModel(m.model);
   const episodeId = await openEpisode(m.name, { model: target.model, provider: target.provider, effort: m.effort });
@@ -260,7 +283,7 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
   };
   const playbook = await memoryDigest(6_000, `/memories/playbooks/${m.name}.md`);
   const global = await memoryDigest(3_000, "/memories/playbooks/_global.md");
-  const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${m.task(ctx)}\n\n<memoire>\n${ctx.memory}\n</memoire>`;
+  const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${withBrief(m.task(ctx), opts.brief)}\n\n<memoire>\n${ctx.memory}\n</memoire>`;
   const tools = [...m.tools, ...mcpToolsFor(m.mcpServers, { allowIrreversible: m.allowIrreversible })];
 
   // Timeout mural : une mission qui traîne (site qui ne répond pas, build infini) est arrêtée proprement.

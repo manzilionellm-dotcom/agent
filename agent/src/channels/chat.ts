@@ -60,8 +60,13 @@ type Notify = (text: string) => Promise<void>;
 function controlTools(notify: Notify) {
   const runMission = betaZodTool({
     name: "run_mission",
-    description: `Lance immédiatement une mission (asynchrone). Missions intégrées : ${MISSIONS.map((m) => m.name).join(", ")}, report. Les missions créées par l'opérateur marchent pareil — list_missions les énumère. L'opérateur recevra un message à la fin.`,
-    inputSchema: z.object({ name: z.string() }),
+    description: `Lance immédiatement une mission (asynchrone). Missions intégrées : ${MISSIONS.map((m) => m.name).join(", ")}, report. Les missions créées par l'opérateur marchent pareil — list_missions les énumère. L'opérateur recevra un message à la fin.
+
+« brief » porte la consigne du jour, et prime sur le mode opératoire de la mission là où les deux se contredisent. Sers-t'en dès que Lionel précise un sujet, une ville, une cible ou un angle : « aujourd'hui on vend à Uppsala, écris l'article là-dessus » → run_mission{name:"seo_daily", brief:"Cible : Uppsala. ..."}. Rédige le brief toi-même, en consigne claire, à partir de ce qu'il a dit ; ne lui demande pas de le reformuler.`,
+    inputSchema: z.object({
+      name: z.string(),
+      brief: z.string().optional().describe("Consigne du jour pour cette exécution. Omets-la si l'opérateur n'a rien précisé."),
+    }),
     run: async (i) => {
       if (i.name === "report") {
         void withLock("report", buildAndDeliverReport).then(() => notify("📋 Rapport envoyé.")).catch((e) => notify(`Rapport en échec : ${String(e).slice(0, 200)}`));
@@ -69,10 +74,10 @@ function controlTools(notify: Notify) {
       }
       const m = await resolveMission(i.name);
       if (!m) return `Error: mission inconnue (${MISSIONS.map((x) => x.name).join(", ")}, + celles de list_missions)`;
-      void launch(m)
+      void launch(m, { brief: i.brief })
         .then((r) => notify(r ? `✅ ${m.name} terminée (${r.status}, ${r.usage.usd.toFixed(2)} $).\n${r.text.slice(0, 1200)}` : `${m.name} : déjà en cours ou plafond journalier atteint.`))
         .catch((e) => notify(`❌ ${m.name} en erreur : ${String(e).slice(0, 200)}`));
-      return `mission ${m.name} lancée (budget ${m.budgetUsd} $, ~${Math.round(m.maxIterations / 6)} min)`;
+      return `mission ${m.name} lancée${i.brief ? ` avec consigne : ${i.brief.slice(0, 120)}` : ""} (budget ${m.budgetUsd} $, ~${Math.round(m.maxIterations / 6)} min)`;
     },
   });
 

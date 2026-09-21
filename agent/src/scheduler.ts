@@ -46,19 +46,21 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
   }
 }
 
-export async function launch(m: Mission) {
+export async function launch(m: Mission, opts: { brief?: string } = {}) {
   const cfg = config();
   const spent = await spentToday();
   if (spent >= cfg.DAILY_BUDGET_USD) {
     logger.error({ spent, cap: cfg.DAILY_BUDGET_USD, mission: m.name }, "plafond journalier atteint — mission non lancée");
     return undefined;
   }
-  const first = await withLock(m.name, () => runMission(m));
+  const first = await withLock(m.name, () => runMission(m, { brief: opts.brief }));
   // Un seul retry, uniquement sur erreur transitoire (réseau, 429/5xx), après 3 minutes.
+  // La consigne est rejouée à l'identique : une reprise qui perd l'ordre du jour
+  // referait la mission par défaut, ce qui est pire que ne rien refaire.
   if (first && first.status === "failed" && /ECONN|ETIMEDOUT|429|5\d\d|rate limit|overloaded|socket hang up/i.test(first.text.slice(-2000))) {
     logger.warn({ mission: m.name }, "échec transitoire — nouvelle tentative dans 3 min");
     await new Promise((r) => setTimeout(r, 3 * 60_000));
-    return withLock(m.name, () => runMission(m));
+    return withLock(m.name, () => runMission(m, { brief: opts.brief }));
   }
   return first;
 }
