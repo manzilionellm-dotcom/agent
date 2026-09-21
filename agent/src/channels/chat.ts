@@ -1,7 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
-import { runAgent, resolveModel } from "../llm.js";
+import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
 import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, captureFeedback, spentToday } from "../memory/store.js";
@@ -260,8 +260,10 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     .filter(Boolean)
     .join("\n\n");
 
-  const res = await runAgent({
-    ...resolveModel("chat"),
+  // Routeur : Mistral d'abord (français, courant), DeepSeek s'il échoue,
+  // Claude en dernier recours. `runRouted` ne monte d'un cran que sur un
+  // échec constaté, jamais sur une impression de qualité.
+  const res = await runRouted("chat", {
     system: CHAT_SYSTEM,
     task,
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans

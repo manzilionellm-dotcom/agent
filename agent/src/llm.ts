@@ -84,6 +84,10 @@ export type AgentRunOptions = {
   model: string;
   /** Fournisseur pour cet appel ; défaut LLM_PROVIDER. */
   provider?: Provider;
+  /** Endpoint compatible OpenAI pour CET appel. Sans lui : OPENAI_COMPAT_BASE_URL. */
+  baseUrl?: string;
+  /** Clé pour CET appel. Sans elle : OPENAI_COMPAT_API_KEY. */
+  apiKey?: string;
   system: string;
   /** Instruction de mission (tout le cahier des charges en une fois). */
   task: string;

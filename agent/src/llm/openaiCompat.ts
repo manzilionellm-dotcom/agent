@@ -68,7 +68,14 @@ const KEEP_RECENT_TOOL_RESULTS = 12;
 
 export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunResult> {
   const cfg = config();
-  const client = new OpenAI({ baseURL: cfg.OPENAI_COMPAT_BASE_URL, apiKey: cfg.OPENAI_COMPAT_API_KEY, maxRetries: 4, timeout: 20 * 60_000 });
+  // L'endpoint peut être surchargé par appel : deux fournisseurs compatibles
+  // OpenAI (Mistral et DeepSeek) coexistent alors dans la même installation.
+  const client = new OpenAI({
+    baseURL: opts.baseUrl ?? cfg.OPENAI_COMPAT_BASE_URL,
+    apiKey: opts.apiKey ?? cfg.OPENAI_COMPAT_API_KEY,
+    maxRetries: 4,
+    timeout: 20 * 60_000,
+  });
   const price = parsePrices()[opts.model] ?? { in: 1, out: 3 };
   const budget = opts.budgetUsd ?? cfg.MISSION_BUDGET_USD;
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, usd: 0, iterations: 0 };
@@ -174,9 +181,9 @@ function pruneOldToolResults(messages: OpenAI.Chat.Completions.ChatCompletionMes
   }
 }
 
-export async function structuredOpenAICompat<T>(opts: { model: string; system: string; prompt: string; schema: Record<string, unknown> }): Promise<{ value: T; usd: number }> {
+export async function structuredOpenAICompat<T>(opts: { model: string; system: string; prompt: string; schema: Record<string, unknown>; baseUrl?: string; apiKey?: string }): Promise<{ value: T; usd: number }> {
   const cfg = config();
-  const client = new OpenAI({ baseURL: cfg.OPENAI_COMPAT_BASE_URL, apiKey: cfg.OPENAI_COMPAT_API_KEY, maxRetries: 3 });
+  const client = new OpenAI({ baseURL: opts.baseUrl ?? cfg.OPENAI_COMPAT_BASE_URL, apiKey: opts.apiKey ?? cfg.OPENAI_COMPAT_API_KEY, maxRetries: 3 });
   const price = parsePrices()[opts.model] ?? { in: 1, out: 3 };
   const res = await client.chat.completions.create({
     model: opts.model,

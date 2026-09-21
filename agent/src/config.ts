@@ -36,6 +36,26 @@ const Env = z.object({
   /** Prix custom pour un modèle non Anthropic : "deepseek-chat=0.27/1.1,kimi-k2=0.6/2.5" (USD in/out par 1M). */
   MODEL_PRICES: z.string().default(""),
 
+  // --- Routeur à trois cerveaux ------------------------------------------------
+  /**
+   * Mistral : français et tâches courantes. Endpoint compatible OpenAI, donc
+   * aucun code de fournisseur supplémentaire — seulement une seconde adresse.
+   * Sans clé, le backend disparaît simplement des chaînes de routage.
+   */
+  MISTRAL_API_KEY: z.string().optional(),
+  MISTRAL_BASE_URL: z.string().url().default("https://api.mistral.ai/v1"),
+  MODEL_MISTRAL: z.string().default("mistral-small-latest"),
+  /**
+   * Chaînes de repli, du moins cher au plus capable, séparées par « > ».
+   * Ex. : ROUTE_CHAT=mistral>deepseek>claude
+   * Vide = valeurs par défaut du routeur. Un backend sans clé est ignoré.
+   * `critical` ne cascade pas par défaut : il écrit du code et le déploie.
+   */
+  ROUTE_CHAT: z.string().optional(),
+  ROUTE_WORKER: z.string().optional(),
+  ROUTE_PLANNER: z.string().optional(),
+  ROUTE_CRITICAL: z.string().optional(),
+
   // --- Recherche temps réel (client tools, marchent avec tous les fournisseurs) ----
   TAVILY_API_KEY: z.string().optional(),
   SERPAPI_API_KEY: z.string().optional(),
