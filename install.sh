@@ -150,12 +150,19 @@ say "Démarrage"
 # On aligne donc la base sur le .env, qui fait foi. Le socket local du conteneur
 # est en `trust`, donc cet ALTER n'a pas besoin de l'ancien mot de passe.
 for _ in $(seq 1 20); do "${COMPOSE[@]}" exec -T db pg_isready -U manzi -q >/dev/null 2>&1 && break; sleep 3; done
-if "${COMPOSE[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 -U manzi -d manzi \
-     -v pw="$(val POSTGRES_PASSWORD)" -c "ALTER USER manzi WITH PASSWORD :'pw';" >/dev/null 2>&1; then
+# L'erreur de psql était jetée avec `2>&1`, et le message de repli accusait
+# l'initialisation de la base — une explication plausible qui masquait toutes
+# les autres. On la garde et on l'affiche : c'est elle qui dit si le rôle
+# manque, si le socket refuse, ou si la base n'est simplement pas prête.
+# L'affectation DOIT rester dans la condition du `if` : sous `set -e`, un
+# `VAR=$(commande qui échoue)` en instruction isolée sort du script.
+if PG_ERR=$("${COMPOSE[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 -U manzi -d manzi \
+     -v pw="$(val POSTGRES_PASSWORD)" -c "ALTER USER manzi WITH PASSWORD :'pw';" 2>&1); then
   say "Mot de passe Postgres aligné sur le .env"
   "${COMPOSE[@]}" restart orchestrator >/dev/null 2>&1 || true
 else
-  say "Postgres : alignement du mot de passe impossible (base peut-être encore en cours d'init)"
+  say "Postgres : alignement du mot de passe impossible"
+  printf '   %s\n' "${PG_ERR:-(aucun message)}" | head -5
 fi
 
 # 6. Vérification --------------------------------------------------------------
@@ -164,6 +171,14 @@ for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then break; fi
   sleep 3
 done
+# Un « Couldn't connect to server » ne dit pas POURQUOI. La raison est dans les
+# journaux de l'orchestrateur, et l'y envoyer chercher coûte un aller-retour à
+# chaque panne : on les montre ici.
+if ! curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
+  printf '\n\033[1;31m--- l'"'"'orchestrateur ne répond pas. Ses 40 dernières lignes : ---\033[0m\n' >&2
+  "${COMPOSE[@]}" logs --no-color --tail 40 orchestrator >&2 2>/dev/null || true
+  die "orchestrateur injoignable sur http://127.0.0.1:8787 (voir ci-dessus)"
+fi
 curl -fsS http://127.0.0.1:8787/healthz | head -c 600; echo
 say "Stack en ligne. Commandes utiles :"
 cat <<EOF

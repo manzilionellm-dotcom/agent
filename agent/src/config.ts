@@ -172,8 +172,25 @@ export function config(): Config {
   const env = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== ""));
   const parsed = Env.safeParse(env);
   if (!parsed.success) {
+    // « PUBLIC_URL: Invalid URL » ne dit pas ce que PUBLIC_URL contient, et
+    // l'orchestrateur redémarre en boucle sur ce message. La valeur reçue est
+    // presque toujours la réponse — un gabarit recopié tel quel, un espace,
+    // un guillemet. On l'affiche donc, SAUF pour les variables qui portent un
+    // secret : un journal de démarrage est lu, copié et collé bien plus
+    // souvent qu'un .env.
+    // DATABASE_URL ne contient aucun de ces mots et porte pourtant le mot de
+    // passe Postgres : le nom d'une variable ne dit pas toujours ce qu'elle
+    // cache. On la nomme, et on retire en plus tout `user:motdepasse@` d'une
+    // valeur affichée, pour les DSN qu'on n'aurait pas prévus.
+    const secret = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL|DSN/i;
     const issues = parsed.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+      .map((i) => {
+        const name = i.path.join(".");
+        const got = env[name as keyof typeof env];
+        if (secret.test(name) || typeof got !== "string") return `  - ${name}: ${i.message}`;
+        const shown = got.replace(/\/\/[^/@\s]*:[^/@\s]*@/g, "//***:***@").slice(0, 120);
+        return `  - ${name}: ${i.message} (reçu : « ${shown} »)`;
+      })
       .join("\n");
     throw new Error(`Configuration invalide:\n${issues}`);
   }
