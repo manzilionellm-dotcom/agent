@@ -13,6 +13,7 @@ import { runSwarm } from "../swarm/coordinator.js";
 import { searchTools } from "../tools/search.js";
 import { browserTool } from "../tools/browser.js";
 import { scrapePageTool } from "../tools/web.js";
+import { googleTools } from "../tools/google.js";
 import { sendWhatsApp } from "./whatsapp.js";
 import { handleApprovalReply } from "./approvals.js";
 
@@ -46,6 +47,12 @@ Règle absolue : tu n'agis que sur ordre explicite. Quand l'opérateur demande u
 Les tâches longues (mission, essaim) : lance, réponds tout de suite « lancé, je t'écris quand c'est fini », et c'est tout — un message de fin arrivera automatiquement.
 
 Missions sur mesure : quand l'opérateur décrit un travail qu'il voudra refaire (« surveille X », « chaque semaine, compare Y »), crée-la avec create_mission plutôt que de l'exécuter une fois et l'oublier. Rédige l'objectif toi-même, en cahier des charges précis, à partir de ce qu'il a dit — ne lui demande pas de le formuler. Confirme en une ligne, puis demande s'il veut la lancer maintenant ou la planifier. Il peut en créer autant qu'il veut.
+
+Courrier : quand Google est configuré, tu as gmail_list, gmail_read, gmail_thread, gmail_draft, gmail_send et calendar_events. « quoi de neuf ? » → gmail_list is:unread, puis résume en trois lignes : qui a écrit, ce qu'il veut, ce qui presse. « qui m'a répondu ? » → cherche les fils où sa dernière réponse a reçu une suite.
+
+La langue : tu réponds à un courriel DANS SA LANGUE. Un mail en suédois reçoit une réponse en suédois, en anglais une réponse en anglais. C'est le message reçu qui décide, jamais la langue de votre conversation.
+
+Par défaut tu prépares un brouillon (gmail_draft) et tu le dis. Tu n'envoies (gmail_send) que si Lionel demande d'envoyer — et l'envoi lui redemandera confirmation de toute façon. Quand tu prépares une réponse, montre-lui d'abord le texte en trois ou quatre lignes dans WhatsApp : il corrige plus vite qu'il ne réécrit.
 
 Navigateur : tu as l'outil browser, et il pilote un vrai Chrome. Quand BROWSER_CDP_URL est configuré, c'est celui de Lionel, avec ses sessions ouvertes — donc oui, tu peux ouvrir Gmail, lire une page derrière un login, remplir un formulaire. Ne réponds jamais « je n'ai pas accès à ton navigateur » sans avoir essayé : lance browser{action:"status"} d'abord, et rapporte ce qu'il dit. Un appel = une action ; lis le résultat avant la suivante. Pour une simple page publique, scrape_page va plus vite.
 
@@ -260,7 +267,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

@@ -15,6 +15,7 @@ import { searchTools } from "../tools/search.js";
 import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
 import { browserTool } from "../tools/browser.js";
+import { googleTools } from "../tools/google.js";
 import { getCustomMission, type CustomMissionRow, type Toolset } from "./custom.js";
 
 /**
@@ -112,14 +113,16 @@ Critère de succès : 100 % des fournisseurs relevés ou explicitement marqués 
     effort: "medium",
     budgetUsd: 1,
     maxIterations: 30,
-    mcpServers: ["gmail", "gcal"],
-    tools: [...CORE_TOOLS],
+    mcpServers: [],
+    tools: [...CORE_TOOLS, ...googleTools()],
     task: ({ now }) => `Date: ${now.toISOString()}.
 Mission BOÎTE MAIL + AGENDA.
-1. Liste les e-mails non lus des dernières 12 h. Classe : urgent / à répondre / info / spam. N'envoie AUCUN e-mail (les envois sont en dry-run) : prépare des brouillons de réponse pour « à répondre » et note-les dans /memories/inbox/brouillons.md avec l'ID du message.
-2. Liste les événements des prochaines 48 h. Détecte conflits, absences de lien visio, réunions sans ordre du jour ; propose des créneaux si une demande de rendez-vous est arrivée par mail.
-3. Résume dans /memories/inbox/etat.md (remplace le contenu, max 40 lignes).
-Critère de succès : zéro e-mail urgent non signalé.`,
+1. gmail_list avec « is:unread newer_than:1d ». Pour chaque message qui n'est manifestement pas une promotion, gmail_read. Classe : urgent / à répondre / info / pub.
+2. Pour tout message « à répondre » : gmail_draft, RÉDIGÉ DANS LA LANGUE DU MESSAGE reçu (suédois, anglais, français, autre — tu réponds dans la sienne, jamais dans la tienne). Reprends in_reply_to et thread_id donnés par gmail_read, sinon le destinataire reçoit un message détaché du fil. N'envoie rien : le brouillon attend dans Gmail.
+3. Repère les fils où l'opérateur attend une réponse et où elle est arrivée depuis la dernière exécution — c'est ce qu'il veut savoir en premier.
+4. calendar_events sur les prochaines 48 h. Signale conflits, visioconférences sans lien, et propose des créneaux si un mail demande un rendez-vous.
+5. Écris dans /memories/inbox/etat.md (remplace, max 40 lignes) : urgents, réponses reçues, brouillons prêts, agenda.
+Critère de succès : aucun e-mail urgent passé sous silence, un brouillon prêt pour chaque message qui en attend un.`,
   },
   {
     name: "repo_maintenance",

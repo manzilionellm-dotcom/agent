@@ -123,6 +123,16 @@ const Env = z.object({
    * vocaux sont signalés mais pas transcrits. Whisper dans le conteneur
    * demanderait plus de RAM qu'il n'en reste sur un 4 Go partagé avec Chromium.
    */
+  /**
+   * Gmail + Agenda en direct. Le jeton de rafraîchissement s'obtient une fois
+   * depuis un poste avec navigateur (deploy/google-auth.ps1) ; il ne dépend
+   * ensuite ni de l'adresse IP, ni du poste, ni d'une session ouverte —
+   * contrairement aux cookies d'un navigateur, qu'un changement de pays suffit
+   * à faire invalider par Google.
+   */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REFRESH_TOKEN: z.string().optional(),
   TRANSCRIBE_BASE_URL: z.string().url().optional(),
   TRANSCRIBE_API_KEY: z.string().optional(),
   TRANSCRIBE_MODEL: z.string().default("whisper-large-v3"),
