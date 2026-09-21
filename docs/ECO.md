@@ -73,6 +73,14 @@ Variables supprimées : `X_BEARER_TOKEN`. Variables devenues optionnelles : `TEL
 cd ~/manzi-junior && git pull --ff-only && ./install.sh --eco
 ```
 
+Pour **tout** remettre d'aplomb d'un coup — code, images, pont Chrome, webhook WhatsApp déclaré à Meta, surveillance du webhook — une seule commande, en root :
+
+```bash
+cd ~/manzi-junior && sudo -u manzi -H git pull --ff-only && bash deploy/finish.sh
+```
+
+Chaque étape est idempotente, et une étape indépendante qui échoue n'arrête pas les suivantes : le récapitulatif final dit ce qui est en place et ce qui ne l'est pas, plutôt que de laisser le reste dans un état inconnu.
+
 `install.sh --eco` = `docker compose -f docker-compose.yml -f docker-compose.eco.yml up -d --build`, plus la vérification des clés (il s'arrête et liste ce qui manque). Il complète aussi `POSTGRES_PASSWORD`, `ORCHESTRATOR_TOKEN` et `DOCKER_GID` s'ils sont vides ou encore sur le gabarit, y compris dans un `.env` écrit à la main, et passe le fichier en `chmod 600`. Les migrations (tables `chat_messages`, `schedules`) s'appliquent au démarrage. Aucune donnée n'est perdue (volumes conservés).
 
 Depuis zéro sur un CX22 (dépôt privé) : voir les 6 commandes de `docs/GETTING-STARTED.md` §3, ou `bash deploy/vps-bootstrap.sh manzi https://github.com/<toi>/agent.git "$GITHUB_TOKEN"` puis `./install.sh --eco`.

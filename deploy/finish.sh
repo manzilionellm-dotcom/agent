@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Termine l'installation de Manzi Junior. Une seule commande, en root :
+#
+#   bash deploy/finish.sh
+#
+# Enchaîne, dans l'ordre qui compte :
+#   1. mise à jour du code et reconstruction        (install.sh --eco)
+#   2. pont vers ton Chrome                          (chrome-bridge-server.sh)
+#   3. webhook WhatsApp déclaré à Meta               (whatsapp-up.sh)
+#   4. surveillance du webhook toutes les 10 min     (whatsapp-watch-install.sh)
+#
+# Chaque étape est idempotente : relancer ce script ne casse rien et répare ce
+# qui a bougé. Une étape en échec n'arrête pas les suivantes quand elles sont
+# indépendantes — le récapitulatif final dit ce qui est en place et ce qui ne
+# l'est pas, plutôt que de s'arrêter à la première contrariété en laissant le
+# reste dans un état inconnu.
+set -uo pipefail
+
+say()  { printf '\n\033[1;36m========== %s\033[0m\n' "$*"; }
+ok()   { printf '\033[1;32m   OK  %s\033[0m\n' "$*"; }
+bad()  { printf '\033[1;31m  RATE %s\033[0m\n' "$*"; }
+die()  { printf '\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "à lancer en root"
+
+DIR="${MANZI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+cd "$DIR"
+OWNER=$(stat -c %U "$DIR")
+[ -n "$OWNER" ] || die "impossible de déterminer le propriétaire de $DIR"
+asowner() { sudo -u "$OWNER" -H bash -lc "cd '$DIR' && $*"; }
+
+STATUS=()
+step() { # $1 = libellé, $2… = commande
+  local label="$1"; shift
+  say "$label"
+  if "$@"; then ok "$label"; STATUS+=("OK   $label"); return 0; fi
+  bad "$label"; STATUS+=("RATE $label"); return 1
+}
+
+# 1. Code à jour et images reconstruites --------------------------------------
+step "Code et images" asowner "git pull --ff-only && ./install.sh --eco" || die "reconstruction impossible : rien d'autre ne peut suivre"
+
+# 2. Pont vers Chrome ----------------------------------------------------------
+# Avant le webhook : ce script recrée l'orchestrateur, et on veut que la
+# déclaration à Meta soit faite APRÈS le dernier redémarrage.
+step "Pont vers ton Chrome" bash "$DIR/deploy/chrome-bridge-server.sh" || true
+GW=$(asowner "grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2-" | sed 's|http://||; s|:9222||' | tr -d '"\r')
+
+# 3. Webhook WhatsApp -----------------------------------------------------------
+step "Webhook WhatsApp" asowner "bash deploy/whatsapp-up.sh" || true
+
+# 4. Surveillance du webhook ------------------------------------------------------
+step "Surveillance du webhook" bash "$DIR/deploy/whatsapp-watch-install.sh" || true
+
+# Récapitulatif --------------------------------------------------------------------
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+say "RÉCAPITULATIF"
+for s in "${STATUS[@]}"; do printf '  %s\n' "$s"; done
+
+cat <<EOF
+
+────────────────────────────────────────────────────────────────
+CE QUI TOURNE MAINTENANT
+
+  WhatsApp     : écris au bot, il répond. Photos, captures et PDF lus.
+  Missions     : « lance la veille », « crée une mission qui... »
+  Surveillance : le webhook se redéclare seul si l'adresse du tunnel change.
+
+IL RESTE UNE COMMANDE, SUR TON PC WINDOWS
+
+  scp $OWNER@$IP:$DIR/deploy/chrome-bridge.ps1 \$HOME\\chrome-bridge.ps1
+  \$env:MANZI_HOST='$OWNER@$IP'; \$env:MANZI_GW='${GW:-172.17.0.1}'; \$HOME\\chrome-bridge.ps1
+
+Ferme Chrome avant : le script recopie ton profil une fois, pour que le bot
+hérite de tes sessions. Ensuite, tant que cette fenêtre reste ouverte, il
+voit ton Chrome. Fermée, il repasse sur son propre Chromium.
+
+FACULTATIF — transcription des messages vocaux (clé gratuite sur console.groq.com)
+
+  bash deploy/set-env.sh TRANSCRIBE_BASE_URL=https://api.groq.com/openai/v1 TRANSCRIBE_API_KEY=<cle>
+  docker compose -f docker-compose.yml -f docker-compose.eco.yml up -d --force-recreate orchestrator
+────────────────────────────────────────────────────────────────
+EOF
+
+case " ${STATUS[*]} " in *"RATE "*) exit 1 ;; esac
