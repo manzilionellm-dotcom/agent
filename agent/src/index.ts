@@ -15,6 +15,13 @@ import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
 import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 import { mediaToText } from "./channels/media.js";
+import { homePage, privacyPage, termsPage } from "./pages.js";
+
+const PUBLIC_PAGES: Record<string, () => string> = {
+  "/": homePage,
+  "/privacy": privacyPage,
+  "/terms": termsPage,
+};
 
 /**
  * Point d'entrée du démon. Ordre : config → migrations → MCP → sandbox check →
@@ -106,6 +113,17 @@ async function whatsappWebhook(req: IncomingMessage, res: ServerResponse, url: U
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/whatsapp/webhook") return whatsappWebhook(req, res, url);
+
+  // Pages publiques exigées par Google pour publier l'écran de consentement
+  // OAuth. Servies ici, sur l'adresse qui porte déjà le webhook : le domaine
+  // et le tunnel existent, il n'y a rien de plus à héberger, et une politique
+  // de confidentialité qui vit à côté du code ne décrit pas une version
+  // d'il y a six mois. Volontairement sans authentification — Google doit
+  // pouvoir les lire, et elles ne disent rien de privé.
+  if (req.method === "GET" && PUBLIC_PAGES[url.pathname]) {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" });
+    return void res.end(PUBLIC_PAGES[url.pathname]!());
+  }
   if (req.method === "GET" && url.pathname === "/healthz") {
     const spent = await spentToday().catch(() => -1);
     return json(res, spent < 0 ? 500 : 200, { ok: spent >= 0, mode: config().AUTONOMY_MODE, spentTodayUsd: spent, mcp: mcpStatus(), whatsapp: config().WHATSAPP_PROVIDER, jobs: scheduledJobs() });
