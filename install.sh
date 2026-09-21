@@ -157,7 +157,9 @@ cat <<EOF
   docker compose exec orchestrator node dist/cli.js veille   # test d'une mission
   docker compose exec orchestrator node dist/cli.js report   # rapport du matin maintenant
   docker compose exec orchestrator node dist/cli.js swarm "Relever les tarifs de 10 fournisseurs et mettre à jour le comparateur"
-  curl -H "Authorization: Bearer \$(grep ORCHESTRATOR_TOKEN .env | cut -d= -f2)" -X POST http://127.0.0.1:8787/missions/veille
+  # \`^\` et \`tr -d '\\r'\` ne sont pas décoratifs : sans eux un .env en CRLF
+  # ajoute un retour chariot au jeton et l'API répond 401 sans rien expliquer.
+  curl -H "Authorization: Bearer \$(grep -E '^ORCHESTRATOR_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '\"\\r')" -X POST http://127.0.0.1:8787/missions/veille
   # WhatsApp : envoie « salut » au numéro du bot ; « planifie la veille tous les jours à 5h » ; « lance l'audit du site »
 EOF
 
