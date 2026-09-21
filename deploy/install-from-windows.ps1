@@ -3,18 +3,18 @@
 #   .\install-from-windows.ps1 -ServerIp 82.165.1.2
 #
 # Ce que le script fait, dans l'ordre :
-#   1. vérifie que le .env local contient tout ce qui est OBLIGATOIRE au démarrage
-#      (il s'arrête et liste ce qui manque plutôt que de laisser le bot échouer au boot) ;
+#   1. verifie que le .env local contient tout ce qui est OBLIGATOIRE au demarrage
+#      (il s'arrete et liste ce qui manque plutot que de laisser le bot echouer au boot) ;
 #   2. copie le .env sur le serveur ;
-#   3. lance le bootstrap (Docker, utilisateur non-root, dépôt, service systemd)
+#   3. lance le bootstrap (Docker, utilisateur non-root, depot, service systemd)
 #      puis install.sh --eco ;
 #   4. interroge /healthz et affiche le verdict.
 #
-# Deux mots de passe root te seront demandés (une fois pour la copie, une fois pour
-# l'installation). Le mot de passe n'est jamais écrit dans un fichier ni dans un log.
+# Deux mots de passe root te seront demandes (une fois pour la copie, une fois pour
+# l'installation). Le mot de passe n'est jamais ecrit dans un fichier ni dans un log.
 #
-# Prérequis : Windows 10/11 (ssh et scp sont fournis d'origine), le fichier .env
-# dans le même dossier que ce script — ou indiqué par -EnvFile.
+# Prerequis : Windows 10/11 (ssh et scp sont fournis d'origine), le fichier .env
+# dans le meme dossier que ce script - ou indique par -EnvFile.
 
 [CmdletBinding()]
 param(
@@ -43,11 +43,11 @@ foreach ($line in Get-Content $EnvFile) {
 function Val($k) { if ($env_.ContainsKey($k)) { $env_[$k] } else { '' } }
 function Missing($k) {
   $v = Val $k
-  # Vide, ou encore sur le gabarit : dans les deux cas, ce n'est pas renseigné.
+  # Vide, ou encore sur le gabarit : dans les deux cas, ce n'est pas renseigne.
   return ($v -eq '' -or $v -match 'A-REMPLIR|REMPLACE|^sk-\.\.\.$|^sk-ant-\.\.\.$|^tvly-\.\.\.$|^github_pat_\.\.\.$')
 }
 
-# Ce que agent/src/config.ts exige réellement pour démarrer, rien de plus.
+# Ce que agent/src/config.ts exige reellement pour demarrer, rien de plus.
 $required = [ordered]@{
   'GITHUB_TOKEN'           = 'github.com > Settings > Developer settings > Fine-grained tokens'
   'OPENAI_COMPAT_API_KEY'  = 'platform.deepseek.com > API keys'
@@ -57,35 +57,35 @@ if ((Val 'LLM_PROVIDER') -eq 'openai_compat' -and (Missing 'TAVILY_API_KEY') -an
   $required['TAVILY_API_KEY'] = 'tavily.com > Sign up (gratuit, 1000 recherches/mois, sans carte)'
 }
 if ((Val 'LLM_PROVIDER') -eq 'anthropic' -or (Val 'LLM_PROVIDER_CRITICAL') -eq 'anthropic') {
-  $required['ANTHROPIC_API_KEY'] = 'console.anthropic.com > API keys — OU mets LLM_PROVIDER_CRITICAL=openai_compat et MODEL_CRITICAL=deepseek-chat pour démarrer sans Claude'
+  $required['ANTHROPIC_API_KEY'] = 'console.anthropic.com > API keys - OU mets LLM_PROVIDER_CRITICAL=openai_compat et MODEL_CRITICAL=deepseek-chat pour demarrer sans Claude'
 }
 
 $manquants = @()
 foreach ($k in $required.Keys) { if (Missing $k) { $manquants += "  $k`n     -> $($required[$k])" } }
 if ($manquants.Count -gt 0) {
-  Write-Host "Le bot refuserait de démarrer. Il manque :" -ForegroundColor Yellow
+  Write-Host "Le bot refuserait de demarrer. Il manque :" -ForegroundColor Yellow
   $manquants | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
   Die "complete ces valeurs dans $EnvFile puis relance."
 }
 
-# Fins de ligne Windows : un CR invisible se retrouverait dans chaque valeur côté Linux.
+# Fins de ligne Windows : un CR invisible se retrouverait dans chaque valeur cote Linux.
 $raw = Get-Content $EnvFile -Raw
 if ($raw -match "`r`n") {
   Say 'conversion des fins de ligne en LF'
   [IO.File]::WriteAllText($EnvFile, ($raw -replace "`r`n", "`n"))
 }
-Say ".env validé ($($env_.Count) variables)"
+Say ".env valide ($($env_.Count) variables)"
 
 # ------------------------------------------------------- 2. copie sur le serveur
-Say "copie du .env vers $ServerIp (mot de passe root demandé)"
+Say "copie du .env vers $ServerIp (mot de passe root demande)"
 & scp -o StrictHostKeyChecking=accept-new $EnvFile "root@${ServerIp}:/root/.env.manzi"
-if ($LASTEXITCODE -ne 0) { Die 'la copie a échoué (IP, mot de passe, ou serveur pas encore livré).' }
+if ($LASTEXITCODE -ne 0) { Die 'la copie a echoue (IP, mot de passe, ou serveur pas encore livre).' }
 
 # ------------------------------------------------------- 3. installation distante
-# Le script distant est passé en base64 : un seul argument, aucune interférence de
+# Le script distant est passe en base64 : un seul argument, aucune interference de
 # quoting entre PowerShell, ssh et bash, et stdin reste libre pour le mot de passe.
-# `$X = littéral pour bash ; $Branch = interpolé par PowerShell.
-# Le token n'apparaît JAMAIS dans la ligne de commande ssh : il est relu sur le
+# `$X = litteral pour bash ; $Branch = interpole par PowerShell.
+# Le token n'apparait JAMAIS dans la ligne de commande ssh : il est relu sur le
 # serveur depuis le .env qu'on vient d'y copier.
 $remote = @"
 set -euo pipefail
@@ -98,9 +98,9 @@ GH=`$(grep -E '^GITHUB_TOKEN=' /root/.env.manzi | head -1 | cut -d= -f2- | tr -d
 
 echo '== bootstrap'
 # raw.githubusercontent.com ne sait pas couper une branche qui contient un '/'
-# (elle est indistinguable du chemin du fichier) et répond 404. L'API Contents
-# prend la branche en paramètre `ref`, donc sans ambiguïté possible.
-curl -fsSL -H "Authorization: token `$GH" -H 'Accept: application/vnd.github.raw' \
+# (elle est indistinguable du chemin du fichier) et repond 404. L'API Contents
+# prend la branche en parametre `ref`, donc sans ambiguite possible.
+curl -fsSL -H "Authorization: Bearer `$GH" -H 'Accept: application/vnd.github.raw' \
   "https://api.github.com/repos/manzilionellm-dotcom/agent/contents/deploy/vps-bootstrap.sh?ref=`$BR" \
   -o /root/vps-bootstrap.sh
 bash /root/vps-bootstrap.sh "`$USR" "`$REPO" "`$GH" "`$BR"
@@ -118,11 +118,11 @@ curl -fsS http://127.0.0.1:8787/healthz || echo 'healthz pas encore pret'
 "@
 
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($remote -replace "`r`n", "`n")))
-Say 'installation sur le serveur (10 à 20 min, mot de passe root demandé une dernière fois)'
+Say 'installation sur le serveur (10 a 20 min, mot de passe root demande une derniere fois)'
 & ssh -o StrictHostKeyChecking=accept-new "root@$ServerIp" "echo $b64 | base64 -d | bash"
-if ($LASTEXITCODE -ne 0) { Die "l'installation distante a échoué — envoie les dernières lignes affichées." }
+if ($LASTEXITCODE -ne 0) { Die "l'installation distante a echoue - envoie les dernieres lignes affichees." }
 
 Write-Host ''
-Write-Host 'Manzi Junior est installé.' -ForegroundColor Green
+Write-Host 'Manzi Junior est installe.' -ForegroundColor Green
 Write-Host "Journal en direct :  ssh root@$ServerIp 'docker compose -f /home/$User/manzi-junior/docker-compose.yml logs -f orchestrator'"
-Write-Host "Prochaine étape   :  le webhook WhatsApp (docs/ECO.md, section 4)."
+Write-Host "Prochaine etape   :  le webhook WhatsApp (docs/ECO.md, section 4)."
