@@ -58,6 +58,14 @@ set_if_placeholder() { # $1 = clé, $2 = valeur, $3… = motifs considérés com
   local cur; cur=$(grep -E "^$key=" .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
   for bad in "" "$@"; do [ "$cur" = "$bad" ] && { grep -qE "^$key=" .env && sed -i.bak "s|^$key=.*|$key=$val|" .env || printf '%s=%s\n' "$key" "$val" >> .env; rm -f .env.bak; say "$key généré"; return; }; done
 }
+# Un .env rédigé sous Windows arrive en CRLF. Chaque valeur récupère alors un \r
+# invisible : un jeton comparé octet à octet ne correspond plus, un mot de passe
+# est refusé, et l'erreur ne mentionne jamais le retour chariot. On normalise ici,
+# une fois, plutôt que de laisser chaque lecteur s'en méfier.
+if grep -q $'\r' .env 2>/dev/null; then
+  sed -i 's/\r$//' .env
+  say "Fins de ligne du .env converties en LF"
+fi
 set_if_placeholder POSTGRES_PASSWORD "$(rand 32)" change-me-32-chars-min change-me
 set_if_placeholder ORCHESTRATOR_TOKEN "$(rand 40)"
 GID=$(getent group docker 2>/dev/null | cut -d: -f3 || stat -f %g /var/run/docker.sock 2>/dev/null || echo 999)
