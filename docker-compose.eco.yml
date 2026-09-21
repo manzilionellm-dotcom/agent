@@ -27,10 +27,15 @@ services:
   # Webhook WhatsApp exposé via Cloudflare Tunnel (gratuit). Crée un tunnel dans Zero Trust,
   # route <ton-sous-domaine> → http://orchestrator:8787, mets le token dans CLOUDFLARE_TUNNEL_TOKEN.
   # Sans domaine : un tunnel « quick » fonctionne aussi (voir docs/ECO.md).
+  # Le tunnel n'existe que pour recevoir le webhook WhatsApp : il vit donc dans un
+  # profil, et `install.sh` ne l'active que lorsqu'un canal WhatsApp est configuré.
+  # `:-` plutôt que `:?` : Compose interpole TOUS les services, même ceux d'un profil
+  # inactif — un `:?` ici bloquait l'installation entière sans WhatsApp.
   tunnel:
+    profiles: ["tunnel"]
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?définir CLOUDFLARE_TUNNEL_TOKEN dans .env}
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on: [orchestrator]
     mem_limit: 64m
     networks: [internal, egress]
