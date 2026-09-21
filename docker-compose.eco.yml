@@ -39,3 +39,17 @@ services:
     depends_on: [orchestrator]
     mem_limit: 64m
     networks: [internal, egress]
+
+  # Sans domaine ni compte Cloudflare : un tunnel « quick » expose l'orchestrateur
+  # sur une URL *.trycloudflare.com tirée au hasard, visible dans ses journaux.
+  # Elle change à chaque redémarrage, donc le webhook Meta est à reconfigurer
+  # ensuite — acceptable pour démarrer, pas pour durer.
+  #   docker compose ... logs tunnel-quick   → l'URL du jour
+  tunnel-quick:
+    profiles: ["tunnel-quick"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://orchestrator:8787
+    depends_on: [orchestrator]
+    mem_limit: 64m
+    networks: [internal, egress]

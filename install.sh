@@ -118,8 +118,12 @@ COMPOSE=(docker compose -f docker-compose.yml)
 [ $SWARM = 1 ] && COMPOSE+=(-f docker-compose.swarm.yml)
 [ $ECO = 1 ] && [ $SWARM = 1 ] && die "--eco et --swarm sont incompatibles (4 Go de RAM)"
 # Le tunnel Cloudflare ne sert qu'au webhook WhatsApp : il vit dans un profil Compose
-# et n'est démarré que si un canal WhatsApp est configuré.
-if [ "$WA" != "none" ]; then COMPOSE+=(--profile tunnel); fi
+# et n'est démarré que si un canal WhatsApp est configuré. Avec un jeton (donc un
+# domaine), l'adresse est fixe ; sans jeton, le tunnel « quick » en tire une au
+# hasard — suffisant pour brancher WhatsApp le jour même, à reconfigurer ensuite.
+if [ "$WA" != "none" ]; then
+  if filled CLOUDFLARE_TUNNEL_TOKEN; then COMPOSE+=(--profile tunnel); else COMPOSE+=(--profile tunnel-quick); fi
+fi
 say "Construction des images (5-10 min la première fois : Chromium + Claude Code)"
 "${COMPOSE[@]}" build
 say "Démarrage"
