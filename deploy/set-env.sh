@@ -33,9 +33,11 @@ for pair in "$@"; do
   esac
   key=${pair%%=*}
   value=${pair#*=}
+  # `[A-Za-z_][A-Za-z0-9_]*` en glob exige DEUX caractères — le second groupe
+  # est une classe suivie de `*`, pas une répétition de la classe. On teste
+  # donc l'inverse : aucun caractère interdit, et pas de chiffre en tête.
   case "$key" in
-    [A-Za-z_][A-Za-z0-9_]*) ;;
-    *) die "nom de clé invalide : « $key »" ;;
+    "" | [0-9]* | *[!A-Za-z0-9_]*) die "nom de clé invalide : « $key »" ;;
   esac
   [ -n "$value" ] || die "$key : valeur vide — rien n'a été écrit"
 
@@ -46,10 +48,22 @@ for pair in "$@"; do
       'index($0, k "=") == 1 && !done { print k "=" v; done = 1; next } { print }' \
       .env > .env.tmp
   else
-    { cat .env; printf '%s=%s\n' "$key" "$value"; } > .env.tmp
+    # Un .env dont la dernière ligne n'a pas de saut de ligne final colle la
+    # clé ajoutée à la précédente : `SANDBOX_TIMEOUT_MS=900000NOUVELLE_CLE=x`.
+    # Les deux valeurs deviennent fausses, et seule la première le dit — par
+    # un « Invalid input » qui ne parle jamais de la clé qu'on vient d'écrire.
+    { cat .env; [ -n "$(tail -c1 .env)" ] && printf '\n'; printf '%s=%s\n' "$key" "$value"; } > .env.tmp
   fi
   cat .env.tmp > .env
   rm -f .env.tmp
+
+  # On se relit : la valeur écrite doit être celle qu'un lecteur du .env
+  # retrouvera. C'est ce contrôle, et non la prudence, qui aurait attrapé le
+  # collage ci-dessus le jour où il s'est produit.
+  relu=$(grep -E "^$key=" .env | head -1 | cut -d= -f2-)
+  [ "$relu" = "$value" ] || die "$key relu différemment de ce qui a été écrit — .env laissé tel quel, vérifie-le à la main"
+  n=$(grep -cE "^$key=" .env)
+  [ "$n" = 1 ] || die "$key apparaît $n fois dans .env — corrige-le à la main"
   say "$key écrit (${#value} caractères)"
 done
 

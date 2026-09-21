@@ -60,7 +60,14 @@ fi
 
 say "santé de l'orchestrateur"
 for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 3; done
-curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 || die "l'orchestrateur ne répond pas : ${COMPOSE[*]} logs orchestrator"
+# Renvoyer l'utilisateur vers `logs` coûte un aller-retour à chaque panne, et
+# la cause est toujours dans ces quelques lignes. On les montre ici.
+if ! curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
+  printf '\n\033[1;31m--- l'"'"'orchestrateur ne répond pas. Ses 40 dernières lignes : ---\033[0m\n' >&2
+  "${COMPOSE[@]}" logs --no-color --tail 40 orchestrator >&2 2>/dev/null || true
+  printf '\n' >&2
+  die "orchestrateur injoignable sur http://127.0.0.1:8787 (voir ci-dessus)"
+fi
 
 CALLBACK="$PUBLIC/whatsapp/webhook"
 VERIFY=$(val WHATSAPP_VERIFY_TOKEN)
