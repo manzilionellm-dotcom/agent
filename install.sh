@@ -117,6 +117,21 @@ say "Construction des images (5-10 min la première fois : Chromium + Claude Cod
 say "Démarrage"
 "${COMPOSE[@]}" up -d --remove-orphans
 
+# Postgres ne lit POSTGRES_PASSWORD qu'à l'initialisation de son volume. À une
+# réinstallation, le .env peut porter un mot de passe régénéré que la base
+# existante ignore : l'orchestrateur boucle alors indéfiniment sur
+# « password authentication failed », sans rapport apparent avec le .env.
+# On aligne donc la base sur le .env, qui fait foi. Le socket local du conteneur
+# est en `trust`, donc cet ALTER n'a pas besoin de l'ancien mot de passe.
+for _ in $(seq 1 20); do "${COMPOSE[@]}" exec -T db pg_isready -U manzi -q >/dev/null 2>&1 && break; sleep 3; done
+if "${COMPOSE[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 -U manzi -d manzi \
+     -v pw="$(val POSTGRES_PASSWORD)" -c "ALTER USER manzi WITH PASSWORD :'pw';" >/dev/null 2>&1; then
+  say "Mot de passe Postgres aligné sur le .env"
+  "${COMPOSE[@]}" restart orchestrator >/dev/null 2>&1 || true
+else
+  say "Postgres : alignement du mot de passe impossible (base peut-être encore en cours d'init)"
+fi
+
 # 6. Vérification --------------------------------------------------------------
 say "Attente de l'orchestrateur"
 for i in $(seq 1 30); do
