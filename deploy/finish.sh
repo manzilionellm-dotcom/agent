@@ -30,11 +30,25 @@ OWNER=$(stat -c %U "$DIR")
 asowner() { sudo -u "$OWNER" -H bash -lc "cd '$DIR' && $*"; }
 
 STATUS=()
+LOGDIR=$(mktemp -d)
+trap 'rm -rf "$LOGDIR"' EXIT
+
 step() { # $1 = libellé, $2… = commande
   local label="$1"; shift
+  local log="$LOGDIR/$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_')"
   say "$label"
-  if "$@"; then ok "$label"; STATUS+=("OK   $label"); return 0; fi
-  bad "$label"; STATUS+=("RATE $label"); return 1
+  # Sortie affichée en direct ET conservée : une étape qui échoue après dix
+  # minutes de construction a sa cause hors de l'écran, et « regarde plus
+  # haut » ne sert à rien quand il n'y a plus de plus haut.
+  if "$@" 2>&1 | tee "$log"; then ok "$label"; STATUS+=("OK   $label"); return 0; fi
+  bad "$label"
+  if [ -s "$log" ]; then
+    printf '\033[1;31m   --- dernières lignes de « %s » ---\033[0m\n' "$label"
+    tail -25 "$log" | sed 's/^/   | /'
+  else
+    printf '\033[1;31m   (aucune sortie : la commande a échoué sans rien dire)\033[0m\n'
+  fi
+  STATUS+=("RATE $label"); return 1
 }
 
 # 1. Code à jour et images reconstruites --------------------------------------

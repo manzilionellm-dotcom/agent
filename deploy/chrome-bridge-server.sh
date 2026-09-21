@@ -52,7 +52,28 @@ else
   say "sshd : GatewayPorts passé à clientspecified (sauvegarde faite)"
 fi
 
-# 3. Refuser que 9222 sorte sur Internet ----------------------------------------
+# 3. La clé SSH du poste doit ouvrir le compte de service ------------------------
+# Le tunnel se connecte en tant que $OWNER, pas root. Sans la clé, ssh demande
+# un mot de passe : le pont ne peut alors ni se rétablir seul après une coupure,
+# ni tourner sans quelqu'un devant l'écran. On recopie les clés déjà autorisées
+# pour root — ce sont celles du poste de l'opérateur, il n'y en a pas d'autres.
+ROOT_KEYS=/root/.ssh/authorized_keys
+USER_KEYS="/home/$OWNER/.ssh/authorized_keys"
+if [ -s "$ROOT_KEYS" ]; then
+  install -d -o "$OWNER" -g "$OWNER" -m 700 "/home/$OWNER/.ssh"
+  touch "$USER_KEYS"
+  added=0
+  while IFS= read -r k; do
+    case "$k" in ssh-*|ecdsa-*|sk-ssh-*|sk-ecdsa-*) ;; *) continue ;; esac
+    grep -qxF "$k" "$USER_KEYS" || { printf '%s\n' "$k" >> "$USER_KEYS"; added=$((added + 1)); }
+  done < "$ROOT_KEYS"
+  chown "$OWNER:$OWNER" "$USER_KEYS"; chmod 600 "$USER_KEYS"
+  [ "$added" -gt 0 ] && say "$added clé(s) SSH recopiée(s) vers $OWNER (connexion sans mot de passe)" || say "clés SSH de $OWNER déjà en place"
+else
+  say "aucune clé dans $ROOT_KEYS — le tunnel demandera un mot de passe"
+fi
+
+# 4. Refuser que 9222 sorte sur Internet ----------------------------------------
 # Le client demandera explicitement $GW, mais une erreur de frappe côté PC
 # suffirait à publier le port. On ferme la porte ici, une fois.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
@@ -62,7 +83,7 @@ else
   say "pare-feu ufw inactif — 9222 n'écoutera que sur $GW, mais pense à activer ufw"
 fi
 
-# 4. Configurer l'orchestrateur --------------------------------------------------
+# 5. Configurer l'orchestrateur --------------------------------------------------
 sudo -u "$OWNER" -H bash "$DIR/deploy/set-env.sh" BROWSER_CDP_URL="http://$GW:9222"
 
 # Accès complet, comme demandé : aucun domaine exclu par défaut. Le mécanisme
