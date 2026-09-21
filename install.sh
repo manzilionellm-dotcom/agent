@@ -53,10 +53,24 @@ mkdir -p secrets backups && chmod 700 secrets
 # (Un .env écrit à la main garde souvent « change-me… » : sans ceci, Postgres tourne
 #  avec un mot de passe public et l'API locale reste désactivée.)
 rand() { head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+# Le `return 0` final n'est pas cosmétique. Sans lui, la fonction renvoyait le
+# statut de sa dernière comparaison — fausse dès que la valeur est DÉJÀ
+# renseignée — et `set -e` tuait le script à cet endroit, sans une ligne de
+# sortie ni le moindre indice. L'installation ne réussissait donc que sur une
+# machine neuve, où ces trois valeurs sont encore des gabarits ; tout
+# redéploiement s'arrêtait net, muet, avec un simple code 1.
 set_if_placeholder() { # $1 = clé, $2 = valeur, $3… = motifs considérés comme « non renseigné »
   local key="$1" val="$2"; shift 2
   local cur; cur=$(grep -E "^$key=" .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r')
-  for bad in "" "$@"; do [ "$cur" = "$bad" ] && { grep -qE "^$key=" .env && sed -i.bak "s|^$key=.*|$key=$val|" .env || printf '%s=%s\n' "$key" "$val" >> .env; rm -f .env.bak; say "$key généré"; return; }; done
+  for bad in "" "$@"; do
+    if [ "$cur" = "$bad" ]; then
+      if grep -qE "^$key=" .env; then sed -i.bak "s|^$key=.*|$key=$val|" .env; else printf '%s=%s\n' "$key" "$val" >> .env; fi
+      rm -f .env.bak
+      say "$key généré"
+      return 0
+    fi
+  done
+  return 0
 }
 # Un .env rédigé sous Windows arrive en CRLF. Chaque valeur récupère alors un \r
 # invisible : un jeton comparé octet à octet ne correspond plus, un mot de passe
@@ -103,9 +117,9 @@ case "$WA" in
   meta)   for k in WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN WHATSAPP_APP_SECRET WHATSAPP_VERIFY_TOKEN WHATSAPP_ALLOWED_NUMBERS; do need "$k"; done ;;
   twilio) for k in TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_WHATSAPP_FROM PUBLIC_URL WHATSAPP_ALLOWED_NUMBERS; do need "$k"; done ;;
 esac
-# Le tunnel n'existe que pour recevoir le webhook WhatsApp. Sans canal WhatsApp il
-# n'y a pas de webhook : l'exiger empêchait d'installer d'abord et de brancher après.
-if [ "$WA" != "none" ]; then need CLOUDFLARE_TUNNEL_TOKEN "CLOUDFLARE_TUNNEL_TOKEN (webhook WhatsApp)"; fi
+# Pas de `need CLOUDFLARE_TUNNEL_TOKEN` : le tunnel « quick » existe précisément
+# pour s'en passer, et la sélection de profil plus bas sait déjà basculer dessus.
+# L'exiger ici rendait impossible l'installation que ce tunnel rend possible.
 if [ ${#missing[@]} -gt 0 ]; then
   printf '\nRenseignez dans %s/.env : %s\n' "$DIR" "${missing[*]}"
   printf 'Puis relancez :  cd %s && ./install.sh%s%s%s\n\n' "$DIR" "$([ $ECO = 1 ] && echo ' --eco')" "$([ $SWARM = 1 ] && echo ' --swarm')" "$([ $JARVIS = 1 ] && echo ' --jarvis')"
@@ -159,7 +173,7 @@ cat <<EOF
   docker compose exec orchestrator node dist/cli.js swarm "Relever les tarifs de 10 fournisseurs et mettre à jour le comparateur"
   # \`^\` et \`tr -d '\\r'\` ne sont pas décoratifs : sans eux un .env en CRLF
   # ajoute un retour chariot au jeton et l'API répond 401 sans rien expliquer.
-  curl -H "Authorization: Bearer \$(grep -E '^ORCHESTRATOR_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '\"\\r')" -X POST http://127.0.0.1:8787/missions/veille
+  curl -H "Authorization: Bearer \$(grep -E '^ORCHESTRATOR_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '"\\r')" -X POST http://127.0.0.1:8787/missions/veille
   # WhatsApp : envoie « salut » au numéro du bot ; « planifie la veille tous les jours à 5h » ; « lance l'audit du site »
 EOF
 
