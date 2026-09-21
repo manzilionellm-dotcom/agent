@@ -31,12 +31,19 @@ echo "== 2. Utilisateur non-root"
 id -u "$USER_NAME" >/dev/null 2>&1 || adduser --disabled-password --gecos "" "$USER_NAME"
 
 echo "== 3. Docker (dépôt officiel)"
-install -m 0755 -d /etc/apt/keyrings
-. /etc/os-release
-curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  echo "   déjà installé, rien à faire"
+else
+  install -m 0755 -d /etc/apt/keyrings
+  . /etc/os-release
+  # --batch --yes : sans ces options, gpg demande « écraser le fichier ? » dès la
+  # deuxième exécution et cherche un /dev/tty que `ssh host "cmd"` ne fournit pas.
+  # Le script doit pouvoir être relancé : c'est ainsi qu'on applique une mise à jour.
+  curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+fi
 usermod -aG docker "$USER_NAME"
 
 if [ "${SKIP_HARDENING:-0}" = "1" ]; then
