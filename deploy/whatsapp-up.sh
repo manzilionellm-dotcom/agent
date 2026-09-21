@@ -2,7 +2,12 @@
 # Branche le webhook WhatsApp : démarre le tunnel, attend son adresse, puis
 # déclare cette adresse à Meta par l'API. À lancer sur le serveur.
 #
-#   bash deploy/whatsapp-up.sh
+#   bash deploy/whatsapp-up.sh            # démarre (ou redémarre) puis déclare
+#   bash deploy/whatsapp-up.sh --keep     # ne recrée rien : vérifie et redéclare
+#
+# `--keep` existe pour la surveillance périodique : recréer le tunnel à chaque
+# passage lui ferait tirer une nouvelle adresse, donc provoquerait exactement
+# la panne qu'on surveille.
 #
 # Avec WHATSAPP_APP_ID et WHATSAPP_WABA_ID dans le .env, plus rien n'est à
 # cliquer : le script enregistre lui-même l'URL de rappel, le jeton de
@@ -12,6 +17,9 @@
 # Sans ces deux identifiants, le script retombe sur l'ancien comportement :
 # il imprime les valeurs à recopier à la main.
 set -euo pipefail
+
+KEEP=0
+for a in "$@"; do case "$a" in --keep) KEEP=1 ;; *) printf 'option inconnue: %s\n' "$a" >&2; exit 2 ;; esac; done
 
 DIR="${MANZI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$DIR"
@@ -40,8 +48,13 @@ else
   SERVICE=tunnel-quick; COMPOSE+=(--profile tunnel-quick)
 fi
 
-say "démarrage ($SERVICE)"
-"${COMPOSE[@]}" up -d --force-recreate orchestrator "$SERVICE"
+if [ $KEEP = 1 ]; then
+  say "vérification (aucun conteneur recréé)"
+  "${COMPOSE[@]}" up -d orchestrator "$SERVICE" >/dev/null
+else
+  say "démarrage ($SERVICE)"
+  "${COMPOSE[@]}" up -d --force-recreate orchestrator "$SERVICE"
+fi
 
 PUBLIC=""
 if [ "$SERVICE" = tunnel-quick ]; then

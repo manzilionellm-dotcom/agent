@@ -112,7 +112,15 @@ Le **numéro de test** que Meta prête suffit : il écrit à 5 destinataires vé
    Les deux appels sont nécessaires, et c'est le piège : déclarer l'URL de rappel ne suffit pas. Sans `subscribed_apps`, Meta vérifie le webhook, répond `success`, et les messages entrants ne partent nulle part — aucune erreur, aucun journal, juste un bot muet.
 
    Avec `CLOUDFLARE_TUNNEL_TOKEN` (tunnel nommé, domaine requis) l'adresse est fixe. Sans jeton, un tunnel *quick* en tire une au hasard en `*.trycloudflare.com` : rien à acheter, mais elle change à chaque redémarrage — relancer cette commande suffit alors à redéclarer la nouvelle adresse.
-10. **Modèle pour les envois hors fenêtre 24 h** (rapport du matin, alertes si tu n'as rien écrit la veille) : WhatsApp Manager → Message templates → créer `manzi_daily_report`, catégorie *Utility*, langue `fr`, corps : `Rapport Manzi Junior : {{1}}`. Approbation en quelques minutes à quelques heures. Coût : quelques centimes par envoi ; les réponses dans les 24 h suivant ton message sont gratuites.
+
+10. **Rendre le webhook auto-réparable** (tunnel *quick* surtout) :
+    ```bash
+    sudo bash deploy/whatsapp-watch-install.sh
+    ```
+    Le tunnel *quick* retire une adresse au hasard à chaque redémarrage — du serveur, ou du seul conteneur `cloudflared`. Meta continue d'appeler l'ancienne, et **le bot devient sourd sans le dire** : aucune erreur, aucun journal, on ne s'en aperçoit qu'en lui écrivant. Le minuteur relance `whatsapp-up.sh --keep` au démarrage puis toutes les dix minutes ; l'appel est idempotent, donc sans effet tant que rien n'a bougé. Fenêtre de surdité ramenée à dix minutes.
+
+    `journalctl -u manzi-whatsapp.service -n 40` pour voir ses passages.
+11. **Modèle pour les envois hors fenêtre 24 h** (rapport du matin, alertes si tu n'as rien écrit la veille) : WhatsApp Manager → Message templates → créer `manzi_daily_report`, catégorie *Utility*, langue `fr`, corps : `Rapport Manzi Junior : {{1}}`. Approbation en quelques minutes à quelques heures. Coût : quelques centimes par envoi ; les réponses dans les 24 h suivant ton message sont gratuites.
 
 ### Ce que le numéro de test ne fait pas
 
