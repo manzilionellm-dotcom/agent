@@ -100,6 +100,9 @@ COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.eco.yml)
 sudo -u "$OWNER" -H "${COMPOSE[@]}" up -d --force-recreate orchestrator >/dev/null
 say "orchestrateur redémarré avec BROWSER_CDP_URL"
 
+# L'adresse est résolue ICI : un `$(...)` laissé dans le texte s'affiche tel
+# quel et donne une commande que personne ne peut copier telle quelle.
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 cat <<EOF
 
 ────────────────────────────────────────────────────────────────
@@ -107,11 +110,11 @@ CÔTÉ SERVEUR : PRÊT
 
 Il reste à ouvrir le pont depuis ton PC Windows. Récupère le script :
 
-  scp $OWNER@\$(hostname -I | awk '{print \$1}'):$DIR/deploy/chrome-bridge.ps1 \$HOME\\chrome-bridge.ps1
+  scp $OWNER@$IP:$DIR/deploy/chrome-bridge.ps1 \$HOME\\chrome-bridge.ps1
 
 puis, dans PowerShell :
 
-  \$env:MANZI_HOST='$OWNER@<ip-du-serveur>'; \$env:MANZI_GW='$GW'; .\\chrome-bridge.ps1
+  \$env:MANZI_HOST='$OWNER@$IP'; \$env:MANZI_GW='$GW'; \$HOME\\chrome-bridge.ps1
 
 Tant que cette fenêtre PowerShell reste ouverte, Manzi Junior voit ton Chrome.
 Quand tu la fermes, il retombe sur son propre Chromium, sans tes sessions.
