@@ -3,6 +3,12 @@
 #
 #   bash deploy/set-env.sh WHATSAPP_APP_ID=2851...        # valeurs non sensibles
 #   printf 'CLE=secret\n' | bash deploy/set-env.sh --stdin # secrets
+#   bash deploy/set-env.sh --unset PUBLIC_URL             # revenir à « non renseigné »
+#
+# `--unset` existe parce qu'une valeur facultative mais MAL formée empêche le
+# démarrage, et qu'il n'y avait alors aucun moyen de revenir en arrière : une
+# valeur vide est refusée par ce script, à dessein, pour qu'un effacement soit
+# toujours délibéré.
 #
 # POUR UN SECRET, UTILISER --stdin. Un argument de ligne de commande est
 # visible dans `ps aux` par tout utilisateur du serveur pendant l'exécution,
@@ -32,6 +38,23 @@ die() { printf '\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
 # `IFS= read -r` : sans le `IFS=` vide, les espaces d'une valeur seraient
 # rognés ; sans `-r`, un antislash serait interprété. Les deux détruiraient
 # silencieusement un secret qui en contient.
+if [ "${1:-}" = "--unset" ]; then
+  shift
+  [ $# -gt 0 ] || die "usage: bash deploy/set-env.sh --unset CLE [CLE ...]"
+  for key in "$@"; do
+    case "$key" in "" | [0-9]* | *[!A-Za-z0-9_]*) die "nom de clé invalide : « $key »" ;; esac
+    if grep -q "^$key=" .env; then
+      awk -v k="$key" 'index($0, k "=") == 1 { print k "="; next } { print }' .env > .env.tmp
+      cat .env.tmp > .env; rm -f .env.tmp
+      say "$key vidé (traité comme non renseigné)"
+    else
+      say "$key absent du .env — rien à faire"
+    fi
+  done
+  chmod 600 .env
+  exit 0
+fi
+
 PAIRS=()
 if [ "${1:-}" = "--stdin" ] || [ $# -eq 0 ]; then
   [ -t 0 ] && die "usage: printf 'CLE=valeur\\n' | bash deploy/set-env.sh --stdin"
