@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Bootstrap d'un VPS Debian 12 / Ubuntu 24.04 vierge → Manzi Junior 24/7.
-# Usage (en root) : bash vps-bootstrap.sh <utilisateur> <repo-git-url> [github-token]
+# Usage (en root) : bash vps-bootstrap.sh <utilisateur> <repo-git-url> [github-token] [branche]
+#
+# La branche est facultative (défaut : branche par défaut du dépôt). Elle sert quand le code
+# à déployer n'est pas encore fusionné dans `main` ; `install.sh` continue ensuite de suivre
+# cette branche à chaque `git pull`. Peut aussi être passée via REPO_BRANCH=...
 #
 # Dépôt PRIVÉ : passe ton fine-grained token (Contents: Read) en 3e argument ou via
 # GITHUB_TOKEN=... ; il est stocké pour l'utilisateur du bot (git credential store,
@@ -17,6 +21,7 @@ set -euo pipefail
 USER_NAME="${1:-manzi}"
 REPO_URL="${2:?URL du dépôt git}"
 GH_TOKEN="${3:-${GITHUB_TOKEN:-}}"
+BRANCH="${4:-${REPO_BRANCH:-}}"
 
 echo "== 1. Système"
 apt-get update && apt-get -y upgrade
@@ -65,7 +70,11 @@ if [ -n "$GH_TOKEN" ]; then
   # Identifiants GitHub de l'utilisateur du bot : jamais dans l'URL du remote, jamais dans un log.
   sudo -u "$USER_NAME" -H bash -c "git config --global credential.helper store && umask 077 && printf 'https://x-access-token:%s@github.com\n' '$GH_TOKEN' > ~/.git-credentials"
 fi
-sudo -u "$USER_NAME" -H bash -c "cd ~ && [ -d manzi-junior ] || git clone '$REPO_URL' manzi-junior"
+sudo -u "$USER_NAME" -H bash -c "cd ~ && [ -d manzi-junior ] || git clone ${BRANCH:+--branch '$BRANCH'} '$REPO_URL' manzi-junior"
+# Dépôt déjà cloné (ré-exécution) : on bascule sur la branche demandée plutôt que de la subir.
+if [ -n "$BRANCH" ]; then
+  sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && git fetch origin '$BRANCH' && git checkout -B '$BRANCH' 'origin/$BRANCH'"
+fi
 sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && [ -f .env ] || cp .env.example .env"
 sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && [ -f agent/mcp.json ] || cp agent/mcp.json.example agent/mcp.json"
 sudo -u "$USER_NAME" -H bash -c "cd ~/manzi-junior && mkdir -p secrets backups && chmod 700 secrets"
