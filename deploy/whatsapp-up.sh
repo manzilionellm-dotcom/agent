@@ -67,8 +67,16 @@ if [ "$SERVICE" = tunnel-quick ]; then
   done
   [ -n "$PUBLIC" ] || die "adresse introuvable — voir: ${COMPOSE[*]} logs $SERVICE"
 else
+  # Un tunnel nommé connaît son nom d'hôte côté Cloudflare, pas côté serveur :
+  # cloudflared reçoit sa configuration à distance et ne la publie nulle part
+  # d'exploitable ici. L'adresse doit donc être redite dans le .env, et dire
+  # « PUBLIC_URL manquant » sans dire où la lire fait perdre un quart d'heure.
   PUBLIC=$(val PUBLIC_URL)
-  [ -n "$PUBLIC" ] || die "PUBLIC_URL manquant dans .env (requis avec un tunnel nommé)"
+  [ -n "$PUBLIC" ] || die "PUBLIC_URL vide, et le tunnel nommé ne peut pas la deviner.
+  Va la lire sur dash.cloudflare.com → Zero Trust → Networks → Tunnels →
+  ton tunnel → onglet « Public Hostname ». Recopie l'adresse complète, puis :
+      bash deploy/set-env.sh PUBLIC_URL=https://CE-QUE-TU-AS-LU
+  (l'adresse telle quelle, sans chevrons, sans guillemets)"
 fi
 
 say "santé de l'orchestrateur"
