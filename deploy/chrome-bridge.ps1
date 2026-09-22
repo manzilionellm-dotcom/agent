@@ -100,8 +100,20 @@ Write-Host "    Ctrl+C pour couper le pont. Manzi Junior continue de tourner san
 
 # Reconnexion automatique : une coupure Wi-Fi ne doit pas rendre le bot aveugle
 # jusqu'a ce que quelqu'un s'en apercoive.
+#
+# Avant CHAQUE tentative on libere le port cote serveur. Quand cette fenetre
+# se ferme mal - portable qui s'endort, Wi-Fi coupe - sshd garde le port
+# reserve tant qu'il n'a pas constate la mort de la connexion, parfois
+# plusieurs minutes. Sans cette etape, la tentative suivante recoit
+# "remote port forwarding failed for listen port 9222" et boucle dessus
+# indefiniment : le pont ne remonte jamais tout seul.
+$Free = "cd manzi-junior && bash deploy/chrome-bridge-free.sh $Port"
 while ($true) {
+  $libre = ssh $Remote $Free 2>&1
+  if ($libre -match 'arrete|libere') { Write-Host "    $libre" -ForegroundColor DarkGray }
+
   ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R $Bind $Remote
+
   Write-Host "    tunnel coupe - nouvelle tentative dans 5 s" -ForegroundColor DarkYellow
   Start-Sleep -Seconds 5
 }
