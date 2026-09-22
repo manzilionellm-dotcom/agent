@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { sandboxExec } from "../tools/sandbox.js";
 
 /**
  * WhatsApp Business : deux fournisseurs interchangeables.
@@ -140,6 +141,47 @@ export async function sendWhatsApp(to: string, text: string): Promise<boolean> {
     if (!ok) return false;
   }
   return true;
+}
+
+/**
+ * Envoie une image prise par le navigateur (capture d'écran, graphique, page).
+ *
+ * L'image vit dans le sandbox, pas ici : l'orchestrateur ne peut pas la lire
+ * directement, et la faire transiter en base64 par la sortie d'une commande
+ * la tronquerait — une capture pèse dix fois le plafond de sortie. On
+ * televerse donc DEPUIS le sandbox, et l'orchestrateur n'envoie que
+ * l'identifiant rendu par Meta.
+ *
+ * Le jeton passe par `curl --config -`, c'est-à-dire par l'entrée standard :
+ * en argument, il serait lisible dans `ps` depuis le sandbox, où tourne aussi
+ * du code écrit par un modèle.
+ */
+export async function sendWhatsAppImage(to: string, sandboxPath: string, caption = ""): Promise<{ ok: boolean; error?: string }> {
+  const cfg = config();
+  if (cfg.WHATSAPP_PROVIDER !== "meta") return { ok: false, error: "envoi d'image disponible uniquement avec le fournisseur meta" };
+  if (!/^\/work\/[\w./-]+\.(png|jpe?g)$/i.test(sandboxPath)) return { ok: false, error: `chemin d'image refusé : ${sandboxPath} (attendu /work/....png)` };
+
+  const type = /\.png$/i.test(sandboxPath) ? "image/png" : "image/jpeg";
+  const conf = [
+    `header = "Authorization: Bearer ${cfg.WHATSAPP_ACCESS_TOKEN}"`,
+    `form = "messaging_product=whatsapp"`,
+    `form = "file=@${sandboxPath};type=${type}"`,
+    `url = "${META_API}/${cfg.WHATSAPP_PHONE_NUMBER_ID}/media"`,
+  ].join("\n");
+
+  const r = await sandboxExec(`curl -sS --max-time 60 --config -`, { timeoutMs: 90_000, stdin: conf });
+  let id: string | undefined;
+  try {
+    id = (JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}") as { id?: string }).id;
+  } catch {
+    /* réponse illisible : traitée comme une absence d'identifiant */
+  }
+  if (!id) {
+    logger.error({ out: r.stdout.slice(-300), err: r.stderr.slice(-300) }, "téléversement d'image whatsapp échoué");
+    return { ok: false, error: `téléversement refusé par Meta (${r.stdout.slice(-200) || r.stderr.slice(-200) || "aucune réponse"})` };
+  }
+  const sent = await sendMeta(to, { type: "image", image: { id, caption: caption.slice(0, 1024) } });
+  return sent ? { ok: true } : { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
 }
 
 /** Message hors fenêtre 24 h (Meta) : passe par le modèle approuvé `WHATSAPP_TEMPLATE_NAME` avec un paramètre texte. */

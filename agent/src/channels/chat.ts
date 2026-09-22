@@ -18,7 +18,7 @@ import { googleTools } from "../tools/google.js";
 import { createAgent, listAgents, getAgent, deleteAgent, agentSpend, MAX_AUTONOMY } from "../agents/store.js";
 import { createTask, listTasks } from "../agents/tasks.js";
 import { timeline } from "../events.js";
-import { sendWhatsApp } from "./whatsapp.js";
+import { sendWhatsApp, sendWhatsAppImage } from "./whatsapp.js";
 import { handleApprovalReply } from "./approvals.js";
 
 /**
@@ -62,6 +62,15 @@ Par défaut tu prépares un brouillon (gmail_draft) et tu le dis. Tu n'envoies (
 
 Navigateur : tu as l'outil browser, et il pilote un vrai Chrome. Quand BROWSER_CDP_URL est configuré, c'est celui de Lionel, avec ses sessions ouvertes — donc oui, tu peux ouvrir Gmail, lire une page derrière un login, remplir un formulaire. Ne réponds jamais « je n'ai pas accès à ton navigateur » sans avoir essayé : lance browser{action:"status"} d'abord, et rapporte ce qu'il dit. Un appel = une action ; lis le résultat avant la suivante. Pour une simple page publique, scrape_page va plus vite.
 
+AGENT WEB AUTONOME — ta façon de travailler sur Internet :
+· Tu dis en UNE ligne ce que tu vas faire avant d'agir, puis tu agis. Pas de plan en dix points : une phrase, puis l'action.
+· Tu montres tes preuves. Après une étape qui compte — un résultat trouvé, un formulaire rempli, une connexion réussie — prends browser{action:"screenshot"} et envoie-la avec send_screenshot. Une capture vaut mieux que « c'est fait ».
+· Tu boucles jusqu'à ce que ce soit fini. Un résultat vide, une page qui charge mal, un sélecteur qui rate : tu essaies autrement (autre requête, autre site, form pour voir les champs). Tu ne rends pas « je n'ai pas trouvé » après un seul essai.
+· Tu ne touches jamais aux fichiers de Lionel. Tout passe par le navigateur et par /work.
+· Tu ne vois, ne demandes et ne tapes JAMAIS un mot de passe. Le coffre les saisit pour toi : browser{action:"login", site:"…"}.
+· CAPTCHA, vérification anti-robot, code SMS, double authentification non enregistrée, ou page de paiement : tu t'ARRÊTES, tu envoies une capture, et tu dis à Lionel ce qui bloque. Tu ne contournes rien.
+· Tu dis ce que tu n'as pas pu faire aussi clairement que ce que tu as fait.
+
 Formulaires : appelle browser{action:"form"} pour voir les champs (nom, type, étiquette, options) au lieu de deviner un sélecteur. Ensuite type pour le texte, select pour une liste déroulante, check pour une case, upload pour un fichier de /work, download pour récupérer une facture ou un export dans /work/downloads. Les iframes et les onglets qui s'ouvrent tout seuls sont gérés — tu n'as pas à t'en occuper.
 
 Places de marché et annuaires : site_search{site, query} plutôt que goto+text — il rend titre, prix et lien au lieu de 200 000 caractères de menus. sites_list dit lesquels. Pour 1688.com, traduis la requête en chinois toi-même.
@@ -76,6 +85,23 @@ Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer.`;
 
 type Notify = (text: string) => Promise<void>;
+
+function screenshotTool(channel: string, peer: string) {
+  return betaZodTool({
+    name: "send_screenshot",
+    description:
+      "Envoie à l'opérateur une image prise par le navigateur (chemin rendu par browser{action:\"screenshot\"}, sous /work). Sert à MONTRER une preuve : un résultat trouvé, un formulaire rempli, une page bloquante. Une capture après chaque étape qui compte vaut mieux qu'un résumé.",
+    inputSchema: z.object({
+      file: z.string().describe("Chemin de l'image dans le sandbox, ex: /work/browser-shots/1738.png"),
+      caption: z.string().max(900).optional().describe("Une ligne qui dit ce qu'on voit"),
+    }),
+    run: async (i) => {
+      if (channel !== "whatsapp") return "Envoi d'image indisponible sur ce canal — décris ce que montre la capture.";
+      const r = await sendWhatsAppImage(peer, i.file, i.caption ?? "");
+      return r.ok ? `capture envoyée (${i.file})` : `Error: ${r.error}`;
+    },
+  });
+}
 
 function controlTools(notify: Notify) {
   const runMission = betaZodTool({
@@ -372,11 +398,15 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
-    maxIterations: 20,
+    // Une vraie session de navigation, c'est vingt à trente actions : ouvrir,
+    // lire, cliquer, remplir, vérifier, recommencer autrement. Vingt tours
+    // coupaient l'agent au milieu d'une tâche, et il rendait un « je n'ai pas
+    // trouvé » qui voulait dire « je n'ai pas eu le temps ».
+    maxIterations: 40,
     budgetUsd: 0.5,
   });
   const reply = res.finalText || (res.stopReason === "refusal" ? "Je ne peux pas faire ça." : "Fait.");
