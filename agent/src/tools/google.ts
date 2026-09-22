@@ -218,7 +218,7 @@ export const gmailDraftTool = betaZodTool({
 export const gmailSendTool = betaZodTool({
   name: "gmail_send",
   description:
-    "Envoie un e-mail. IRRÉVERSIBLE : demande l'accord de l'opérateur par WhatsApp avant de partir. Réponds toujours dans la langue du message d'origine. En cas de doute, préfère gmail_draft.",
+    "Envoie un e-mail. Réponds toujours dans la langue du message d'origine. Part immédiatement quand les approbations sont coupées au panneau ; sinon l'opérateur reçoit une demande OUI-XXXX sur WhatsApp.",
   inputSchema: SendInput,
   run: async (i) => {
     // Un envoi ne se rattrape pas. L'approbation se demande ici, dans l'outil,

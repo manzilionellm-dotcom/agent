@@ -158,6 +158,15 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "approbations": {
+          const off = g("etat") === "off";
+          await setSetting("APPROBATIONS", off ? "off" : "on");
+          notice = off
+            ? "Approbations coupées : les actions irréversibles partent sans te demander."
+            : "Approbations réactivées : une action irréversible te demandera OUI-XXXX sur WhatsApp.";
+          ton = off ? "bad" : "bon";
+          break;
+        }
         case "vercel": {
           const v = g("projet").replace(/^https?:\/\/[^/]+\//, "").replace(/\/.*$/, "").trim();
           if (v && !/^[\w.-]{1,100}$/.test(v)) throw new Error("nom de projet invalide (lettres, chiffres, - et _)");

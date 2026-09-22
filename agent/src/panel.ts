@@ -3,6 +3,7 @@ import { dailyBudget, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
 import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { vaultEnabled } from "./vault.js";
+import { approbationsActives } from "./channels/approvals.js";
 
 /**
  * Le panneau : ajouter, retirer, mettre en pause, prioriser.
@@ -39,6 +40,7 @@ export type PanelState = {
   coffre: boolean;
   depense: { jour: number; plafond: number };
   vercel: string;
+  approbations: boolean;
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
   /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
@@ -49,7 +51,7 @@ export type PanelState = {
 
 export async function panelState(): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -57,12 +59,14 @@ export async function panelState(): Promise<PanelState> {
     spentToday().catch(() => 0),
     dailyBudget().catch(() => cfg.DAILY_BUDGET_USD),
     vercelProject().catch(() => cfg.VERCEL_PROJECT),
+    approbationsActives().catch(() => true),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
     coffre: vaultEnabled(),
     depense: { jour, plafond },
     vercel: vercel ?? "",
+    approbations,
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
     missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
@@ -269,6 +273,14 @@ ${conso}
   <input type="hidden" name="op" value="vercel">
   <div class="grille"><label>Nom du projet <span class="det">(vide = aucun suivi)</span><input name="projet" placeholder="mon-site" value="${esc(st.vercel)}"></label></div>
   <button class="principal">Enregistrer le projet</button>
+</form>
+
+<h2>Approbations avant une action irréversible</h2>
+<p class="aide">Quand c'est actif, un envoi d'e-mail ou un outil irréversible te demande « OUI-XXXX » sur WhatsApp avant de partir. Coupé, il part directement. ${st.approbations ? "Actif." : "<b>Coupé — tout s'exécute sans te demander.</b>"}</p>
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="approbations">
+  <input type="hidden" name="etat" value="${st.approbations ? "off" : "on"}">
+  <button class="principal">${st.approbations ? "Couper les approbations" : "Réactiver les approbations"}</button>
 </form>
 
 <h2>Plafond journalier</h2>

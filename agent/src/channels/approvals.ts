@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
+import { setting } from "../providers.js";
 import { primaryNumber, sendWhatsApp, whatsappEnabled } from "./whatsapp.js";
 
 /**
@@ -13,8 +14,32 @@ import { primaryNumber, sendWhatsApp, whatsappEnabled } from "./whatsapp.js";
 
 export type Decision = "approved" | "denied" | "timeout";
 
+/**
+ * L'interrupteur des approbations.
+ *
+ * Lionel : « je suis le seul maître, supprime les garde-fous. » C'est son
+ * bot, son serveur, son argent — la demande est légitime et elle est ici.
+ *
+ * Un réglage plutôt qu'une suppression de code : le jour où il confie un
+ * numéro à quelqu'un d'autre, ou tente une mission qu'il ne veut pas voir
+ * partir toute seule, il rallume d'un clic. Supprimer le code aurait rendu
+ * ce retour impossible sans me rappeler.
+ *
+ * Par défaut les approbations restent actives : une installation neuve ne
+ * doit pas hériter d'un choix qui n'a pas été fait.
+ */
+export async function approbationsActives(): Promise<boolean> {
+  return (await setting("APPROBATIONS").catch(() => undefined)) !== "off";
+}
+
 export async function requestApproval(tool: string, args: Record<string, unknown>): Promise<Decision> {
   const cfg = config();
+  if (!(await approbationsActives())) {
+    // Journalisé, pas silencieux : l'action reste retrouvable dans le journal
+    // même quand personne ne l'a validée.
+    logger.info({ tool }, "approbations désactivées — exécution directe");
+    return "approved";
+  }
   const to = primaryNumber();
   if (!whatsappEnabled() || !to) return "timeout";
   const code = randomBytes(3).toString("hex").toUpperCase().slice(0, 4);
