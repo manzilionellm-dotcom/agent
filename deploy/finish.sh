@@ -184,6 +184,10 @@ OUVRIR UNE PAGE — depuis ton PC Windows, le navigateur s'ouvre tout seul
   Depuis le serveur, si tu préfères le lien brut :
   bash deploy/vault-link.sh board|screen|vault|panel
 
+ADRESSE FIXE (recommandé) — l'adresse actuelle change à chaque redémarrage
+  ssh -t $OWNER@$IP 'cd $DIR && bash deploy/domaine.sh'
+  Il te guide dans Cloudflare puis pose UNE question : le jeton du tunnel.
+
 TON COFFRE D'IDENTIFIANTS
 ${LIEN:-  (lien indisponible — relance : bash deploy/vault-link.sh)}
 
