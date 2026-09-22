@@ -51,8 +51,13 @@ if [ "$ANCIEN" != "http://desktop:9222" ]; then
   bash deploy/set-env.sh BROWSER_CDP_URL=http://desktop:9222 >/dev/null || die "écriture du .env impossible"
 fi
 
-say "redémarrage de l'orchestrateur"
-"${COMPOSE[@]}" up -d --force-recreate orchestrator >/dev/null || die "redémarrage impossible"
+# --build, et pas seulement --force-recreate : la route /screen est du code
+# TypeScript compilé dans l'image. Recréer le conteneur sans reconstruire
+# relance l'ancien binaire, qui ne connaît pas /screen et répond « Bearer
+# ORCHESTRATOR_TOKEN requis » — un 401 identique avec ou sans billet, qui
+# envoie chercher un bug d'authentification là où il n'y en a pas.
+say "reconstruction et redémarrage de l'orchestrateur"
+"${COMPOSE[@]}" up -d --build --force-recreate orchestrator >/dev/null || die "reconstruction impossible : ${COMPOSE[*]} logs orchestrator"
 
 for i in $(seq 1 40); do
   curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break
@@ -77,6 +82,16 @@ else
   [ -n "$VER" ] && echo "    l'agent joint le navigateur ($IP) : $VER" \
                 || echo "    ATTENTION : « desktop » résout en $IP mais ne répond pas sur 9222"
 fi
+
+# La route existe-t-elle vraiment dans le binaire qui tourne ? Un faux billet
+# doit recevoir « lien expiré », PAS « Bearer requis ». La seconde réponse
+# signifie que l'image est plus ancienne que le code.
+REP=$(curl -s --max-time 5 "http://127.0.0.1:8787/screen?t=billet-invente" | head -c 200)
+case "$REP" in
+  *"Bearer ORCHESTRATOR_TOKEN"*)
+    die "l'orchestrateur en service ne connaît pas /screen — son image est périmée. Relance : ${COMPOSE[*]} up -d --build --force-recreate orchestrator" ;;
+  *) echo "    route /screen en place" ;;
+esac
 
 say "génération d'un lien pour ouvrir l'écran"
 LIEN=$("${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link 2>&1 | sed 's|/vault?t=|/screen?t=|')
