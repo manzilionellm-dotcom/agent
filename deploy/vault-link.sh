@@ -14,4 +14,16 @@ cd "$(dirname "$0")/.."
 COMPOSE=(docker compose -f docker-compose.yml)
 [ -f docker-compose.eco.yml ] && COMPOSE+=(-f docker-compose.eco.yml)
 
-"${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link
+# PUBLIC_URL est relue ICI, dans le .env, et réinjectée dans la commande.
+#
+# Un conteneur charge son env_file au moment où il est créé, pas à chaque
+# appel : quand whatsapp-up.sh vient d'écrire PUBLIC_URL, le processus qui
+# tourne ne la connaît toujours pas. Le lien sortait alors en 127.0.0.1
+# alors que l'adresse publique existait depuis trente secondes.
+PUBLIC=$(grep -E '^PUBLIC_URL=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')
+
+if [ -n "$PUBLIC" ]; then
+  "${COMPOSE[@]}" exec -T -e "PUBLIC_URL=$PUBLIC" orchestrator node dist/cli.js vault-link
+else
+  "${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link
+fi
