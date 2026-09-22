@@ -1,5 +1,6 @@
 import { Cron } from "croner";
 import { config } from "./config.js";
+import { dailyBudget } from "./providers.js";
 import { logger } from "./logger.js";
 import { db } from "./memory/db.js";
 import { spentToday } from "./memory/store.js";
@@ -49,8 +50,9 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
 export async function launch(m: Mission, opts: { brief?: string } = {}) {
   const cfg = config();
   const spent = await spentToday();
-  if (spent >= cfg.DAILY_BUDGET_USD) {
-    logger.error({ spent, cap: cfg.DAILY_BUDGET_USD, mission: m.name }, "plafond journalier atteint — mission non lancée");
+  const plafond = await dailyBudget();
+  if (spent >= plafond) {
+    logger.error({ spent, cap: plafond, mission: m.name }, "plafond journalier atteint — mission non lancée");
     return undefined;
   }
   const first = await withLock(m.name, () => runMission(m, { brief: opts.brief }));

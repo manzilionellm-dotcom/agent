@@ -175,9 +175,10 @@ OUVRIR UNE PAGE — depuis ton PC Windows, le navigateur s'ouvre tout seul
   \$HOME\\ouvrir.ps1            tableau de bord (agents, tâches, dépense)
   \$HOME\\ouvrir.ps1 screen     écran du navigateur du serveur
   \$HOME\\ouvrir.ps1 vault      coffre d'identifiants
+  \$HOME\\ouvrir.ps1 panel      clés d'API, consommation, plafond
 
   Depuis le serveur, si tu préfères le lien brut :
-  bash deploy/vault-link.sh board|screen|vault
+  bash deploy/vault-link.sh board|screen|vault|panel
 
 TON COFFRE D'IDENTIFIANTS
 ${LIEN:-  (lien indisponible — relance : bash deploy/vault-link.sh)}

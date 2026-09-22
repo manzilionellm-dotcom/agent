@@ -23,6 +23,8 @@ import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
 import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
 import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
+import { panelPage, panelState } from "./panel.js";
+import { bumpProviderPriority, deleteProvider, putProvider, seedFromEnv, setProviderEnabled, setSetting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -99,6 +101,80 @@ async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: UR
     "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
   });
   res.end();
+}
+
+/**
+ * Le panneau. Tout ce qui s'y fait prend effet en quinze secondes, sans
+ * redémarrage : c'est ce qui distingue un réglage qu'on ajuste d'un réglage
+ * qu'on subit.
+ */
+async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/panel");
+  if (!vaultCookieOk(req)) {
+    res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien : <code>bash deploy/vault-link.sh panel</code>");
+  }
+
+  let notice = "";
+  let ton: "" | "bon" | "bad" = "";
+  // Le formulaire poste sur l'URL courante, donc sur « ?edit=x ». Après un
+  // enregistrement réussi on repart à vide : rester en édition laisserait
+  // croire que rien n'a été pris.
+  let edit = url.searchParams.get("edit") ?? "";
+  if (req.method === "POST") {
+    const f = new URLSearchParams((await readRawBody(req)).toString("utf8"));
+    const g = (k: string): string => (f.get(k) ?? "").trim();
+    const id = g("id");
+    try {
+      switch (g("op")) {
+        case "put": {
+          const p = await putProvider({
+            id,
+            category: (g("category") || "modele") as Category,
+            label: g("label") || undefined,
+            kind: g("kind") === "anthropic" ? "anthropic" : "openai_compat",
+            baseUrl: g("baseUrl") || undefined,
+            model: g("model") || undefined,
+            // Une clé vide ne remplace rien : le formulaire ne la réaffiche
+            // jamais, donc l'enregistrer viderait la clé à chaque retouche.
+            apiKey: f.get("apiKey")?.trim() || undefined,
+            priority: Number(g("priority")) || 50,
+            roles: f.getAll("roles"),
+            // Champ absent (un appel à la main, un formulaire tronqué) =
+            // « garde le plafond en place ». Le remettre à 0 lèverait une
+            // limite de dépense sans que personne l'ait demandé.
+            dailyCapUsd: f.has("dailyCap") ? Math.max(0, Number(g("dailyCap")) || 0) : undefined,
+            note: g("note") || undefined,
+          });
+          notice = `${p.label || p.id} enregistré${p.has_key ? "" : " (sans clé : inutilisable tant qu'il n'en a pas)"}.`;
+          edit = "";
+          break;
+        }
+        case "pause": notice = (await setProviderEnabled(id, false)) ? `${id} mis en pause.` : `${id} introuvable.`; break;
+        case "reprendre": notice = (await setProviderEnabled(id, true)) ? `${id} réactivé.` : `${id} introuvable.`; break;
+        case "up": await bumpProviderPriority(id, -10); notice = `${id} passe devant.`; break;
+        case "down": await bumpProviderPriority(id, 10); notice = `${id} recule.`; break;
+        case "delete": notice = (await deleteProvider(id)) ? `${id} supprimé.` : `${id} introuvable.`; edit = ""; break;
+        // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
+        // sans ouvrir un terminal : il appelle vraiment le service.
+        case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "budget": {
+          const v = Number(g("daily"));
+          if (!Number.isFinite(v) || v <= 0) throw new Error("plafond invalide");
+          await setSetting("DAILY_BUDGET_USD", String(v));
+          notice = `Plafond journalier porté à ${v} $.`;
+          break;
+        }
+        default: notice = "Action inconnue.";
+      }
+    } catch (e) {
+      notice = `Refusé : ${e instanceof Error ? e.message : String(e)}`;
+      ton = "bad";
+    }
+  }
+
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+  res.end(panelPage(await panelState(), notice, edit, ton));
 }
 
 async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -253,6 +329,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // cookie, et la redirection le retire immédiatement de la barre d'adresse.
   if (url.pathname === "/vault") return vaultRoute(req, res, url);
   if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return screenRoute(req, res, url);
+
+  // Panneau : clés, fournisseurs, consommation, plafond. Même porte.
+  if (url.pathname === "/panel") return panelRoute(req, res, url);
 
   // Tableau de bord. Même porte que le coffre et l'écran : un billet à usage
   // unique échangé contre un cookie. Il n'affiche que ce que l'API rendait
@@ -415,6 +494,7 @@ async function main(): Promise<void> {
   // APRÈS migrate : la reprise des tâches orphelines écrit dans des tables
   // qui doivent exister. AVANT le scheduler : une routine qui déclenche une
   // tâche doit trouver une file déjà vidée de ses orphelines.
+  await seedFromEnv().catch(() => 0);
   await startRuntime();
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) startHeartbeat();

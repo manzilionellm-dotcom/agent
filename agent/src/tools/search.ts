@@ -1,6 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
+import { secretFor } from "../providers.js";
 import { untrusted } from "../safety.js";
 
 /**
@@ -26,8 +27,8 @@ export const tavilySearchTool = betaZodTool({
     search_depth: z.enum(["basic", "advanced"]).default("basic"),
   }),
   run: async (i) => {
-    const key = config().TAVILY_API_KEY;
-    if (!key) return "Error: TAVILY_API_KEY non configuré";
+    const key = await secretFor("tavily", config().TAVILY_API_KEY);
+    if (!key) return "Error: aucune clé Tavily — ajoute-la sur la page /panel, ou dans le .env";
     const res = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
@@ -56,8 +57,8 @@ export const tavilyExtractTool = betaZodTool({
     max_chars_per_url: z.number().int().min(500).max(40_000).default(12_000),
   }),
   run: async (i) => {
-    const key = config().TAVILY_API_KEY;
-    if (!key) return "Error: TAVILY_API_KEY non configuré";
+    const key = await secretFor("tavily", config().TAVILY_API_KEY);
+    if (!key) return "Error: aucune clé Tavily — ajoute-la sur la page /panel, ou dans le .env";
     const res = await fetch("https://api.tavily.com/extract", {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
@@ -82,8 +83,8 @@ export const serpapiSearchTool = betaZodTool({
     num: z.number().int().min(1).max(20).default(10),
   }),
   run: async (i) => {
-    const key = config().SERPAPI_API_KEY;
-    if (!key) return "Error: SERPAPI_API_KEY non configuré";
+    const key = await secretFor("serpapi", config().SERPAPI_API_KEY);
+    if (!key) return "Error: aucune clé SerpAPI — ajoute-la sur la page /panel, ou dans le .env";
     const url = new URL("https://serpapi.com/search.json");
     url.searchParams.set("engine", i.engine);
     url.searchParams.set("q", i.query);

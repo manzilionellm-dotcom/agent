@@ -3,9 +3,10 @@
 #   .\ouvrir.ps1            -> le tableau de bord
 #   .\ouvrir.ps1 screen     -> l'ecran du navigateur du serveur
 #   .\ouvrir.ps1 vault      -> le coffre d'identifiants
+#   .\ouvrir.ps1 panel      -> les cles d'API, la consommation, le plafond
 #
-# Ce script existe parce que l'etape « copier le lien du terminal vers la
-# barre d'adresse » a rate quatre fois de suite : colle dans PowerShell, le
+# Ce script existe parce que l'etape "copier le lien du terminal vers la
+# barre d'adresse" a rate quatre fois de suite : colle dans PowerShell, le
 # lien devient une commande inconnue, et pendant ce temps le billet expire.
 # Ici la machine fait le copier-coller, et le navigateur s'ouvre tout seul.
 #
@@ -17,8 +18,8 @@ $ErrorActionPreference = 'Stop'
 $Page   = if ($args.Count -ge 1) { $args[0] } else { 'board' }
 $Remote = if ($env:MANZI_HOST) { $env:MANZI_HOST } else { 'manzi@50.21.190.19' }
 
-if ($Page -notin @('board','screen','vault')) {
-  Write-Host "Page inconnue: $Page  (board | screen | vault)" -ForegroundColor Red; exit 1
+if ($Page -notin @('board','screen','vault','panel')) {
+  Write-Host "Page inconnue: $Page  (board | screen | vault | panel)" -ForegroundColor Red; exit 1
 }
 
 Write-Host "==> Demande d'un lien pour /$Page" -ForegroundColor Cyan

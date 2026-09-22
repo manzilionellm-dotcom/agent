@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { dailyBudget } from "./providers.js";
 import { db } from "./memory/db.js";
 import { spentToday } from "./memory/store.js";
 import { listAgents } from "./agents/store.js";
@@ -36,8 +37,9 @@ export async function boardState(): Promise<Etat> {
   const cfg = config();
   // Tout en parallèle : la page est consultée depuis un téléphone, et six
   // allers-retours en série sur une base distante se voient à l'œil nu.
-  const [jour, agents, taches, journal, coffre, ecran, spend] = await Promise.all([
+  const [jour, plafond, agents, taches, journal, coffre, ecran, spend] = await Promise.all([
     spentToday().catch(() => 0),
+    dailyBudget().catch(() => cfg.DAILY_BUDGET_USD),
     listAgents().catch(() => []),
     listTasks(undefined, undefined, 40).catch(() => []),
     recentEvents(60).catch(() => []),
@@ -54,7 +56,7 @@ export async function boardState(): Promise<Etat> {
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
     mode: cfg.AUTONOMY_MODE,
-    depense: { jour, plafond: cfg.DAILY_BUDGET_USD },
+    depense: { jour, plafond },
     navigateur: { configure: cfg.BROWSER_CDP_URL ?? "Chromium du sandbox", ecran },
     coffre: { actif: vaultEnabled(), sites: coffre.length },
     agents: agents.map((a) => ({ id: a.id, nom: a.name, role: a.role, etat: a.state, autonomie: a.autonomy, depense24h: spend.get(a.id) ?? 0 })),
@@ -114,7 +116,7 @@ tr:first-child td{border-top:none}
 </style></head><body><main>
 <header><h1>Manzi Junior</h1><span class="maj" id="maj">chargement…</span></header>
 <div id="app"><p class="vide">Chargement…</p></div>
-<div class="liens"><a href="/vault">Coffre</a><a href="/screen">Écran du navigateur</a><a href="/healthz">Santé</a></div>
+<div class="liens"><a href="/panel">Panneau</a><a href="/vault">Coffre</a><a href="/screen">Écran du navigateur</a><a href="/healthz">Santé</a></div>
 </main>
 <script>
 const E = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));

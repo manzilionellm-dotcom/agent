@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult, type ModelKind, type Provider, type Usage } from "../llm.js";
+import { activeProviders, recordUsage, type Role } from "../providers.js";
 
 /**
  * Routeur à trois cerveaux.
@@ -73,6 +74,31 @@ const ROUTE_ENV: Record<ModelKind, "ROUTE_CHAT" | "ROUTE_WORKER" | "ROUTE_PLANNE
 
 const KNOWN: BackendName[] = ["mistral", "deepseek", "claude"];
 
+/**
+ * Chaîne effective pour un type de tâche, depuis le PANNEAU quand il est
+ * rempli, depuis le .env sinon.
+ *
+ * L'ordre de préférence est celui du panneau (colonne priorité), ce qui rend
+ * « mets Mistral devant » ou « mets DeepSeek en pause » immédiats, sans
+ * toucher au serveur. Un fournisseur ajouté là n'a pas besoin d'être connu du
+ * code : c'est ce qui permet d'en essayer un nouveau le jour où il sort.
+ */
+export async function routeAsync(kind: ModelKind): Promise<Backend[]> {
+  const depuisPanneau = await activeProviders(kind as Role).catch(() => []);
+  if (depuisPanneau.length) {
+    return depuisPanneau.map((p) => ({
+      // Le nom sert aux journaux et à la cascade ; un fournisseur inconnu du
+      // code garde simplement son identifiant.
+      name: p.id as BackendName,
+      provider: p.kind as Provider,
+      model: p.model,
+      baseUrl: p.baseUrl,
+      apiKey: p.apiKey,
+    }));
+  }
+  return route(kind);
+}
+
 /** Chaîne effective pour un type de tâche : ce que dit le .env, réduit à ce qui est configuré. */
 export function route(kind: ModelKind): Backend[] {
   const avail = backends();
@@ -136,7 +162,7 @@ export async function runRouted(
   // exécution de la suite.
   run: (o: AgentRunOptions) => Promise<AgentRunResult> = runAgent,
 ): Promise<RoutedResult> {
-  const chain = route(kind);
+  const chain = await routeAsync(kind);
   if (!chain.length) throw new Error(`aucun modèle configuré pour « ${kind} » — renseigne au moins une clé (MISTRAL_API_KEY, OPENAI_COMPAT_API_KEY, ANTHROPIC_API_KEY)`);
 
   const attempts: BackendName[] = [];
@@ -150,6 +176,7 @@ export async function runRouted(
     try {
       const r = await run({ ...opts, provider: b.provider, model: b.model, baseUrl: b.baseUrl, apiKey: b.apiKey });
       total = addUsage(total, r.usage);
+      recordUsage({ provider: b.name, model: b.model, kind, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, usd: r.usage.usd, ok: true });
       last = r;
       if (dernier || !shouldEscalate(r)) {
         if (i > 0) logger.info({ kind, backend: b.name, attempts, usd: total.usd.toFixed(4) }, "cascade : repris par le cerveau suivant");
@@ -157,6 +184,7 @@ export async function runRouted(
       }
       logger.warn({ kind, backend: b.name, stop: r.stopReason, suivant: chain[i + 1]?.name }, "cascade : échec, on monte d'un cran");
     } catch (e) {
+      recordUsage({ provider: b.name, model: b.model, kind, usd: 0, ok: false });
       logger.warn({ kind, backend: b.name, err: String(e).slice(0, 200), suivant: chain[i + 1]?.name }, "cascade : exception, on monte d'un cran");
       // Le dernier de la chaîne : plus personne derrière, l'erreur remonte.
       if (dernier) throw e;

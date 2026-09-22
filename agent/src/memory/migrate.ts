@@ -213,6 +213,56 @@ const MIGRATIONS: string[] = [
      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
 
+  // Fournisseurs de modèles, pilotés depuis le panneau plutôt que par le
+  // .env. Raison : changer une clé ou mettre un fournisseur en pause ne doit
+  // pas demander un accès SSH et un redémarrage. La clé est chiffrée avec la
+  // même clé maîtresse que le coffre — elle n'est jamais en clair en base.
+  `CREATE TABLE IF NOT EXISTS providers (
+     id            TEXT PRIMARY KEY,
+     label         TEXT NOT NULL DEFAULT '',
+     kind          TEXT NOT NULL DEFAULT 'openai_compat',
+     base_url      TEXT NOT NULL DEFAULT '',
+     model         TEXT NOT NULL DEFAULT '',
+     api_key       TEXT,
+     enabled       BOOLEAN NOT NULL DEFAULT true,
+     priority      INTEGER NOT NULL DEFAULT 50,
+     roles         TEXT NOT NULL DEFAULT 'chat,worker',
+     daily_cap_usd NUMERIC(8,2) NOT NULL DEFAULT 0,
+     note          TEXT NOT NULL DEFAULT '',
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
+  // Une ligne par appel de modèle. `spend` ne garde qu'un total par jour :
+  // impossible d'y lire quel fournisseur coûte quoi, ni de plafonner l'un
+  // sans l'autre. C'est la table qui alimente le panneau.
+  `CREATE TABLE IF NOT EXISTS usage_log (
+     id            BIGSERIAL PRIMARY KEY,
+     provider      TEXT NOT NULL,
+     model         TEXT NOT NULL,
+     kind          TEXT NOT NULL DEFAULT '',
+     input_tokens  INTEGER NOT NULL DEFAULT 0,
+     output_tokens INTEGER NOT NULL DEFAULT 0,
+     usd           NUMERIC(10,4) NOT NULL DEFAULT 0,
+     ok            BOOLEAN NOT NULL DEFAULT true,
+     ts            TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  // Ajoutée après coup : le panneau ne gère plus seulement les modèles, mais
+  // tout service à clé — GitHub, Vercel, la recherche. `CREATE TABLE IF NOT
+  // EXISTS` ne touche pas une table existante, d'où l'ALTER explicite.
+  `ALTER TABLE providers ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'modele'`,
+
+  // Réglages modifiables sans redémarrage. Le .env reste la valeur par
+  // défaut ; cette table ne contient que ce qui a été changé depuis le
+  // panneau, pour qu'un réglage jamais touché suive le fichier.
+  `CREATE TABLE IF NOT EXISTS settings (
+     cle        TEXT PRIMARY KEY,
+     valeur     TEXT NOT NULL,
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS usage_log_ts ON usage_log (ts DESC)`,
+  `CREATE INDEX IF NOT EXISTS usage_log_provider_ts ON usage_log (provider, ts DESC)`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

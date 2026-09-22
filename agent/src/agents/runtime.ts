@@ -6,6 +6,7 @@ import { runMission } from "../missions/index.js";
 import { resolveMission } from "../missions/index.js";
 import { customToMission } from "../missions/index.js";
 import { agentSpend, getAgent, setAgentState, AUTONOMY, type AgentRow } from "./store.js";
+import { dailyBudget } from "../providers.js";
 import { claimNext, completeTask, failTask, blockTask, recoverOrphans, checkpoint, WORKER_ID, type TaskRow } from "./tasks.js";
 
 /**
@@ -34,9 +35,8 @@ const IDLE_MS = 5_000;
  * Vérifier après coup revient à constater un dépassement qu'on a payé.
  */
 async function budgetBlocked(agent: AgentRow): Promise<string | undefined> {
-  const cfg = config();
-  const day = await spentToday();
-  if (day >= cfg.DAILY_BUDGET_USD) return `plafond journalier global atteint (${day.toFixed(2)} / ${cfg.DAILY_BUDGET_USD} $)`;
+  const [day, plafond] = await Promise.all([spentToday(), dailyBudget()]);
+  if (day >= plafond) return `plafond journalier global atteint (${day.toFixed(2)} / ${plafond} $)`;
   const mine = await agentSpend(agent.id, 24);
   if (mine >= agent.daily_usd) return `plafond de l'agent atteint (${mine.toFixed(2)} / ${agent.daily_usd} $ sur 24 h)`;
   return undefined;

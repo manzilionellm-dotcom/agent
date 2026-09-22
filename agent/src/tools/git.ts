@@ -1,6 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
+import { secretFor } from "../providers.js";
 import { logger } from "../logger.js";
 import { sandboxExec, formatExec, shellQuote } from "./sandbox.js";
 
@@ -22,7 +23,8 @@ export function makeGitTools(container?: string) {
       const cfg = config();
       const name = cfg.GITHUB_REPO.split("/")[1]!;
       const dir = `${cfg.SANDBOX_WORKDIR}/${name}`;
-      const authed = `https://x-access-token:${cfg.GITHUB_TOKEN}@github.com/${cfg.GITHUB_REPO}.git`;
+      const gh = (await secretFor("github", cfg.GITHUB_TOKEN)) ?? cfg.GITHUB_TOKEN;
+      const authed = `https://x-access-token:${gh}@github.com/${cfg.GITHUB_REPO}.git`;
       const cmd = [
         `if [ ! -d ${shellQuote(dir)}/.git ]; then git clone -q ${shellQuote(authed)} ${shellQuote(dir)}; fi`,
         `cd ${shellQuote(dir)}`,
@@ -34,7 +36,7 @@ export function makeGitTools(container?: string) {
         `echo "dir=${dir}" && git status --short --branch && git log --oneline -3`,
       ].join(" && ");
       const r = await sandboxExec(cmd, { timeoutMs: 180_000, container });
-      return formatExec(r).replaceAll(cfg.GITHUB_TOKEN, "***");
+      return formatExec(r).replaceAll(gh, "***");
     },
   });
 
@@ -49,17 +51,19 @@ export function makeGitTools(container?: string) {
     }),
     run: async (i) => {
       const cfg = config();
-      const authed = `https://x-access-token:${cfg.GITHUB_TOKEN}@github.com/${cfg.GITHUB_REPO}.git`;
+      const gh = (await secretFor("github", cfg.GITHUB_TOKEN)) ?? cfg.GITHUB_TOKEN;
+      const authed = `https://x-access-token:${gh}@github.com/${cfg.GITHUB_REPO}.git`;
       const push = await sandboxExec(
         `cd ${shellQuote(i.repo_dir)} && git push -q ${shellQuote(authed)} HEAD:${shellQuote(i.branch)} 2>&1 && git rev-parse HEAD`,
         { timeoutMs: 120_000, container },
       );
-      const pushOut = formatExec(push).replaceAll(cfg.GITHUB_TOKEN, "***");
+      const pushOut = formatExec(push).replaceAll(gh, "***");
       if (push.code !== 0) return `Push échoué:\n${pushOut}`;
       const sha = push.stdout.trim().split("\n").at(-1) ?? "";
       logger.info({ container, sha, branch: i.branch }, "pushed");
 
-      if (!cfg.VERCEL_TOKEN || !cfg.VERCEL_PROJECT || i.wait_for_deploy_seconds === 0) {
+      const vercel = (await secretFor("vercel", cfg.VERCEL_TOKEN)) ?? cfg.VERCEL_TOKEN;
+      if (!vercel || !cfg.VERCEL_PROJECT || i.wait_for_deploy_seconds === 0) {
         return `Poussé ${sha} sur ${i.branch}.\n${pushOut}`;
       }
       const deadline = Date.now() + i.wait_for_deploy_seconds * 1000;
@@ -67,7 +71,7 @@ export function makeGitTools(container?: string) {
       let url = "";
       while (Date.now() < deadline) {
         const res = await fetch(`https://api.vercel.com/v6/deployments?projectId=${encodeURIComponent(cfg.VERCEL_PROJECT)}&limit=5`, {
-          headers: { Authorization: `Bearer ${cfg.VERCEL_TOKEN}` },
+          headers: { Authorization: `Bearer ${vercel}` },
         });
         if (res.ok) {
           const data = (await res.json()) as { deployments?: Array<{ url: string; state: string; meta?: Record<string, string> }> };

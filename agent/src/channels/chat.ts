@@ -2,6 +2,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { createVaultTicket } from "../vault.js";
+import { dailyBudget } from "../providers.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -219,7 +220,7 @@ function controlTools(notify: Notify) {
     name: "spend_today",
     description: "Dépense LLM du jour et plafond.",
     inputSchema: z.object({}),
-    run: async () => `${(await spentToday()).toFixed(2)} $ / plafond ${config().DAILY_BUDGET_USD} $`,
+    run: async () => `${(await spentToday()).toFixed(2)} $ / plafond ${await dailyBudget()} $`,
   });
 
   // Créer une mission depuis WhatsApp plutôt que dans le code : l'opérateur en
@@ -414,7 +415,8 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   // Limite de débit par numéro : un téléphone volé ou un webhook rejoué ne vide pas le budget.
   const recent = await db().query<{ n: string }>(`SELECT count(*) AS n FROM chat_messages WHERE peer=$1 AND role='user' AND ts > now() - interval '1 hour'`, [opts.peer]);
   if (Number(recent.rows[0]?.n ?? 0) >= config().CHAT_RATE_LIMIT_PER_HOUR) return "Trop de messages cette heure-ci ; je reprends dans un moment.";
-  if ((await spentToday()) >= config().DAILY_BUDGET_USD) return `Plafond journalier atteint (${config().DAILY_BUDGET_USD} $). Je ne lance plus rien aujourd'hui ; relève DAILY_BUDGET_USD si besoin.`;
+  const plafondJour = await dailyBudget();
+  if ((await spentToday()) >= plafondJour) return `Plafond journalier atteint (${plafondJour} $). Je ne lance plus rien aujourd'hui ; relève-le sur la page /panel.`;
   await db().query(`INSERT INTO chat_messages(channel, peer, role, content, ext_id) VALUES ($1,$2,'user',$3,$4)`, [opts.channel, opts.peer, text, opts.extId ?? null]);
 
   const hist = await db().query<{ role: string; content: string; ts: string }>(

@@ -50,6 +50,19 @@ function key(): Buffer {
   return cachedKey;
 }
 
+/**
+ * Chiffre une valeur avec la clé maîtresse du coffre. Exporté parce que les
+ * clés d'API des fournisseurs méritent exactement la même protection que les
+ * mots de passe : une seule mécanique, un seul endroit à auditer.
+ */
+export function encryptSecret(plain: string): string {
+  return seal(plain);
+}
+
+export function decryptSecret(sealed: string): string {
+  return open(sealed);
+}
+
 function seal(plain: string): string {
   const iv = randomBytes(12);
   const c = createCipheriv(ALGO, key(), iv);

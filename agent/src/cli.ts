@@ -41,7 +41,7 @@ if (!name) {
       // l'écran du navigateur et le tableau de bord. Un billet par page,
       // puisqu'un billet meurt à l'ouverture.
       const page = (rest[0] ?? "vault").replace(/^\//, "");
-      if (!["vault", "screen", "board"].includes(page)) throw new Error(`page inconnue : ${page} (vault | screen | board)`);
+      if (!["vault", "screen", "board", "panel"].includes(page)) throw new Error(`page inconnue : ${page} (vault | screen | board | panel)`);
       const t = await createVaultTicket(10);
       const base = config().PUBLIC_URL ?? "http://127.0.0.1:8787";
       console.log(`\n  ${base}/${page}?t=${t.id}\n`);
