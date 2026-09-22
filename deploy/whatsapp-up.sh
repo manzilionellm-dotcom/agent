@@ -56,6 +56,35 @@ else
   "${COMPOSE[@]}" up -d --force-recreate orchestrator "$SERVICE"
 fi
 
+# L'adresse que sert le tunnel doit arriver JUSQU'À l'orchestrateur, pas
+# seulement jusqu'à Meta.
+#
+# C'est la panne du 22 septembre au soir, et elle était silencieuse : le
+# webhook était bien redéclaré à la nouvelle adresse, donc le bot continuait
+# de répondre sur WhatsApp — mais PUBLIC_URL n'était jamais réécrite dans le
+# .env pour le tunnel jetable. Tous les liens qu'il envoyait (/panel, /vault,
+# /screen) pointaient donc vers l'ancien nom d'hôte, mort. Un bot qui parle
+# et dont les liens ne s'ouvrent pas : le symptôme n'accuse rien.
+#
+# Et écrire le .env ne suffit pas : un conteneur lit son env_file à sa
+# CRÉATION. Sans recréation, le processus garde l'ancienne adresse pendant
+# que le fichier, lui, porte la bonne — la panne devient alors invisible même
+# en lisant la configuration.
+adopter() {
+  local neuve="$1"
+  [ -n "$neuve" ] || return 0
+  if [ "$(val PUBLIC_URL)" = "$neuve" ]; then
+    say "adresse confirmée : $neuve"
+    return 0
+  fi
+  say "nouvelle adresse publique : $neuve"
+  bash "$DIR/deploy/set-env.sh" "PUBLIC_URL=$neuve" >/dev/null
+  # Uniquement quand elle a changé : recréer à chaque passage du minuteur
+  # couperait le bot toutes les dix minutes pour rien.
+  say "reprise de l'orchestrateur avec la nouvelle adresse"
+  "${COMPOSE[@]}" up -d --force-recreate orchestrator >/dev/null
+}
+
 PUBLIC=""
 if [ "$SERVICE" = tunnel-quick ]; then
   say "attente de l'adresse publique (jusqu'à 60 s)"
@@ -66,6 +95,7 @@ if [ "$SERVICE" = tunnel-quick ]; then
     sleep 2
   done
   [ -n "$PUBLIC" ] || die "adresse introuvable — voir: ${COMPOSE[*]} logs $SERVICE"
+  adopter "$PUBLIC"
 else
   # C'est le TUNNEL qui fait autorité, pas le .env. Cloudflare lui envoie sa
   # configuration au démarrage et cloudflared la journalise : l'adresse lue
@@ -87,8 +117,7 @@ else
     if [ "$PUBLIC" != "https://$HOST" ]; then
       [ -n "$PUBLIC" ] && say "le .env dit « $PUBLIC », le tunnel sert « $HOST » — on garde celle du tunnel"
       PUBLIC="https://$HOST"
-      bash "$DIR/deploy/set-env.sh" "PUBLIC_URL=$PUBLIC" >/dev/null
-      say "PUBLIC_URL corrigée : $PUBLIC"
+      adopter "$PUBLIC"
     else
       say "adresse confirmée : $PUBLIC"
     fi
