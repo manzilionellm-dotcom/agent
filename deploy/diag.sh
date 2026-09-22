@@ -81,8 +81,8 @@ if "${COMPOSE[@]}" ps --format '{{.Service}}' 2>/dev/null | grep -qx desktop; th
   # là où tout marche.
   DIP=$("${COMPOSE[@]}" exec -T sandbox getent hosts desktop 2>/dev/null | awk '{print $1}' | head -1 | tr -d '\r')
   if [ -n "$DIP" ]; then
-    PIL=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 3 "http://$DIP:9222/json/version" 2>/dev/null | head -c 120)
-    [ -n "$PIL" ] && printf '  piloté par l agent \033[1;32moui\033[0m (%s)\n' "$DIP" || printf '  piloté par l agent \033[1;31mnon\033[0m (%s ne répond pas sur 9222)\n' "$DIP"
+    PIL=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 3 "http://$DIP:9223/json/version" 2>/dev/null | head -c 120)
+    [ -n "$PIL" ] && printf '  piloté par l agent \033[1;32moui\033[0m (%s)\n' "$DIP" || printf '  piloté par l agent \033[1;31mnon\033[0m (%s ne répond pas sur 9223)\n' "$DIP"
   else
     printf '  piloté par l agent \033[1;31mnon\033[0m — le sandbox ne résout pas « desktop »\n'
   fi
@@ -94,7 +94,7 @@ t "Pont vers le Chrome de ton poste (facultatif)"
 CDP=$(val BROWSER_CDP_URL)
 if [ -z "$CDP" ]; then
   printf '  BROWSER_CDP_URL vide — le bot utilise son propre Chromium (normal si le pont n est pas voulu)\n'
-elif [ "$CDP" = "http://desktop:9222" ]; then
+elif [ "$CDP" = "http://desktop:9223" ]; then
   # Le pont SSH n'est plus en jeu : l'agent pilote le navigateur du serveur.
   # Diagnostiquer une passerelle Docker ici enverrait chercher une panne qui
   # n'existe pas.

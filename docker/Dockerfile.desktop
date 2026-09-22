@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb x11vnc novnc websockify fonts-liberation fonts-noto-color-emoji \
-      dbus-x11 x11-utils curl \
+      dbus-x11 x11-utils curl socat \
  && rm -rf /var/lib/apt/lists/*
 
 COPY docker/desktop/start.sh /opt/start.sh
@@ -31,5 +31,5 @@ RUN chmod +x /opt/start.sh \
  && mkdir -p /profile /home/pwuser/.vnc \
  && chown -R pwuser:pwuser /profile /home/pwuser
 
-EXPOSE 6080 9222
+EXPOSE 6080 9223
 CMD ["/opt/start.sh"]

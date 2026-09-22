@@ -62,11 +62,6 @@ log "navigateur : $CHROME"
 
 mkdir -p "$PROFILE"
 
-# --remote-debugging-address=0.0.0.0 : nécessaire pour que l'orchestrateur
-# pilote ce navigateur depuis un autre conteneur. Le port n'est PAS publié sur
-# l'hôte (voir docker-compose) : il n'est joignable que depuis le réseau
-# interne de la pile. Sur un poste personnel ce serait une faute ; ici c'est
-# une liaison entre deux conteneurs du même serveur.
 # --no-sandbox : Chromium refuse de démarrer dans un conteneur sans lui
 # (zygote_host_impl_linux, crbug.com/638180). Le bac à sable de Chromium a
 # besoin de privilèges que ce conteneur n'a pas, et ne doit pas avoir.
@@ -80,7 +75,6 @@ mkdir -p "$PROFILE"
   --disable-gpu \
   --disable-dev-shm-usage \
   --remote-debugging-port=9222 \
-  --remote-debugging-address=0.0.0.0 \
   --user-data-dir="$PROFILE" \
   --no-first-run --no-default-browser-check --disable-session-crashed-bubble \
   --password-store=basic \
@@ -96,7 +90,26 @@ for i in $(seq 1 60); do
   sleep 0.5
   [ "$i" = 60 ] && { log "Chromium n'écoute pas sur 9222"; tail -30 /tmp/chrome.log; exit 1; }
 done
-log "navigateur prêt (CDP sur 9222)"
+log "navigateur prêt (CDP sur 127.0.0.1:9222)"
+
+# --- Pilotage depuis les autres conteneurs -----------------------------------
+#
+# Chromium n'écoute que sur la boucle locale, et `--remote-debugging-address`
+# n'y change rien de fiable selon les versions : le port répondait dans le
+# conteneur et restait injoignable depuis le sandbox. Plutôt que de dépendre
+# du comportement d'un drapeau, on relaie explicitement.
+#
+# 9223 et non 9222 : le port de débogage de Chromium reste strictement local,
+# et seul ce relais est visible sur le réseau interne de la pile. Rien n'est
+# publié sur l'hôte dans les deux cas.
+socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222 >/tmp/socat.log 2>&1 &
+sleep 1
+if curl -fsS --max-time 3 "http://127.0.0.1:9223/json/version" >/dev/null 2>&1; then
+  log "relais de pilotage prêt (9223 → 9222)"
+else
+  log "ATTENTION : le relais 9223 ne répond pas"
+  tail -5 /tmp/socat.log 2>/dev/null
+fi
 
 # --- Partage d'écran ---------------------------------------------------------
 # Pas de mot de passe VNC : le port 5900 ne quitte jamais ce conteneur, et

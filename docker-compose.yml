@@ -93,9 +93,11 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 2g
     cpus: 1.5
-    # AUCUN port publié sur l'hôte : ni 6080 ni 9222. L'écran se regarde à
+    # AUCUN port publié sur l'hôte : ni 6080 ni 9223. L'écran se regarde à
     # travers l'orchestrateur, qui exige un billet ; le pilotage se fait entre
-    # conteneurs. Publier 9222 reviendrait à offrir les comptes connectés.
+    # conteneurs. Les publier reviendrait à offrir les comptes connectés.
+    # Le port de débogage de Chromium (9222) ne quitte même pas le conteneur :
+    # seul le relais 9223 est visible sur le réseau interne.
     networks: [internal, egress]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS --max-time 3 http://127.0.0.1:9222/json/version >/dev/null"]

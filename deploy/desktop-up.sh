@@ -46,9 +46,9 @@ fi
 # conteneur, port retenu par un tunnel mort, GatewayPorts…). Un nom de service
 # sur un réseau compose, lui, résout toujours.
 ANCIEN=$(grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2- | tr -d '\r')
-if [ "$ANCIEN" != "http://desktop:9222" ]; then
+if [ "$ANCIEN" != "http://desktop:9223" ]; then
   [ -n "$ANCIEN" ] && say "l'agent visait « $ANCIEN » — on bascule sur le navigateur du serveur"
-  bash deploy/set-env.sh BROWSER_CDP_URL=http://desktop:9222 >/dev/null || die "écriture du .env impossible"
+  bash deploy/set-env.sh BROWSER_CDP_URL=http://desktop:9223 >/dev/null || die "écriture du .env impossible"
 fi
 
 # --build, et pas seulement --force-recreate : la route /screen est du code
@@ -70,7 +70,7 @@ done
 #
 # On interroge l'ADRESSE IP, jamais le nom. Chrome refuse toute requête de
 # débogage dont l'en-tête Host n'est ni « localhost » ni une IP : un
-# `curl http://desktop:9222/...` échoue donc même quand tout fonctionne, et
+# `curl http://desktop:9223/...` échoue donc même quand tout fonctionne, et
 # annonce une panne de réseau qui n'existe pas. Le démon du navigateur résout
 # déjà le nom avant de se connecter ; ce contrôle doit faire pareil, sinon il
 # teste autre chose que ce que fait l'agent.
@@ -78,9 +78,9 @@ IP=$("${COMPOSE[@]}" exec -T sandbox getent hosts desktop 2>/dev/null | awk '{pr
 if [ -z "$IP" ]; then
   echo "    ATTENTION : le sandbox ne résout pas le nom « desktop » — les deux conteneurs ne partagent pas de réseau"
 else
-  VER=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 5 "http://$IP:9222/json/version" 2>/dev/null | head -c 160)
+  VER=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 5 "http://$IP:9223/json/version" 2>/dev/null | head -c 160)
   [ -n "$VER" ] && echo "    l'agent joint le navigateur ($IP) : $VER" \
-                || echo "    ATTENTION : « desktop » résout en $IP mais ne répond pas sur 9222"
+                || echo "    ATTENTION : « desktop » résout en $IP mais ne répond pas sur 9223"
 fi
 
 # La route existe-t-elle vraiment dans le binaire qui tourne ? Un faux billet

@@ -110,7 +110,7 @@ fi
 ACTUEL=$(grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2- | tr -d '"\r')
 FORCE=0
 for a in "$@"; do [ "$a" = "--force" ] && FORCE=1; done
-if [ "$ACTUEL" = "http://desktop:9222" ] && [ "$FORCE" = 0 ]; then
+if [ "$ACTUEL" = "http://desktop:9223" ] && [ "$FORCE" = 0 ]; then
   say "l'agent utilise le navigateur du serveur — on n'y touche pas"
   echo "    (pour basculer sur le Chrome de ton poste : bash deploy/chrome-bridge-server.sh --force)"
 else
