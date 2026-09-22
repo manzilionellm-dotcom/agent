@@ -2,7 +2,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { createVaultTicket } from "../vault.js";
-import { dailyBudget } from "../providers.js";
+import { dailyBudget, setSetting } from "../providers.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -97,6 +97,8 @@ Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie auto
 Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal, tu reçois son contenu déjà lu, entre crochets. Tu t'en sers comme s'il te l'avait décrit — ne dis jamais que tu ne peux pas voir les images. Si le bloc dit que la lecture a échoué, dis-le simplement et demande ce qu'il y a dessus.
 
 Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report avant de dire « je ne sais pas ». Les préférences de l'opérateur vont dans remember_fact avec topic 'profil:...'.
+
+Réglages : « coupe les approbations » / « remets les approbations » / « monte le plafond à 20 » → outil reglage, immédiatement, sans demander confirmation. Tu confirmes en une ligne.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer. C'est le seul ordre qui t'arrête.`;
 
@@ -203,6 +205,48 @@ function screenshotTool(channel: string, peer: string) {
       if (!file) return "Error: aucune capture à envoyer — prends d'abord browser{action:\"screenshot\"}.";
       const r = await sendWhatsAppImage(peer, file, i.caption ?? "");
       return r.ok ? `capture envoyée (${file})` : `Error: ${r.error}`;
+    },
+  });
+}
+
+/**
+ * Les réglages, depuis la conversation.
+ *
+ * Ils vivaient uniquement sur le panneau — donc derrière un lien, une page à
+ * ouvrir, une section à trouver. Pour quelqu'un qui pilote son bot au vocal
+ * depuis un téléphone, c'est trois obstacles de trop : « coupe les
+ * approbations » doit suffire.
+ *
+ * Le plafond de dépense est modifiable ici aussi : c'est le réglage qu'on
+ * veut changer AU MOMENT où il coupe une mission, pas dix minutes plus tard
+ * devant un écran.
+ */
+function settingsTool() {
+  return betaZodTool({
+    name: "reglage",
+    description:
+      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles (envoi d'e-mail, outils MCP) partent sans rien demander ; « on » = l'opérateur reçoit une demande OUI-XXXX. `plafond_jour` : le plafond de dépense quotidien en dollars. Exécute sans demander confirmation, puis confirme en une ligne.",
+    inputSchema: z.object({
+      approbations: z.enum(["on", "off"]).optional(),
+      plafond_jour: z.number().positive().max(500).optional().describe("Plafond quotidien en USD."),
+    }),
+    run: async (i) => {
+      const faits: string[] = [];
+      if (i.approbations) {
+        await setSetting("APPROBATIONS", i.approbations);
+        faits.push(
+          i.approbations === "off"
+            ? "approbations coupées — les actions irréversibles partent sans te demander"
+            : "approbations réactivées — une action irréversible te demandera OUI-XXXX",
+        );
+      }
+      if (i.plafond_jour !== undefined) {
+        await setSetting("DAILY_BUDGET_USD", String(i.plafond_jour));
+        faits.push(`plafond du jour porté à ${i.plafond_jour} $`);
+      }
+      if (!faits.length) return "Error: rien à changer — précise approbations et/ou plafond_jour.";
+      logger.info({ reglages: faits }, "réglage changé depuis le chat");
+      return `${faits.join(", ")}. Effet immédiat.`;
     },
   });
 }
@@ -503,7 +547,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
