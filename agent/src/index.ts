@@ -158,6 +158,14 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "vercel": {
+          const v = g("projet").replace(/^https?:\/\/[^/]+\//, "").replace(/\/.*$/, "").trim();
+          if (v && !/^[\w.-]{1,100}$/.test(v)) throw new Error("nom de projet invalide (lettres, chiffres, - et _)");
+          await setSetting("VERCEL_PROJECT", v);
+          notice = v ? `Déploiements suivis sur le projet ${v}.` : "Plus aucun projet suivi après un push.";
+          ton = "bon";
+          break;
+        }
         case "budget": {
           const v = Number(g("daily"));
           if (!Number.isFinite(v) || v <= 0) throw new Error("plafond invalide");

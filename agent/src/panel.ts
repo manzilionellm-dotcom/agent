@@ -1,7 +1,7 @@
 import { config } from "./config.js";
-import { dailyBudget } from "./providers.js";
+import { dailyBudget, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
-import { CATEGORIES, ROLES, listProviders, spendByDay, usageByProvider, type Category, type PublicProvider } from "./providers.js";
+import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { vaultEnabled } from "./vault.js";
 
 /**
@@ -38,27 +38,34 @@ export type PanelState = {
   heure: string;
   coffre: boolean;
   depense: { jour: number; plafond: number };
+  vercel: string;
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
+  /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
+  missions: Array<MissionCost & { quand: string }>;
   jours: Array<{ jour: string; usd: number }>;
   roles: readonly string[];
 };
 
 export async function panelState(): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, jours, jour, plafond] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
+    spendByMission(24).catch(() => [] as MissionCost[]),
     spendByDay(14).catch(() => []),
     spentToday().catch(() => 0),
     dailyBudget().catch(() => cfg.DAILY_BUDGET_USD),
+    vercelProject().catch(() => cfg.VERCEL_PROJECT),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
     coffre: vaultEnabled(),
     depense: { jour, plafond },
+    vercel: vercel ?? "",
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
+    missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
     jours,
     roles: ROLES,
   };
@@ -182,6 +189,14 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
     )
     .join("");
 
+  const parMission = st.missions.length
+    ? `<table><tr><th>Travail</th><th class="n">Lancements</th><th class="n">Coût</th><th>Dernier</th></tr>` +
+      st.missions
+        .map((m) => `<tr><td>${esc(m.mission)}</td><td class="n">${m.lancements}</td><td class="n">${m.usd.toFixed(3)} $</td>` +
+                    `<td class="det">${esc(m.quand)}</td></tr>`)
+        .join("") + `</table>`
+    : `<p class="vide">Aucune mission facturée dans les 24 dernières heures.</p>`;
+
   const conso = st.consommation.length
     ? `<table><tr><th>Service</th><th>Modèle</th><th class="n">Appels</th><th class="n">Jetons</th><th class="n">Coût</th></tr>` +
       st.consommation
@@ -240,8 +255,21 @@ ${cats}
   ${e ? `<a class="b" href="/panel" style="margin-left:.6rem">Annuler</a>` : ""}
 </form>
 
-<h2>Consommation, 24 dernières heures</h2>
+<h2>Qui a coûté, 24 dernières heures</h2>
+<p class="aide">Par travail. C'est la question qu'on se pose devant une facture : changer de modèle ne sert à rien si c'est une mission qui boucle.</p>
+${parMission}
+
+<h2>Par modèle, 24 dernières heures</h2>
+<p class="aide">Le même argent, vu de l'autre côté : quel fournisseur l'a encaissé.</p>
 ${conso}
+
+<h2>Projet Vercel à suivre</h2>
+<p class="aide">Après un push, l'agent attend le déploiement de CE projet et te rend son adresse. Tu n'as pas à le deviner : branche le jeton Vercel, clique « Tester la clé » sur sa carte, et la liste des projets que le jeton voit s'affiche en haut de cette page.</p>
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="vercel">
+  <div class="grille"><label>Nom du projet <span class="det">(vide = aucun suivi)</span><input name="projet" placeholder="mon-site" value="${esc(st.vercel)}"></label></div>
+  <button class="principal">Enregistrer le projet</button>
+</form>
 
 <h2>Plafond journalier</h2>
 <p class="aide">Global, tous services confondus. Au-delà, l'agent refuse de lancer une mission — c'est le garde-fou qui empêche une boucle de coûter une nuit entière.</p>

@@ -1,7 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
-import { secretFor } from "../providers.js";
+import { secretFor, vercelProject } from "../providers.js";
 import { logger } from "../logger.js";
 import { sandboxExec, formatExec, shellQuote } from "./sandbox.js";
 
@@ -63,14 +63,15 @@ export function makeGitTools(container?: string) {
       logger.info({ container, sha, branch: i.branch }, "pushed");
 
       const vercel = (await secretFor("vercel", cfg.VERCEL_TOKEN)) ?? cfg.VERCEL_TOKEN;
-      if (!vercel || !cfg.VERCEL_PROJECT || i.wait_for_deploy_seconds === 0) {
+      const projet = await vercelProject();
+      if (!vercel || !projet || i.wait_for_deploy_seconds === 0) {
         return `Poussé ${sha} sur ${i.branch}.\n${pushOut}`;
       }
       const deadline = Date.now() + i.wait_for_deploy_seconds * 1000;
       let lastState = "UNKNOWN";
       let url = "";
       while (Date.now() < deadline) {
-        const res = await fetch(`https://api.vercel.com/v6/deployments?projectId=${encodeURIComponent(cfg.VERCEL_PROJECT)}&limit=5`, {
+        const res = await fetch(`https://api.vercel.com/v6/deployments?projectId=${encodeURIComponent(projet)}&limit=5`, {
           headers: { Authorization: `Bearer ${vercel}` },
         });
         if (res.ok) {

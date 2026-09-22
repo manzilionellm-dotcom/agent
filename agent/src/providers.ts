@@ -229,7 +229,7 @@ export async function activeProviders(role?: Role): Promise<ResolvedProvider[]> 
 
 let reglages: { at: number; map: Map<string, string> } | undefined;
 
-async function setting(cle: string): Promise<string | undefined> {
+export async function setting(cle: string): Promise<string | undefined> {
   if (!reglages || Date.now() - reglages.at > TTL_MS) {
     const map = new Map<string, string>();
     try {
@@ -262,6 +262,17 @@ export async function setSetting(cle: string, valeur: string): Promise<void> {
 export async function dailyBudget(): Promise<number> {
   const v = Number(await setting("DAILY_BUDGET_USD"));
   return Number.isFinite(v) && v > 0 ? v : config().DAILY_BUDGET_USD;
+}
+
+/**
+ * Le projet Vercel à suivre après un push.
+ *
+ * Dans le .env, il fallait un accès SSH pour le changer — or c'est
+ * exactement le genre de valeur qu'on ne connaît qu'APRÈS avoir branché le
+ * jeton et vu la liste des projets. Le panneau la propose donc juste à côté.
+ */
+export async function vercelProject(): Promise<string | undefined> {
+  return (await setting("VERCEL_PROJECT"))?.trim() || config().VERCEL_PROJECT;
 }
 
 /* --- Clés des services (GitHub, Vercel, recherche…) ----------------------- */
@@ -368,11 +379,26 @@ export async function testProvider(id: string): Promise<TestResult> {
       if (moi.status !== 200) return { ok: false, message: `Vercel refuse la clé : ${raison(moi)}` };
       const u = (moi.body as { user?: { username?: string; email?: string } })?.user;
       const qui = u?.username ?? u?.email ?? "?";
-      if (!c.VERCEL_PROJECT) return { ok: true, message: `Vercel OK — connecté en tant que ${qui}. Aucun projet configuré (VERCEL_PROJECT) : le déploiement ne sera pas suivi.` };
-      const pr = await probe(`https://api.vercel.com/v9/projects/${encodeURIComponent(c.VERCEL_PROJECT)}`, { authorization: `Bearer ${key}` });
-      return pr.status === 200
-        ? { ok: true, message: `Vercel OK — ${qui}, projet ${c.VERCEL_PROJECT} visible.` }
-        : { ok: false, message: `Connecté en tant que ${qui}, mais le projet ${c.VERCEL_PROJECT} est introuvable : ${raison(pr)}. Si le projet appartient à une équipe, le jeton doit être un jeton d'équipe.` };
+      // On ÉNUMÈRE les projets au lieu de demander leur nom.
+      //
+      // Le nom du projet ne se connaît qu'une fois le jeton branché — le
+      // réclamer avant, c'est envoyer quelqu'un fouiller une interface qu'il
+      // n'a peut-être pas sous la main. Le jeton, lui, sait déjà.
+      const liste = await probe("https://api.vercel.com/v9/projects?limit=20", { authorization: `Bearer ${key}` });
+      const noms = ((liste.body as { projects?: Array<{ name?: string }> })?.projects ?? []).map((p) => p.name).filter(Boolean) as string[];
+      const projet = await vercelProject();
+
+      if (!projet) {
+        return noms.length
+          ? { ok: true, message: `Vercel OK — ${qui}. Projets visibles : ${noms.join(", ")}. Choisis-en un dans « Projet Vercel à suivre », en bas de page, sinon les déploiements ne seront pas suivis.` }
+          : { ok: true, message: `Vercel OK — ${qui}, mais ce jeton ne voit AUCUN projet. Si tes projets appartiennent à une équipe, refais le jeton en choisissant cette équipe dans « Scope ».` };
+      }
+      const pr = await probe(`https://api.vercel.com/v9/projects/${encodeURIComponent(projet)}`, { authorization: `Bearer ${key}` });
+      if (pr.status === 200) return { ok: true, message: `Vercel OK — ${qui}, projet ${projet} visible, déploiements suivis.` };
+      return {
+        ok: false,
+        message: `Connecté en tant que ${qui}, mais « ${projet} » est introuvable.${noms.length ? ` Ce jeton voit : ${noms.join(", ")}. Corrige le nom en bas de page.` : " Ce jeton ne voit aucun projet : s'ils appartiennent à une équipe, refais-le en choisissant cette équipe dans « Scope »."}`,
+      };
     }
 
     if (id === "tavily") {
@@ -458,6 +484,29 @@ export async function usageByProvider(hours = 24): Promise<UsageRow[]> {
     [String(hours)],
   );
   return r.rows.map((x) => ({ provider: x.provider, model: x.model, appels: Number(x.appels), usd: Number(x.usd), tokens: Number(x.tokens) }));
+}
+
+export type MissionCost = { mission: string; lancements: number; usd: number; dernier: string };
+
+/**
+ * Dépense par MISSION, lue dans `episodes`.
+ *
+ * `usage_log` dit quel MODÈLE a coûté ; celle-ci dit quel TRAVAIL a coûté, et
+ * c'est la question qu'on se pose vraiment devant une facture : « qu'est-ce
+ * qui a mangé l'argent cette nuit ? ». Les deux vues sont nécessaires —
+ * changer de modèle ne sert à rien si c'est une mission qui boucle.
+ *
+ * Elle a un autre mérite : `episodes` existait AVANT le panneau. C'est donc
+ * la seule vue qui sait répondre pour les journées d'avant son installation.
+ */
+export async function spendByMission(hours = 24): Promise<MissionCost[]> {
+  const r = await db().query<{ mission: string; lancements: string; usd: string; dernier: string }>(
+    `SELECT mission, count(*) AS lancements, coalesce(sum(usd),0) AS usd, max(started_at) AS dernier
+     FROM episodes WHERE started_at > now() - ($1 || ' hours')::interval
+     GROUP BY mission HAVING sum(usd) > 0 ORDER BY sum(usd) DESC LIMIT 30`,
+    [String(hours)],
+  );
+  return r.rows.map((x) => ({ mission: x.mission, lancements: Number(x.lancements), usd: Number(x.usd), dernier: x.dernier }));
 }
 
 /** Dépense par jour sur N jours, pour la courbe du panneau. */
