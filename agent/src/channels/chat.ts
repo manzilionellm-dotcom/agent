@@ -79,7 +79,14 @@ Formulaires : appelle browser{action:"form"} pour voir les champs (nom, type, é
 Places de marché et annuaires : site_search{site, query} plutôt que goto+text — il rend titre, prix et lien au lieu de 200 000 caractères de menus. sites_list dit lesquels. Pour 1688.com, traduis la requête en chinois toi-même.
 
 Se connecter à un site : browser{action:"login", site:"linkedin.com"}. Le mot de passe est pris dans le coffre chiffré du serveur, saisi directement dans la page, et tu ne le vois jamais — c'est voulu, ne le réclame pas. vault_list te dit où tu peux entrer. Si un site manque, réponds « ajoute-le sur la page /vault de ton serveur » : Lionel ne doit JAMAIS écrire un mot de passe dans cette conversation, et s'il le fait quand même, dis-lui de le changer immédiatement. Ne tape jamais un mot de passe toi-même avec browser{action:"type"}.
-Pour GitHub et Vercel, n'utilise pas le navigateur : tu as déjà les jetons d'API (outils git, sandbox, vercel), plus fiables et sans écran de connexion. Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie automatisée d'un mot de passe.
+Pour GitHub et Vercel, n'utilise JAMAIS le navigateur : tu as des jetons d'API (outils git, sandbox, vercel), plus fiables et sans écran de connexion — et leur double authentification te bloquera de toute façon.
+
+Deux pages, deux choses, ne les confonds pas :
+· /vault = les identifiants de SITES (email + mot de passe) pour browser{action:"login"}.
+· /panel = les CLÉS D'API et les jetons : GitHub, Vercel, Tavily, les modèles. C'est là que ça se règle.
+S'il te manque un jeton, ou qu'un service répond 401/403, n'envoie pas Lionel dans un terminal : appelle lien_panneau. Il reçoit un lien cliquable, colle la clé dans le formulaire, appuie sur « Tester la clé », et c'est actif en quinze secondes. Ne réclame jamais une clé dans la conversation ; s'il t'en écrit une quand même, dis-lui de la révoquer et d'en créer une autre — une clé lue par quelqu'un n'est plus une clé.
+
+Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie automatisée d'un mot de passe.
 
 Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal, tu reçois son contenu déjà lu, entre crochets. Tu t'en sers comme s'il te l'avait décrit — ne dis jamais que tu ne peux pas voir les images. Si le bloc dit que la lecture a échoué, dis-le simplement et demande ce qu'il y a dessus.
 
@@ -126,6 +133,47 @@ function loginRequestTool(peer: string) {
       const ok = await sendWhatsApp(peer, texte);
       return ok
         ? `lien envoyé à l'opérateur (valable 15 min). Dis-lui en une ligne quoi faire sur ${i.site}, puis attends qu'il confirme.`
+        : "Error: le lien n'a pas pu être envoyé";
+    },
+  });
+}
+
+/**
+ * « Il me manque une clé — voilà où la mettre. »
+ *
+ * Une clé d'API est un secret : elle ne se tape ni dans cette conversation,
+ * ni dans un message à l'agent. Mais lui dire « ajoute-la sur ton serveur »
+ * renvoie l'opérateur vers un terminal, c'est-à-dire vers l'étape où tout
+ * s'arrête. Ici l'agent envoie un lien cliquable vers le panneau : le
+ * formulaire s'ouvre sur le téléphone, la clé est collée dans un champ, et
+ * l'agent ne l'aura jamais vue.
+ */
+function panelLinkTool(peer: string) {
+  return betaZodTool({
+    name: "lien_panneau",
+    description:
+      "Quand une clé d'API te manque ou semble invalide (GitHub, Vercel, Tavily, un modèle), appelle ceci : l'opérateur reçoit un lien cliquable vers le panneau, où il colle la clé dans un formulaire. Tu ne demandes JAMAIS une clé dans la conversation — s'il t'en envoie une quand même, dis-lui de la révoquer et d'en créer une autre. Après l'appel, dis-lui en une ligne quoi faire sur la page.",
+    inputSchema: z.object({
+      service: z.string().describe("Le service dont la clé manque, ex: github, vercel, tavily"),
+      raison: z.string().max(300).describe("Ce qui bloque, en une phrase : « aucun jeton GitHub », « Vercel répond 403 »"),
+    }),
+    run: async (i) => {
+      const base = config().PUBLIC_URL;
+      if (!base) return "Error: PUBLIC_URL absente du .env — impossible de fabriquer un lien joignable depuis l'extérieur. Dis à l'opérateur de lancer `bash deploy/whatsapp-up.sh`.";
+      const t = await createVaultTicket(15);
+      const texte = [
+        `🔑 Il me manque la clé ${i.service}.`,
+        i.raison,
+        "",
+        "Ouvre ce lien, c'est un formulaire. Colle la clé dedans, Enregistrer, puis « Tester la clé » — elle est active tout de suite, sans rien redémarrer.",
+        "",
+        `${base}/panel?t=${t.id}`,
+        "",
+        "Valable 15 min, une seule ouverture. Ne m'envoie jamais une clé par message.",
+      ].join("\n");
+      const ok = await sendWhatsApp(peer, texte);
+      return ok
+        ? `lien vers le panneau envoyé (valable 15 min). Dis-lui en une ligne où trouver la clé ${i.service}, puis attends qu'il confirme.`
         : "Error: le lien n'a pas pu être envoyé";
     },
   });
@@ -449,7 +497,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
