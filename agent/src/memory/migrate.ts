@@ -112,6 +112,80 @@ const MIGRATIONS: string[] = [
      created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
      updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+  // --- Agents persistants -------------------------------------------------
+  // Jusqu'ici tout était centré sur la MISSION : un cahier des charges lancé,
+  // exécuté, oublié. Un agent, lui, existe entre deux exécutions — il a une
+  // identité, une mémoire, des permissions et un état qui survivent au
+  // redémarrage. Les missions restent : elles deviennent ce qu'un agent SAIT
+  // faire, au lieu d'être tout ce qui existe.
+  `CREATE TABLE IF NOT EXISTS agents (
+     id            TEXT PRIMARY KEY,
+     name          TEXT NOT NULL,
+     role          TEXT NOT NULL DEFAULT '',
+     mission       TEXT NOT NULL DEFAULT '',
+     instructions  TEXT NOT NULL DEFAULT '',
+     model_kind    TEXT NOT NULL DEFAULT 'worker',
+     toolset       TEXT NOT NULL DEFAULT 'recherche',
+     autonomy      INT NOT NULL DEFAULT 1,
+     budget_usd    NUMERIC(8,2) NOT NULL DEFAULT 2.0,
+     daily_usd     NUMERIC(8,2) NOT NULL DEFAULT 5.0,
+     state         TEXT NOT NULL DEFAULT 'idle',
+     version       INT NOT NULL DEFAULT 1,
+     parent_id     TEXT REFERENCES agents(id) ON DELETE SET NULL,
+     ephemeral     BOOLEAN NOT NULL DEFAULT false,
+     meta          JSONB NOT NULL DEFAULT '{}'::jsonb,
+     created_by    TEXT NOT NULL DEFAULT 'operateur',
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS agents_parent ON agents (parent_id)`,
+
+  // Une tâche d'agent, DURABLE. `attempt` et `checkpoint` sont ce qui
+  // distingue ce moteur d'un simple appel de fonction : un processus tué au
+  // milieu laisse la ligne en 'running', et le démarrage suivant la reprend
+  // au lieu de la perdre. `depends_on` porte le graphe (section 31).
+  `CREATE TABLE IF NOT EXISTS agent_tasks (
+     id            BIGSERIAL PRIMARY KEY,
+     agent_id      TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+     parent_task   BIGINT REFERENCES agent_tasks(id) ON DELETE CASCADE,
+     title         TEXT NOT NULL,
+     brief         TEXT NOT NULL DEFAULT '',
+     mission       TEXT,
+     status        TEXT NOT NULL DEFAULT 'pending',
+     priority      INT NOT NULL DEFAULT 3,
+     depends_on    BIGINT[] NOT NULL DEFAULT '{}',
+     attempt       INT NOT NULL DEFAULT 0,
+     max_attempts  INT NOT NULL DEFAULT 2,
+     checkpoint    JSONB NOT NULL DEFAULT '{}'::jsonb,
+     result        TEXT,
+     error         TEXT,
+     usd           NUMERIC(10,4) NOT NULL DEFAULT 0,
+     claimed_by    TEXT,
+     claimed_at    TIMESTAMPTZ,
+     deadline_at   TIMESTAMPTZ,
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     finished_at   TIMESTAMPTZ
+   )`,
+  `CREATE INDEX IF NOT EXISTS agent_tasks_queue ON agent_tasks (status, priority, created_at)`,
+  `CREATE INDEX IF NOT EXISTS agent_tasks_agent ON agent_tasks (agent_id, created_at DESC)`,
+
+  // Journal d'activité et bus d'événements : la même table sert la timeline
+  // (section 23) et l'historique des événements (section 17). Les séparer
+  // aurait produit deux vérités sur ce qui s'est passé.
+  `CREATE TABLE IF NOT EXISTS events (
+     id         BIGSERIAL PRIMARY KEY,
+     kind       TEXT NOT NULL,
+     agent_id   TEXT,
+     task_id    BIGINT,
+     level      TEXT NOT NULL DEFAULT 'info',
+     message    TEXT NOT NULL DEFAULT '',
+     data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+     ts         TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS events_agent_ts ON events (agent_id, ts DESC)`,
+  `CREATE INDEX IF NOT EXISTS events_kind_ts ON events (kind, ts DESC)`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

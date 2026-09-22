@@ -15,6 +15,10 @@ import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
 import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 import { mediaToText } from "./channels/media.js";
+import { createAgent, getAgent, listAgents, deleteAgent, agentSpend } from "./agents/store.js";
+import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
+import { startRuntime, stopRuntime } from "./agents/runtime.js";
+import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage } from "./pages.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
@@ -139,6 +143,62 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!text.trim()) return json(res, 400, { error: "text requis" });
     return json(res, 200, { reply: await handleChat({ channel: "api", peer, text }) });
   }
+  // --- Agents (section 48) ------------------------------------------------
+  // Un segment d'URL peut contenir n'importe quoi : on décode, et l'identité
+  // est validée par le store avant toute écriture.
+  const agentPath = /^\/agents\/([^/]+)(?:\/(tasks|timeline|unblock))?$/.exec(url.pathname);
+
+  if (url.pathname === "/agents") {
+    if (req.method === "GET") return json(res, 200, await listAgents({ includeEphemeral: url.searchParams.get("all") === "1" }));
+    if (req.method === "POST") {
+      const b = await body();
+      if (typeof b.id !== "string" || typeof b.name !== "string") return json(res, 400, { error: "id et name requis" });
+      try {
+        return json(res, 200, await createAgent(b as never));
+      } catch (e) {
+        return json(res, 400, { error: String(e instanceof Error ? e.message : e) });
+      }
+    }
+    return json(res, 405, {});
+  }
+
+  if (agentPath) {
+    const id = decodeURIComponent(agentPath[1]!);
+    const sub = agentPath[2];
+    const agent = await getAgent(id);
+    if (!agent) return json(res, 404, { error: `agent ${id} inconnu` });
+
+    if (!sub && req.method === "GET") return json(res, 200, { ...agent, spend24h: await agentSpend(id) });
+    if (!sub && req.method === "DELETE") return json(res, 200, { deleted: await deleteAgent(id) });
+    if (sub === "timeline" && req.method === "GET") return json(res, 200, await timeline(id, Number(url.searchParams.get("limit") ?? 50)));
+    if (sub === "tasks" && req.method === "GET") return json(res, 200, await listTasks(id));
+    if (sub === "tasks" && req.method === "POST") {
+      const b = await body();
+      const title = typeof b.title === "string" ? b.title.trim() : "";
+      if (!title) return json(res, 400, { error: "title requis" });
+      return json(res, 200, await createTask({
+        agentId: id,
+        title,
+        brief: typeof b.brief === "string" ? b.brief : "",
+        mission: typeof b.mission === "string" ? b.mission : undefined,
+        priority: typeof b.priority === "number" ? b.priority : undefined,
+        dependsOn: Array.isArray(b.depends_on) ? (b.depends_on as number[]) : undefined,
+      }));
+    }
+    if (sub === "unblock" && req.method === "POST") {
+      const b = await body();
+      if (typeof b.task_id !== "number") return json(res, 400, { error: "task_id requis" });
+      await unblockTask(b.task_id);
+      return json(res, 200, { unblocked: b.task_id });
+    }
+    return json(res, 405, {});
+  }
+
+  if (req.method === "GET" && url.pathname === "/tasks") {
+    const st = url.searchParams.get("status");
+    return json(res, 200, await listTasks(undefined, st ? (st.split(",") as never) : undefined));
+  }
+
   if (req.method === "GET" && url.pathname === "/missions") {
     const custom = await listCustomMissions();
     return json(res, 200, [
@@ -209,6 +269,10 @@ async function main(): Promise<void> {
   else logger.info({ sandbox: probe.stdout.trim().replace(/\n/g, " ") }, "sandbox OK");
   if (!cfg.ORCHESTRATOR_TOKEN) logger.warn("ORCHESTRATOR_TOKEN absent : API HTTP désactivée (sauf /healthz et webhook)");
 
+  // APRÈS migrate : la reprise des tâches orphelines écrit dans des tables
+  // qui doivent exister. AVANT le scheduler : une routine qui déclenche une
+  // tâche doit trouver une file déjà vidée de ses orphelines.
+  await startRuntime();
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) startHeartbeat();
 
@@ -223,6 +287,7 @@ async function main(): Promise<void> {
   const shutdown = async (sig: string) => {
     logger.info({ sig }, "arrêt");
     stopScheduler();
+  stopRuntime();
     server.close();
     await disconnectMcpServers();
     await closeDb();

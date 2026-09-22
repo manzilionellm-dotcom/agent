@@ -14,6 +14,9 @@ import { searchTools } from "../tools/search.js";
 import { browserTool } from "../tools/browser.js";
 import { scrapePageTool } from "../tools/web.js";
 import { googleTools } from "../tools/google.js";
+import { createAgent, listAgents, getAgent, deleteAgent, agentSpend, MAX_AUTONOMY } from "../agents/store.js";
+import { createTask, listTasks } from "../agents/tasks.js";
+import { timeline } from "../events.js";
 import { sendWhatsApp } from "./whatsapp.js";
 import { handleApprovalReply } from "./approvals.js";
 
@@ -47,6 +50,8 @@ Règle absolue : tu n'agis que sur ordre explicite. Quand l'opérateur demande u
 Les tâches longues (mission, essaim) : lance, réponds tout de suite « lancé, je t'écris quand c'est fini », et c'est tout — un message de fin arrivera automatiquement.
 
 Missions sur mesure : quand l'opérateur décrit un travail qu'il voudra refaire (« surveille X », « chaque semaine, compare Y »), crée-la avec create_mission plutôt que de l'exécuter une fois et l'oublier. Rédige l'objectif toi-même, en cahier des charges précis, à partir de ce qu'il a dit — ne lui demande pas de le formuler. Confirme en une ligne, puis demande s'il veut la lancer maintenant ou la planifier. Il peut en créer autant qu'il veut.
+
+Agents : un AGENT est un rôle durable (« mon directeur SEO »), une MISSION est un savoir-faire, une TÂCHE est un travail confié à un agent. Quand Lionel décrit quelqu'un plutôt que quelque chose à faire — « je veux un agent qui… » — crée un agent, pas une mission. Une tâche confiée à un agent tourne en arrière-plan : conversation fermée, serveur redémarré, elle reprend. « où il en est ? » → agent_status.
 
 Courrier : quand Google est configuré, tu as gmail_list, gmail_read, gmail_thread, gmail_draft, gmail_send et calendar_events. « quoi de neuf ? » → gmail_list is:unread, puis résume en trois lignes : qui a écrit, ce qu'il veut, ce qui presse. « qui m'a répondu ? » → cherche les fils où sa dernière réponse a reçu une suite.
 
@@ -201,7 +206,97 @@ function controlTools(notify: Notify) {
     run: async () => memoryDigest(6_000, "/memories/playbooks"),
   });
 
-  return [runMission, swarm, latestReport, schedule, schedules, spend, playbooks, createMission, deleteMission, listMissions];
+  // --- Agents persistants -------------------------------------------------
+  // Une mission est un savoir-faire ; un agent est quelqu'un qui le porte,
+  // avec une identité, un budget et un journal qui survivent au redémarrage.
+  const newAgent = betaZodTool({
+    name: "create_agent",
+    description:
+      "Crée (ou met à jour) un AGENT persistant. À utiliser quand Lionel parle d'un rôle durable — « un agent qui surveille mes sites », « un directeur SEO » — plutôt que d'une tâche isolée. L'agent continue d'exister et de travailler quand la conversation est fermée. Réutiliser un identifiant met à jour l'agent et incrémente sa version, sans perdre son historique.",
+    inputSchema: z.object({
+      id: z.string().describe("identifiant court en minuscules, ex: seo-director"),
+      name: z.string(),
+      role: z.string().optional(),
+      mission: z.string().min(10).describe("sa raison d'être, en une ou deux phrases"),
+      instructions: z.string().optional().describe("comment il doit travailler"),
+      toolset: z.enum(TOOLSETS).default("recherche"),
+      model: z.enum(MODELS).default("worker"),
+      autonomy: z.number().int().min(0).max(MAX_AUTONOMY).default(1)
+        .describe("0 lecture seule · 1 propositions · 2 actions réversibles · 3 actions externes · 4 large, critique toujours validé"),
+      budget_usd: z.number().positive().max(20).default(2),
+      daily_usd: z.number().positive().max(50).default(5),
+    }),
+    run: async (i) => {
+      try {
+        const a = await createAgent({
+          id: i.id, name: i.name, role: i.role, mission: i.mission, instructions: i.instructions,
+          toolset: i.toolset as Toolset, modelKind: i.model as ModelKind,
+          autonomy: i.autonomy, budgetUsd: i.budget_usd, dailyUsd: i.daily_usd, createdBy: "whatsapp",
+        });
+        return `agent « ${a.name} » (${a.id}) enregistré, version ${a.version}, autonomie ${a.autonomy}, plafond ${a.daily_usd} $/jour. Donne-lui du travail avec assign_task.`;
+      } catch (e) {
+        return `Error: ${String(e instanceof Error ? e.message : e)}`;
+      }
+    },
+  });
+
+  const assign = betaZodTool({
+    name: "assign_task",
+    description:
+      "Confie une tâche à un agent. Elle part dans sa file et s'exécute en arrière-plan, même conversation fermée, même après un redémarrage du serveur. `depends_on` construit un enchaînement : une tâche n'est servie que lorsque celles dont elle dépend sont terminées.",
+    inputSchema: z.object({
+      agent_id: z.string(),
+      title: z.string().min(3),
+      brief: z.string().optional().describe("le détail de ce qu'il faut faire"),
+      mission: z.string().optional().describe("nom d'une mission existante à exécuter, si c'en est une"),
+      priority: z.number().int().min(1).max(5).default(3),
+      depends_on: z.array(z.number().int()).optional(),
+    }),
+    run: async (i) => {
+      if (!(await getAgent(i.agent_id))) return `Error: agent « ${i.agent_id} » inconnu (list_agents pour voir)`;
+      const t = await createTask({ agentId: i.agent_id, title: i.title, brief: i.brief, mission: i.mission, priority: i.priority, dependsOn: i.depends_on });
+      return `tâche #${t.id} « ${t.title} » mise en file pour ${i.agent_id}${i.depends_on?.length ? ` (attend ${i.depends_on.join(", ")})` : ""}`;
+    },
+  });
+
+  const agents = betaZodTool({
+    name: "list_agents",
+    description: "Liste les agents persistants, leur état et leur dépense des dernières 24 h.",
+    inputSchema: z.object({}),
+    run: async () => {
+      const rows = await listAgents();
+      if (!rows.length) return "aucun agent pour l'instant — create_agent pour en créer un";
+      const parts = await Promise.all(rows.map(async (a) => `- ${a.id} « ${a.name} » : ${a.state}, autonomie ${a.autonomy}, ${(await agentSpend(a.id)).toFixed(2)}/${a.daily_usd} $ sur 24 h`));
+      return parts.join("\n");
+    },
+  });
+
+  const agentStatus = betaZodTool({
+    name: "agent_status",
+    description: "Ce que fait un agent en ce moment : ses tâches et sa timeline d'activité. Sers-t'en dès que Lionel demande « où il en est ».",
+    inputSchema: z.object({ agent_id: z.string(), limit: z.number().int().min(3).max(30).default(10) }),
+    run: async (i) => {
+      const a = await getAgent(i.agent_id);
+      if (!a) return `Error: agent « ${i.agent_id} » inconnu`;
+      const tasks = await listTasks(i.agent_id, undefined, 10);
+      const tl = await timeline(i.agent_id, i.limit);
+      return [
+        `${a.name} (${a.id}) — ${a.state}, ${(await agentSpend(a.id)).toFixed(2)} $ sur 24 h`,
+        tasks.length ? "tâches :\n" + tasks.map((t) => `  #${t.id} ${t.status} · ${t.title}${t.error ? ` — ${t.error.slice(0, 80)}` : ""}`).join("\n") : "aucune tâche",
+        tl.length ? "activité :\n" + tl.map((e) => `  ${String(e.ts).slice(11, 16)} ${e.kind} ${e.message.slice(0, 70)}`).join("\n") : "",
+      ].filter(Boolean).join("\n");
+    },
+  });
+
+  const dropAgent = betaZodTool({
+    name: "delete_agent",
+    description: "Supprime un agent et tout son historique de tâches. Irréversible ; demande confirmation à Lionel avant.",
+    inputSchema: z.object({ agent_id: z.string() }),
+    run: async (i) => ((await deleteAgent(i.agent_id)) ? `agent ${i.agent_id} supprimé` : `aucun agent nommé ${i.agent_id}`),
+  });
+
+  return [runMission, swarm, latestReport, schedule, schedules, spend, playbooks, createMission, deleteMission, listMissions,
+          newAgent, assign, agents, agentStatus, dropAgent];
 }
 
 /* ------------------------------------------------------------------------ */
