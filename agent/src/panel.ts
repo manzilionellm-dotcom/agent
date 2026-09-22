@@ -190,9 +190,9 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
     .join("");
 
   const parMission = st.missions.length
-    ? `<table><tr><th>Travail</th><th class="n">Lancements</th><th class="n">Coût</th><th>Dernier</th></tr>` +
+    ? `<table><tr><th>Travail</th><th>Modèle visé</th><th class="n">Lancements</th><th class="n">Coût</th><th>Dernier</th></tr>` +
       st.missions
-        .map((m) => `<tr><td>${esc(m.mission)}</td><td class="n">${m.lancements}</td><td class="n">${m.usd.toFixed(3)} $</td>` +
+        .map((m) => `<tr><td>${esc(m.mission)}</td><td class="det">${esc(m.modele)}</td><td class="n">${m.lancements}</td><td class="n">${m.usd.toFixed(3)} $</td>` +
                     `<td class="det">${esc(m.quand)}</td></tr>`)
         .join("") + `</table>`
     : `<p class="vide">Aucune mission facturée dans les 24 dernières heures.</p>`;
@@ -256,7 +256,7 @@ ${cats}
 </form>
 
 <h2>Qui a coûté, 24 dernières heures</h2>
-<p class="aide">Par travail. C'est la question qu'on se pose devant une facture : changer de modèle ne sert à rien si c'est une mission qui boucle.</p>
+<p class="aide">Par travail, et par modèle visé au départ. C'est la question qu'on se pose devant une facture : changer de modèle ne sert à rien si c'est une mission qui boucle. « Visé » et pas « facturé » : si la cascade est montée d'un cran sur un échec, c'est le suivant qui a encaissé — le tableau du dessous tranche, à partir d'aujourd'hui.</p>
 ${parMission}
 
 <h2>Par modèle, 24 dernières heures</h2>

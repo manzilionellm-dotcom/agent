@@ -486,7 +486,7 @@ export async function usageByProvider(hours = 24): Promise<UsageRow[]> {
   return r.rows.map((x) => ({ provider: x.provider, model: x.model, appels: Number(x.appels), usd: Number(x.usd), tokens: Number(x.tokens) }));
 }
 
-export type MissionCost = { mission: string; lancements: number; usd: number; dernier: string };
+export type MissionCost = { mission: string; modele: string; lancements: number; usd: number; dernier: string };
 
 /**
  * Dépense par MISSION, lue dans `episodes`.
@@ -500,13 +500,18 @@ export type MissionCost = { mission: string; lancements: number; usd: number; de
  * la seule vue qui sait répondre pour les journées d'avant son installation.
  */
 export async function spendByMission(hours = 24): Promise<MissionCost[]> {
-  const r = await db().query<{ mission: string; lancements: string; usd: string; dernier: string }>(
-    `SELECT mission, count(*) AS lancements, coalesce(sum(usd),0) AS usd, max(started_at) AS dernier
+  // `meta` porte le modèle visé depuis toujours : c'est la seule trace qui
+  // sache dire QUI a facturé pour les journées d'avant `usage_log`. Elle dit
+  // la cible, pas le repli — si la cascade est montée d'un cran, la facture
+  // vient du suivant. C'est une piste, pas une preuve, et la colonne par
+  // modèle en dessous tranche à partir d'aujourd'hui.
+  const r = await db().query<{ mission: string; modele: string | null; lancements: string; usd: string; dernier: string }>(
+    `SELECT mission, meta->>'model' AS modele, count(*) AS lancements, coalesce(sum(usd),0) AS usd, max(started_at) AS dernier
      FROM episodes WHERE started_at > now() - ($1 || ' hours')::interval
-     GROUP BY mission HAVING sum(usd) > 0 ORDER BY sum(usd) DESC LIMIT 30`,
+     GROUP BY mission, meta->>'model' HAVING sum(usd) > 0 ORDER BY sum(usd) DESC LIMIT 30`,
     [String(hours)],
   );
-  return r.rows.map((x) => ({ mission: x.mission, lancements: Number(x.lancements), usd: Number(x.usd), dernier: x.dernier }));
+  return r.rows.map((x) => ({ mission: x.mission, modele: x.modele ?? "inconnu", lancements: Number(x.lancements), usd: Number(x.usd), dernier: x.dernier }));
 }
 
 /** Dépense par jour sur N jours, pour la courbe du panneau. */

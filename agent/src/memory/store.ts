@@ -239,7 +239,7 @@ export async function spentToday(): Promise<number> {
 
 export async function episodesSince(hours: number): Promise<Array<{ mission: string; status: string; summary: string | null; usd: string; started_at: string; error: string | null }>> {
   const r = await db().query(
-    `SELECT mission, status, summary, usd, started_at, error FROM episodes WHERE started_at > now() - ($1 || ' hours')::interval ORDER BY started_at`,
+    `SELECT mission, status, summary, usd, started_at, error, meta FROM episodes WHERE started_at > now() - ($1 || ' hours')::interval ORDER BY started_at`,
     [String(hours)],
   );
   return r.rows;
