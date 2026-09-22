@@ -67,16 +67,30 @@ if [ "$SERVICE" = tunnel-quick ]; then
   done
   [ -n "$PUBLIC" ] || die "adresse introuvable — voir: ${COMPOSE[*]} logs $SERVICE"
 else
-  # Un tunnel nommé connaît son nom d'hôte côté Cloudflare, pas côté serveur :
-  # cloudflared reçoit sa configuration à distance et ne la publie nulle part
-  # d'exploitable ici. L'adresse doit donc être redite dans le .env, et dire
-  # « PUBLIC_URL manquant » sans dire où la lire fait perdre un quart d'heure.
+  # Un tunnel nommé reçoit sa configuration de Cloudflare — et la journalise
+  # en arrivant. Le nom d'hôte est donc lisible ici, plutôt que d'obliger à
+  # aller le recopier d'un tableau de bord : une adresse saisie à la main est
+  # une adresse qu'on peut taper de travers, et l'erreur ne se voit qu'au
+  # moment où un message n'arrive pas.
   PUBLIC=$(val PUBLIC_URL)
-  [ -n "$PUBLIC" ] || die "PUBLIC_URL vide, et le tunnel nommé ne peut pas la deviner.
-  Va la lire sur dash.cloudflare.com → Zero Trust → Networks → Tunnels →
-  ton tunnel → onglet « Public Hostname ». Recopie l'adresse complète, puis :
+  if [ -z "$PUBLIC" ]; then
+    say "PUBLIC_URL absente : lecture du nom d'hôte dans la configuration du tunnel"
+    HOST=""
+    for _ in $(seq 1 15); do
+      HOST=$("${COMPOSE[@]}" logs --no-color "$SERVICE" 2>/dev/null \
+        | tr -d '\\' | grep -oE '"hostname":"[^"]+"' | cut -d'"' -f4 | grep -v '^$' | tail -1 || true)
+      [ -n "$HOST" ] && break
+      sleep 2
+    done
+    [ -n "$HOST" ] || die "nom d'hôte introuvable dans les journaux du tunnel.
+  Lis-le sur dash.cloudflare.com → Zero Trust → Networks → Tunnels → ton
+  tunnel → onglet « Public Hostname », puis :
       bash deploy/set-env.sh PUBLIC_URL=https://CE-QUE-TU-AS-LU
-  (l'adresse telle quelle, sans chevrons, sans guillemets)"
+  (l'adresse nue, sans chevrons ni guillemets)"
+    PUBLIC="https://$HOST"
+    say "trouvé : $PUBLIC — enregistré dans .env"
+    bash "$DIR/deploy/set-env.sh" "PUBLIC_URL=$PUBLIC" >/dev/null
+  fi
 fi
 
 say "santé de l'orchestrateur"
