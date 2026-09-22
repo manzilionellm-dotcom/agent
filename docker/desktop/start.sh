@@ -41,11 +41,11 @@ if [ "$(id -u)" = 0 ]; then
 # Le supprimer est sûr à cet instant précis : le conteneur vient de
 # démarrer, aucun Chromium n'y tourne encore, et le profil ne peut donc
 # être ouvert nulle part ailleurs — il n'est monté que dans ce conteneur.
-for verrou in "$PROFILE"/Singleton*; do
-  [ -e "$verrou" ] || break
-  log "verrou d'une instance morte retiré : $(basename "$verrou")"
-  rm -f "$verrou"
-done
+# `rm -f` sans test, et surtout PAS de `[ -e ]` : ces verrous sont des liens
+# symboliques qui pointent vers « <machine>-<pid> », une cible qui n'existe
+# plus. `-e` suit le lien, ne trouve rien, et répond faux — mon premier
+# correctif ne supprimait donc rien du tout, en boucle.
+rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonCookie" "$PROFILE/SingletonSocket"
   if [ "$(stat -c %u "$PROFILE" 2>/dev/null)" != "$(id -u "$USER_NAME" 2>/dev/null)" ]; then
     log "profil appartenant à un autre compte — correction en cours"
     chown -R "$USER_NAME:$USER_NAME" "$PROFILE" || log "chown partiel : certains fichiers résistent"
