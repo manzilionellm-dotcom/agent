@@ -25,7 +25,10 @@ die() { printf '\nERREUR: %s\n' "$*" >&2; exit 1; }
 COMPOSE=(docker compose -f docker-compose.yml)
 [ -f docker-compose.eco.yml ] && COMPOSE+=(-f docker-compose.eco.yml)
 
-val() { grep -E "^$1=" .env | head -1 | cut -d= -f2-; }
+# Le `tr -d '\r'` n'est pas de la superstition : une valeur écrite depuis
+# Windows traîne un retour chariot, et une comparaison qui échoue sur un
+# caractère invisible coûte une heure.
+val() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '\r'; }
 
 # --- 1. Clé maîtresse -----------------------------------------------------
 if [ -n "$(val VAULT_KEY)" ]; then
@@ -46,7 +49,7 @@ fi
 say "attente de l'orchestrateur"
 for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
-    echo "    en ligne après ${i}0 s au plus"
+    echo "    en ligne après ${i} s"
     break
   fi
   sleep 1
@@ -58,9 +61,24 @@ for i in $(seq 1 30); do
 done
 
 TOKEN=$(val ORCHESTRATOR_TOKEN)
-PUBLIC=$(val PUBLIC_URL)
 [ -n "$TOKEN" ] || die "ORCHESTRATOR_TOKEN est vide dans .env — la page du coffre serait ouverte à tous"
-[ -n "$PUBLIC" ] || die "PUBLIC_URL est vide dans .env — lance d'abord: bash deploy/whatsapp-up.sh"
+
+# L'adresse publique. Refuser de continuer parce que le .env ne la contient
+# pas serait absurde : le tunnel tourne, il la connaît, et tout le reste du
+# travail est déjà fait. On la lit dans sa configuration reçue, exactement
+# comme whatsapp-up.sh, et on répare le .env au passage.
+PUBLIC=$(val PUBLIC_URL)
+if [ -z "$PUBLIC" ]; then
+  say "PUBLIC_URL absente du .env — lecture dans les journaux du tunnel"
+  HOST=$("${COMPOSE[@]}" logs --no-color tunnel 2>/dev/null \
+    | tr -d '\\' | grep -oE '"hostname":"[^"]+"' | cut -d'"' -f4 | grep -v '^$' | tail -1 || true)
+  if [ -n "$HOST" ]; then
+    PUBLIC="https://$HOST"
+    bash deploy/set-env.sh "PUBLIC_URL=$PUBLIC" >/dev/null && echo "    trouvée et réécrite dans .env : $PUBLIC"
+  else
+    echo "    journaux du tunnel muets"
+  fi
+fi
 
 # La page répond-elle vraiment ? Un 401 ici veut dire que le jeton lu n'est
 # pas celui que le serveur attend — mieux vaut le savoir maintenant que
@@ -72,6 +90,16 @@ case "$CODE" in
   *)   echo "    réponse inattendue de la page du coffre : HTTP $CODE (on continue)" ;;
 esac
 
+if [ -n "$PUBLIC" ]; then
+  ADRESSE="$PUBLIC/vault?k=$TOKEN"
+else
+  ADRESSE="https://<ton-adresse-publique>/vault?k=$TOKEN
+  (adresse publique introuvable : lance « bash deploy/whatsapp-up.sh » pour
+   la rétablir, ou passe par un tunnel ssh depuis ton poste :
+   ssh -L 8787:127.0.0.1:8787 manzi@50.21.190.19
+   puis ouvre http://127.0.0.1:8787/vault?k=$TOKEN )"
+fi
+
 cat <<FIN
 
 ──────────────────────────────────────────────────────────────
@@ -79,7 +107,7 @@ cat <<FIN
 
   Ouvre cette adresse dans ton navigateur :
 
-  $PUBLIC/vault?k=$TOKEN
+  $ADRESSE
 
   Le jeton disparaît de la barre d'adresse dès la première page.
   Ne recolle cette adresse dans aucune conversation.

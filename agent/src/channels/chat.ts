@@ -12,6 +12,7 @@ import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
 import { searchTools } from "../tools/search.js";
 import { browserTool, vaultListTool } from "../tools/browser.js";
+import { marketTools } from "../tools/market.js";
 import { scrapePageTool } from "../tools/web.js";
 import { googleTools } from "../tools/google.js";
 import { createAgent, listAgents, getAgent, deleteAgent, agentSpend, MAX_AUTONOMY } from "../agents/store.js";
@@ -367,7 +368,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

@@ -164,29 +164,36 @@ const handlers = {
     // Déjà connecté : ni champ identifiant ni champ mot de passe. On le dit
     // au lieu de chercher un formulaire qui n'existe pas, sinon chaque appel
     // sur un site déjà ouvert finit en « champ introuvable ».
-    if (!(await firstVisible(PASSWORD_SEL)) && !(await firstVisible(IDENT_SEL))) {
+    if (!(await firstVisible(PASSWORD_SEL)) && !(await firstVisible(IDENT_SEL)) && !(await firstVisible((a.hints || {}).ident || []))) {
       return { signed_in: true, already: true, url: page.url(), title: await page.title(), steps: ["aucun formulaire de connexion : session déjà ouverte"], text: await text(1_500) };
     }
 
-    const ident = await firstVisible(IDENT_SEL);
+    // Les indices du profil de site passent devant les heuristiques : sur
+    // LinkedIn, « input[name=session_key] » ne se devine pas, et deviner
+    // mal remplit le champ de recherche avec une adresse e-mail.
+    const h = a.hints || {};
+    const identSel = [...(h.ident || []), ...IDENT_SEL];
+    const passSel = [...(h.password || []), ...PASSWORD_SEL];
+
+    const ident = await firstVisible(identSel);
     if (ident) {
       await ident.fill(a.login);
       steps.push("identifiant saisi");
       // Si le mot de passe n'est pas encore là, c'est un formulaire en deux
       // temps : on valide l'identifiant et on attend le second écran.
-      if (!(await firstVisible(PASSWORD_SEL))) {
-        await submitStep();
+      if (!(await firstVisible(passSel))) {
+        await submitStep(h.submit);
         await page.waitForTimeout(2500);
         await dismissBanners();
         steps.push("étape 1 validée");
       }
     }
 
-    const pw = await waitVisible(PASSWORD_SEL, 12_000);
+    const pw = await waitVisible(passSel, 12_000);
     if (!pw) return { signed_in: false, url: page.url(), title: await page.title(), steps, error: "champ mot de passe introuvable", text: await text(2_000) };
     await pw.fill(a.secret);
     steps.push("mot de passe saisi");
-    await submitStep();
+    await submitStep(h.submit);
     await page.waitForTimeout(3500);
     await dismissBanners();
 
@@ -199,14 +206,14 @@ const handlers = {
       }
       await otp.fill(a.totp);
       steps.push("code à usage unique saisi");
-      await submitStep();
+      await submitStep(h.submit);
       await page.waitForTimeout(3500);
     }
 
     // Succès = plus de champ mot de passe visible. C'est le seul signal
     // universel : le texte de confirmation, lui, change à chaque site et à
     // chaque langue.
-    const stillAsking = Boolean(await firstVisible(PASSWORD_SEL));
+    const stillAsking = Boolean(await firstVisible(passSel));
     return {
       signed_in: !stillAsking,
       url: page.url(),
@@ -215,6 +222,27 @@ const handlers = {
       steps,
       text: await text(2_500),
     };
+  },
+
+  /**
+   * Va sur une page de résultats et en rend les annonces normalisées.
+   *
+   * En une seule commande plutôt que goto + text : une page de place de
+   * marché fait 200 ko de texte dont 190 sont du menu et du pied de page.
+   * La passer entière au modèle coûte cher et noie les dix lignes utiles.
+   */
+  async listings(a) {
+    await page.goto(a.url, { waitUntil: a.wait || "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(a.settle_ms ?? 2_500);
+    await dismissBanners();
+    // Les grilles se remplissent au défilement : sans ça on ne voit que la
+    // première rangée sur la moitié des sites.
+    for (let i = 0; i < (a.scrolls ?? 2); i++) {
+      await page.mouse.wheel(0, 1600);
+      await page.waitForTimeout(700);
+    }
+    const r = await extractListings(a.selectors, a.max ?? 25);
+    return { url: page.url(), titre: await page.title(), ...r };
   },
 
   /**
@@ -241,6 +269,82 @@ const handlers = {
     throw new Error("op attendu : save | load");
   },
 };
+
+/**
+ * Extraction d'annonces depuis une page de résultats.
+ *
+ * Deux chemins, et on dit toujours lequel a servi. Les sélecteurs d'un site
+ * marchand changent à chaque refonte, c'est-à-dire plusieurs fois par an :
+ * un extracteur qui n'a que des sélecteurs rend zéro résultat un matin sans
+ * que personne comprenne pourquoi. Le chemin générique cherche à la place ce
+ * qui définit une annonce partout — un lien, et un prix à côté — et survit
+ * aux refontes au prix d'un peu de bruit.
+ */
+async function extractListings(sel, max) {
+  return page.evaluate(
+    ({ sel, max }) => {
+      const PRICE = /(?:^|\s)(?:(kr|sek|€|eur|\$|usd|¥|cny|rmb|£)\s*)?((?:\d[\d\s.,]{0,11}\d|\d))\s*(kr|sek|:-|€|eur|\$|usd|¥|元|cny|rmb|£)?(?=\s|$)/i;
+      const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
+      const priceIn = (el) => {
+        const t = clean(el.innerText).slice(0, 400);
+        const m = t.match(/(\d[\d\s.,]{0,11}\d|\d)\s*(kr|:-|sek|€|\$|¥|元|£)|(kr|€|\$|¥|£)\s*(\d[\d\s.,]{0,11}\d|\d)/i);
+        return m ? clean(m[0]) : "";
+      };
+
+      const out = [];
+      const seen = new Set();
+      const push = (title, href, price) => {
+        if (!title || !href || seen.has(href)) return;
+        if (title.length < 3) return;
+        seen.add(href);
+        out.push({ titre: title.slice(0, 160), url: href, prix: price || "" });
+      };
+
+      // 1. Sélecteurs fournis par le profil du site.
+      if (sel && sel.item) {
+        for (const node of document.querySelectorAll(sel.item)) {
+          const a = sel.link ? node.querySelector(sel.link) : node.querySelector("a[href]");
+          const t = sel.title ? node.querySelector(sel.title) : a;
+          push(clean(t && t.innerText) || clean(a && a.getAttribute("aria-label")), a && a.href, sel.price ? clean((node.querySelector(sel.price) || {}).innerText) : priceIn(node));
+          if (out.length >= max) break;
+        }
+        if (out.length >= 3) return { methode: "selecteurs", annonces: out.slice(0, max) };
+      }
+
+      // 2. Générique : chaque lien dont le voisinage contient un prix. On
+      //    remonte au plus trois parents, parce que le prix vit rarement
+      //    dans la balise du lien et presque toujours dans sa carte.
+      out.length = 0;
+      seen.clear();
+      for (const a of document.querySelectorAll("a[href]")) {
+        // Un lien de menu ou de pied de page n'est pas une annonce, même
+        // quand il y a un prix quelque part sur la page.
+        if (a.closest("nav, header, footer, [role=navigation], [role=banner], [role=contentinfo]")) continue;
+        const title = clean(a.innerText) || clean(a.getAttribute("aria-label")) || clean(a.getAttribute("title"));
+        if (!title || title.length < 6) continue;
+        let node = a;
+        let price = "";
+        for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+          // On s'arrête dès que le conteneur regroupe plusieurs annonces :
+          // sinon on remonte jusqu'au <body>, on y trouve le prix du premier
+          // article, et on le colle à « Se connecter ». Une carte d'annonce
+          // porte un à trois liens ; une grille en porte vingt.
+          if (node !== a && node.querySelectorAll("a[href]").length > 3) break;
+          price = priceIn(node);
+          if (price) break;
+        }
+        if (price) push(title, a.href, price);
+        if (out.length >= max) break;
+      }
+      if (out.length) return { methode: "generique", annonces: out };
+
+      // 3. Rien : c'est une information, pas un bug. Souvent une page de
+      //    contrôle anti-robot, ou une recherche sans résultat.
+      return { methode: "aucune", annonces: [], titre_page: document.title, apercu: clean(document.body.innerText).slice(0, 600) };
+    },
+    { sel, max },
+  );
+}
 
 /* --- Heuristiques de formulaire ------------------------------------------ */
 
@@ -286,7 +390,14 @@ async function waitVisible(selectors, timeoutMs) {
 }
 
 /** Valide l'étape courante : un bouton explicite s'il existe, la touche Entrée sinon. */
-async function submitStep() {
+async function submitStep(custom) {
+  if (custom && custom.length) {
+    const c = page.locator(custom.join(", ")).first();
+    if (await c.count().then((n) => n > 0).catch(() => false)) {
+      await c.click({ timeout: 8_000 }).catch(() => page.keyboard.press("Enter"));
+      return;
+    }
+  }
   const names = /^(se connecter|connexion|continuer|suivant|valider|log ?in|sign ?in|continue|next|submit|logga in|fortsätt)$/i;
   const btn = page.getByRole("button", { name: names }).first();
   if (await btn.count().then((n) => n > 0).catch(() => false)) {

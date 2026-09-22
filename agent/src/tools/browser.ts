@@ -6,6 +6,7 @@ import { logger } from "../logger.js";
 import { sandboxExec, shellQuote } from "./sandbox.js";
 import { untrusted, redactSecrets } from "../safety.js";
 import { findCredentialSite, getCredential, listCredentials, touchCredential, totpCode, totpRemaining, vaultEnabled } from "../vault.js";
+import { findSite } from "../browsing/sites.js";
 
 /**
  * Navigateur complet, piloté pas à pas (comme « Claude dans Chrome ») :
@@ -86,7 +87,11 @@ export function makeBrowserTool(container?: string) {
           totp = totpCode(cred.totp);
         }
         logger.info({ container, site, totp: Boolean(totp) }, "browser login");
-        const payload = JSON.stringify({ url: i.url ?? cred.url, login: cred.login, secret: cred.secret, totp });
+        // Les indices du registre passent devant les heuristiques du démon :
+        // « input[name=session_key] » de LinkedIn ne se devine pas, et le
+        // deviner mal remplit le champ de recherche avec une adresse e-mail.
+        const profile = findSite(site);
+        const payload = JSON.stringify({ url: i.url ?? profile?.loginUrl ?? cred.url, login: cred.login, secret: cred.secret, totp, hints: profile?.hints });
         const out = await runBctl("login", payload, container, cfg.BROWSER_CDP_URL, true);
         if (typeof out === "string") return out;
         if (!out.ok) return `Error: ${String(out.error ?? "échec de connexion")}`;
@@ -131,7 +136,7 @@ type BctlOut = { ok?: boolean; error?: string; base64?: string; file?: string } 
  * un modèle, et qu'un `ps aux` y suffirait sinon.
  * Rend l'objet analysé, ou une chaîne « Error: … » prête à rendre au modèle.
  */
-async function runBctl(action: string, payload: string, container: string | undefined, cdp: string | undefined, viaStdin = false): Promise<BctlOut | string> {
+export async function runBctl(action: string, payload: string, container: string | undefined, cdp: string | undefined, viaStdin = false): Promise<BctlOut | string> {
   const r = await sandboxExec(`node /opt/browser/bctl.js ${shellQuote(action)} ${viaStdin ? "-" : shellQuote(payload)}`, {
     timeoutMs: 150_000,
     container,
@@ -169,7 +174,7 @@ export const vaultListTool = betaZodTool({
 });
 
 /** Domaines où l'agent n'a rien à faire (banque, paiement, admin de comptes). Liste dans .env, wildcard par suffixe. */
-function isDenied(url: string): boolean {
+export function isDenied(url: string): boolean {
   const host = new URL(url).hostname.toLowerCase();
   return config()
     .BROWSER_DENY_DOMAINS.split(",")

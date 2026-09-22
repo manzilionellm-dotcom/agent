@@ -15,6 +15,7 @@ import { searchTools } from "../tools/search.js";
 import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
 import { browserTool, vaultListTool } from "../tools/browser.js";
+import { marketTools } from "../tools/market.js";
 import { googleTools } from "../tools/google.js";
 import { getCustomMission, type CustomMissionRow, type Toolset } from "./custom.js";
 
@@ -44,7 +45,7 @@ export type MissionContext = { now: Date; memory: string; siteUrl: string; repo:
 const CORE_TOOLS = [memoryTool, rememberFact, recallFacts, taskTool];
 const SANDBOX_TOOLS = [bashTool, readFileTool, writeFileTool];
 const CLAUDE_WEB = () => (config().LLM_PROVIDER === "anthropic" ? [webSearchTool, webFetchTool] : []);
-const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, browserTool, vaultListTool, xProfileTool];
+const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, xProfileTool];
 
 export const MISSIONS: Mission[] = [
   {
