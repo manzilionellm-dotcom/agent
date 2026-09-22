@@ -179,6 +179,40 @@ export async function touchCredential(site: string): Promise<void> {
   await db().query(`UPDATE credentials SET uses=uses+1, last_used_at=now() WHERE site=$1`, [normalizeSite(site)]);
 }
 
+/* --- Billets d'accès ------------------------------------------------------ */
+
+/**
+ * Un billet à usage unique pour ouvrir la page du coffre.
+ *
+ * Il remplace le jeton de l'API dans l'URL, et il le remplace pour une
+ * raison observée, pas théorique : une adresse qui contient un secret finit
+ * recopiée. Dans un historique de navigateur, dans une capture d'écran,
+ * dans un message collé à quelqu'un pour montrer que ça marche. Un billet
+ * recopié ne vaut rien : il est mort à la première utilisation, et de toute
+ * façon dix minutes plus tard.
+ */
+export async function createVaultTicket(minutes = 10): Promise<{ id: string; expiresAt: Date }> {
+  const id = randomBytes(24).toString("base64url");
+  const expiresAt = new Date(Date.now() + minutes * 60_000);
+  await db().query(`INSERT INTO vault_tickets(id, expires_at) VALUES ($1,$2)`, [id, expiresAt]);
+  // Ménage opportuniste : sans ça la table grossit d'une ligne par ouverture
+  // et personne ne la regardera jamais.
+  await db().query(`DELETE FROM vault_tickets WHERE expires_at < now() - interval '1 day'`).catch(() => undefined);
+  return { id, expiresAt };
+}
+
+/**
+ * Consomme un billet. L'usage unique se joue dans le `WHERE` : marquer après
+ * avoir lu laisserait deux requêtes simultanées passer toutes les deux.
+ */
+export async function consumeVaultTicket(id: string): Promise<boolean> {
+  const r = await db().query(
+    `UPDATE vault_tickets SET used_at=now() WHERE id=$1 AND used_at IS NULL AND expires_at > now()`,
+    [id],
+  );
+  return Boolean(r.rowCount);
+}
+
 /* --- TOTP (RFC 6238) ------------------------------------------------------ */
 
 /**

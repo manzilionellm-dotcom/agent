@@ -6,6 +6,8 @@ import { MISSIONS, resolveMission } from "./missions/index.js";
 import { buildAndDeliverReport } from "./missions/report.js";
 import { launch } from "./scheduler.js";
 import { runSwarm } from "./swarm/coordinator.js";
+import { config } from "./config.js";
+import { createVaultTicket } from "./vault.js";
 
 /**
  * Lancement manuel :
@@ -16,7 +18,7 @@ import { runSwarm } from "./swarm/coordinator.js";
  */
 const [name, ...rest] = process.argv.slice(2);
 if (!name) {
-  console.log("usage: mission <nom> | report | swarm \"<objectif>\"");
+  console.log("usage: mission <nom> | report | swarm \"<objectif>\" | vault-link");
   console.log("missions:", MISSIONS.map((m) => `${m.name} (${m.cron})`).join(", "));
   process.exit(1);
 }
@@ -25,7 +27,16 @@ if (!name) {
   await migrate();
   await connectMcpServers();
   try {
-    if (name === "report") {
+    if (name === "vault-link") {
+      // Lien à usage unique vers la page du coffre. Le jeton de l'API ne
+      // circule plus dans une URL : celui-ci meurt à la première ouverture,
+      // donc le recopier quelque part ne coûte rien.
+      const t = await createVaultTicket(10);
+      const base = config().PUBLIC_URL ?? "http://127.0.0.1:8787";
+      console.log(`\n  ${base}/vault?t=${t.id}\n`);
+      console.log(`  Valable jusqu'à ${t.expiresAt.toLocaleTimeString("fr-FR")}, une seule ouverture.`);
+      if (!config().PUBLIC_URL) console.log(`  (PUBLIC_URL absente : passe par « ssh -L 8787:127.0.0.1:8787 manzi@… »)`);
+    } else if (name === "report") {
       console.log(await buildAndDeliverReport());
     } else if (name === "swarm") {
       const objective = rest.join(" ").trim();

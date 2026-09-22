@@ -20,7 +20,7 @@ import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
 import { startRuntime, stopRuntime } from "./agents/runtime.js";
 import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
-import { forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
+import { consumeVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -56,11 +56,11 @@ function authorized(req: IncomingMessage): boolean {
  * Authentification de la page /vault par cookie.
  *
  * Un formulaire HTML ne peut pas porter d'en-tête `Authorization` : le
- * contrôle Bearer du reste de l'API ne s'applique donc pas ici. Le jeton
- * arrive une seule fois dans `?k=`, on le troque contre un cookie
- * HttpOnly + SameSite=Strict, et la redirection nettoie la barre d'adresse
- * — sinon le jeton reste dans l'historique du navigateur et dans le
- * `Referer` de la moindre ressource externe.
+ * contrôle Bearer du reste de l'API ne s'applique donc pas ici. On entre
+ * avec un billet à usage unique (`?t=`), échangé contre un cookie
+ * HttpOnly + SameSite=Strict, et la redirection nettoie la barre d'adresse.
+ * Le jeton de l'API, lui, ne circule jamais dans une URL : une adresse qui
+ * contient un secret finit recopiée quelque part.
  */
 function vaultCookieOk(req: IncomingMessage): boolean {
   const token = config().ORCHESTRATOR_TOKEN;
@@ -79,11 +79,19 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     res.end(body);
   };
 
-  const key = url.searchParams.get("k");
-  if (key && token && Buffer.from(key).length === Buffer.from(token).length && timingSafeEqual(Buffer.from(key), Buffer.from(token))) {
+  // Entrée par billet à usage unique, jamais par le jeton de l'API. Un
+  // jeton dans une URL finit recopié quelque part ; un billet recopié est
+  // déjà mort. Il s'obtient sur le serveur : `node dist/cli.js vault-link`.
+  const ticket = url.searchParams.get("t");
+  if (ticket) {
+    if (!token) return html("<!doctype html><meta charset=utf-8><p>ORCHESTRATOR_TOKEN n'est pas configuré : la page du coffre est désactivée.", 503);
+    if (!(await consumeVaultTicket(ticket).catch(() => false))) {
+      logger.warn({ ip: req.socket.remoteAddress }, "billet de coffre invalide ou déjà utilisé");
+      return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Génère-en un autre :<br><code>ssh manzi@… 'cd manzi-junior &amp;&amp; bash deploy/vault-link.sh'</code>", 401);
+    }
     // `Secure` seulement derrière HTTPS : en le posant toujours, le cookie
     // serait rejeté lors d'un test en local sur 127.0.0.1 et la page
-    // demanderait le jeton en boucle sans jamais dire pourquoi.
+    // demanderait le billet en boucle sans jamais dire pourquoi.
     const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
     res.writeHead(302, {
       location: "/vault",
@@ -94,7 +102,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
 
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress }, "accès refusé au coffre");
-    return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Ouvre cette page avec <code>/vault?k=&lt;ORCHESTRATOR_TOKEN&gt;</code>.", 401);
+    return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien à usage unique sur le serveur :<br><code>ssh manzi@… 'cd manzi-junior &amp;&amp; bash deploy/vault-link.sh'</code>", 401);
   }
 
   let notice = "";

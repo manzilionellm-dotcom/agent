@@ -202,6 +202,17 @@ const MIGRATIONS: string[] = [
      updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
 
+  // Billets d'accès au coffre : à usage unique, valables quelques minutes.
+  // Ils remplacent le jeton de l'API dans l'URL. Un jeton d'API dans une
+  // adresse finit recopié — dans un historique, dans une capture d'écran,
+  // dans un message. Un billet recopié, lui, est déjà mort.
+  `CREATE TABLE IF NOT EXISTS vault_tickets (
+     id         TEXT PRIMARY KEY,
+     expires_at TIMESTAMPTZ NOT NULL,
+     used_at    TIMESTAMPTZ,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

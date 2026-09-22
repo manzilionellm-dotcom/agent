@@ -70,7 +70,10 @@ TOKEN=$(val ORCHESTRATOR_TOKEN)
 PUBLIC=$(val PUBLIC_URL)
 if [ -z "$PUBLIC" ]; then
   say "PUBLIC_URL absente du .env — lecture dans les journaux du tunnel"
-  HOST=$("${COMPOSE[@]}" logs --no-color tunnel 2>/dev/null \
+  # Le service tunnel vit derriere un profil compose : sans --profile,
+  # `logs tunnel` ne renvoie rien et on conclut a tort que le tunnel est muet.
+  HOST=$(docker compose -f docker-compose.yml -f docker-compose.eco.yml \
+    --profile tunnel --profile tunnel-quick logs --no-color tunnel tunnel-quick 2>/dev/null \
     | tr -d '\\' | grep -oE '"hostname":"[^"]+"' | cut -d'"' -f4 | grep -v '^$' | tail -1 || true)
   if [ -n "$HOST" ]; then
     PUBLIC="https://$HOST"
@@ -80,37 +83,29 @@ if [ -z "$PUBLIC" ]; then
   fi
 fi
 
-# La page répond-elle vraiment ? Un 401 ici veut dire que le jeton lu n'est
-# pas celui que le serveur attend — mieux vaut le savoir maintenant que
-# devant une page « Accès refusé » sans explication.
-CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8787/vault?k=$TOKEN" || echo 000)
-case "$CODE" in
-  302) echo "    page du coffre vérifiée (redirection vers le formulaire)" ;;
-  401) die "la page du coffre refuse ce jeton (HTTP 401) — vérifie ORCHESTRATOR_TOKEN dans .env" ;;
-  *)   echo "    réponse inattendue de la page du coffre : HTTP $CODE (on continue)" ;;
-esac
+# Un billet inventé doit être refusé : c'est le contrôle qui prouve que la
+# page n'est pas ouverte à tous. Le vérifier maintenant vaut mieux que de
+# le découvrir le jour où quelqu'un d'autre l'ouvre.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8787/vault?t=billet-invente" || echo 000)
+[ "$CODE" = 401 ] && echo "    page du coffre protégée (un faux billet reçoit 401)" \
+                  || echo "    attention : un faux billet reçoit HTTP $CODE au lieu de 401"
 
-if [ -n "$PUBLIC" ]; then
-  ADRESSE="$PUBLIC/vault?k=$TOKEN"
-else
-  ADRESSE="https://<ton-adresse-publique>/vault?k=$TOKEN
-  (adresse publique introuvable : lance « bash deploy/whatsapp-up.sh » pour
-   la rétablir, ou passe par un tunnel ssh depuis ton poste :
-   ssh -L 8787:127.0.0.1:8787 manzi@50.21.190.19
-   puis ouvre http://127.0.0.1:8787/vault?k=$TOKEN )"
+say "génération d'un lien d'accès à usage unique"
+if ! LIEN=$("${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link 2>&1); then
+  printf '%s\n' "$LIEN"
+  die "impossible de générer le lien — relance: bash deploy/vault-link.sh"
 fi
 
 cat <<FIN
 
 ──────────────────────────────────────────────────────────────
   COFFRE PRÊT
+$LIEN
+  Ce lien meurt à la première ouverture. Il ne contient aucun
+  secret réutilisable : le recopier ne sert à rien, et ne
+  risque rien. Pour en avoir un autre :
 
-  Ouvre cette adresse dans ton navigateur :
-
-  $ADRESSE
-
-  Le jeton disparaît de la barre d'adresse dès la première page.
-  Ne recolle cette adresse dans aucune conversation.
+  ssh manzi@50.21.190.19 'cd manzi-junior && bash deploy/vault-link.sh'
 ──────────────────────────────────────────────────────────────
 
 FIN
