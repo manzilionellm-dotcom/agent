@@ -79,6 +79,21 @@ else
   say "attention : $PUBLIC répond HTTP $CODE sur /healthz (on l'écrit quand même, le tunnel peut mettre un instant)"
 fi
 
+# Une adresse *.trycloudflare.com est un tunnel « quick » : elle est tirée au
+# hasard à chaque démarrage. Tout continue de marcher — le minuteur redéclare
+# le webhook toutes les 10 minutes — mais chaque lien déjà envoyé meurt, et le
+# bot ne peut plus demander d'aide sur un lien qu'il vient d'émettre. Le dire
+# vaut mieux que le laisser découvrir un soir.
+case "$PUBLIC" in
+  *.trycloudflare.com)
+    say "ATTENTION : adresse ÉPHÉMÈRE (tunnel « quick »). Elle changera au prochain redémarrage."
+    if [ -n "$(val CLOUDFLARE_TUNNEL_TOKEN)" ]; then
+      say "un CLOUDFLARE_TUNNEL_TOKEN existe pourtant — le tunnel nommé ne tourne pas : bash deploy/whatsapp-up.sh"
+    else
+      say "pour une adresse fixe : crée un tunnel nommé dans Cloudflare Zero Trust et pose CLOUDFLARE_TUNNEL_TOKEN"
+    fi ;;
+esac
+
 bash deploy/set-env.sh "PUBLIC_URL=$PUBLIC" >/dev/null || { printf 'écriture du .env impossible\n' >&2; exit 1; }
 say "PUBLIC_URL rétablie"
 printf '%s\n' "$PUBLIC"

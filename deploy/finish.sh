@@ -115,7 +115,13 @@ if [ "$ROOT" = 1 ]; then
 else
   skip "Pont vers ton Chrome" "demande root (pare-feu + sshd) — plus tard : ssh root@<serveur> 'bash $DIR/deploy/chrome-bridge-server.sh'"
 fi
-GW=$(asowner "grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2-" | sed 's|http://||; s|:9222||' | tr -d '"\r')
+# La passerelle du pont SSH se lit sur le conteneur, jamais dans
+# BROWSER_CDP_URL : depuis que l'agent pilote le navigateur du serveur, cette
+# variable vaut « http://desktop:9223 », et en déduire une passerelle donnait
+# la consigne « MANZI_GW='desktop' » — une adresse qui n'existe pas sur le
+# poste Windows.
+GW=$(docker exec manzi-sandbox sh -c "ip route 2>/dev/null | awk '/^default/ {print \$3}'" 2>/dev/null | head -1 | tr -d '\r')
+[ -n "$GW" ] || GW=172.17.0.1
 
 # 4. Webhook WhatsApp -----------------------------------------------------------
 step "Webhook WhatsApp" asowner "bash deploy/whatsapp-up.sh" || true

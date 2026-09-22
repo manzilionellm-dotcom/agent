@@ -45,7 +45,11 @@ if [ -n "$HOST" ]; then
   [ "$(val PUBLIC_URL)" = "https://$HOST" ] && printf '  \033[1;32mcohérent avec PUBLIC_URL\033[0m\n' \
     || printf '  \033[1;31mDÉSACCORD avec PUBLIC_URL — corrige : bash deploy/whatsapp-up.sh\033[0m\n'
 elif [ -n "$QUICK" ]; then
-  printf '  tunnel éphémère : %s\n' "$QUICK"
+  printf '  \033[1;33mtunnel ÉPHÉMÈRE : %s\033[0m\n' "$QUICK"
+  printf '  cette adresse change à chaque redémarrage — tout lien déjà envoyé meurt avec elle\n'
+  [ -n "$(val CLOUDFLARE_TUNNEL_TOKEN)" ] \
+    && printf '  un CLOUDFLARE_TUNNEL_TOKEN existe : le tunnel nommé ne tourne pas → bash deploy/whatsapp-up.sh\n' \
+    || printf '  pour une adresse fixe : tunnel nommé dans Cloudflare Zero Trust + CLOUDFLARE_TUNNEL_TOKEN\n' 
 else
   printf '  \033[1;31maucun nom d hôte dans les journaux du tunnel\033[0m\n'
   printf '  dernières lignes :\n'
