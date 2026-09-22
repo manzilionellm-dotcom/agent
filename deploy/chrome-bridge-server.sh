@@ -100,6 +100,14 @@ COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.eco.yml)
 sudo -u "$OWNER" -H "${COMPOSE[@]}" up -d --force-recreate orchestrator >/dev/null
 say "orchestrateur redémarré avec BROWSER_CDP_URL"
 
+# Le port du pont doit être libre avant que le PC Windows ne tente sa
+# connexion. Un tunnel mort d'une session précédente peut le retenir, et
+# quand son propriétaire n'est pas l'utilisateur du dépôt, seul root peut
+# l'arrêter — c'est-à-dire ici, et nulle part ailleurs dans la procédure.
+if bash "$DIR/deploy/chrome-bridge-free.sh" 9222; then :; else
+  echo "  (le port 9222 n'a pas pu être libéré — le pont le signalera)"
+fi
+
 # L'adresse est résolue ICI : un `$(...)` laissé dans le texte s'affiche tel
 # quel et donne une commande que personne ne peut copier telle quelle.
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')

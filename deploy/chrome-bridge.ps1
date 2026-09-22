@@ -109,8 +109,20 @@ Write-Host "    Ctrl+C pour couper le pont. Manzi Junior continue de tourner san
 # indefiniment : le pont ne remonte jamais tout seul.
 $Free = "cd manzi-junior && bash deploy/chrome-bridge-free.sh $Port"
 while ($true) {
-  $libre = ssh $Remote $Free 2>&1
-  if ($libre -match 'arrete|libere') { Write-Host "    $libre" -ForegroundColor DarkGray }
+  # ErrorActionPreference=Stop transforme la moindre ligne ecrite sur la sortie
+  # d'erreur d'un programme externe en erreur fatale. Le liberateur de port
+  # ECRIT sur stderr quand il ne peut pas agir - ce qui est une information,
+  # pas une panne - et faisait donc mourir le pont au lieu de le remonter.
+  $ancien = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $libre = (ssh $Remote $Free 2>&1 | Out-String).Trim()
+  $ErrorActionPreference = $ancien
+  if ($libre) { Write-Host "    $libre" -ForegroundColor DarkGray }
+  if ($libre -match 'autre utilisateur') {
+    Write-Host "    Le port est tenu par un processus qui ne t appartient pas." -ForegroundColor Yellow
+    Write-Host "    Une fois, en root : ssh root@<serveur> puis" -ForegroundColor Yellow
+    Write-Host "      bash /home/manzi/manzi-junior/deploy/chrome-bridge-free.sh $Port" -ForegroundColor Yellow
+  }
 
   ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R $Bind $Remote
 
