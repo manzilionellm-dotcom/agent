@@ -24,7 +24,7 @@ import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredential
 import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
-import { bumpProviderPriority, deleteProvider, putProvider, seedFromEnv, setProviderEnabled, setSetting, testProvider, type Category } from "./providers.js";
+import { bumpProviderPriority, deleteProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -505,7 +505,7 @@ async function main(): Promise<void> {
   await seedFromEnv().catch(() => 0);
   await startRuntime();
   await startScheduler();
-  if (cfg.HEARTBEAT_ALERTS) startHeartbeat();
+  if (cfg.HEARTBEAT_ALERTS) { startHeartbeat(); startKeyWatch(); }
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -575,4 +575,61 @@ function startHeartbeat(): void {
     }
   };
   setInterval(() => void check().catch((e) => logger.error({ err: String(e) }, "heartbeat")), 60 * 60_000).unref();
+}
+
+/**
+ * Surveillance des clés : une clé morte doit se signaler, pas se découvrir.
+ *
+ * Le 22 septembre, un jeton GitHub refusé a coûté 2,28 $ et une soirée. Il
+ * n'était mort nulle part de visible : le .env le contenait, le panneau
+ * l'affichait « actif », et seul un appel réel disait qu'il était refusé.
+ * On a donc appris la panne par la facture.
+ *
+ * Toutes les six heures, chaque service à clé est réellement appelé. Une
+ * seule alerte par service quand il casse, une quand il revient — et le lien
+ * du panneau dans le message, pour que la réparation tienne en un geste.
+ *
+ * L'état « déjà signalé » vit dans la table `settings`, pas en mémoire : sans
+ * ça, chaque redémarrage réalerterait sur une panne connue, et une alerte
+ * qu'on apprend à ignorer ne sert plus à rien.
+ */
+function startKeyWatch(): void {
+  const check = async () => {
+    const services = await listProviders().catch(() => []);
+    for (const s of services) {
+      if (!s.enabled || !s.has_key) continue;
+      const verdict = await testProvider(s.id).catch(() => undefined);
+      if (!verdict) continue; // Pas de verdict : on ne réveille personne sur un doute.
+      const cle = `alerte_cle_${s.id}`;
+      const connu = await setting(cle);
+      const etat = verdict.ok ? "ok" : "ko";
+      if (etat === connu) continue;
+      await setSetting(cle, etat);
+
+      const to = primaryNumber();
+      if (!to) continue;
+      if (verdict.ok) {
+        // Rien à signaler au premier passage : seul un RETOUR après panne mérite un message.
+        if (connu === "ko") await deliverWhatsApp(to, `✅ La clé ${s.label || s.id} refonctionne. Je reprends ce qui attendait.`).catch(() => false);
+        continue;
+      }
+      logger.error({ service: s.id, raison: verdict.message }, "clé de service refusée");
+      const base = config().PUBLIC_URL;
+      const lignes = [
+        `🔑 La clé ${s.label || s.id} ne marche plus.`,
+        verdict.message,
+        "",
+        "Ce qui en dépend attend — rien ne se relance dans le vide, rien ne brûle.",
+      ];
+      if (base) {
+        const t = await createVaultTicket(15).catch(() => undefined);
+        if (t) lignes.push("", "Corrige-la ici :", `${base}/panel?t=${t.id}`, "", "Valable 15 min, une seule ouverture.");
+      }
+      await deliverWhatsApp(to, lignes.join("\n")).catch(() => false);
+    }
+  };
+  // Deux minutes après le démarrage : assez pour que la base et le réseau
+  // soient prêts, assez tôt pour qu'un redémarrage serve de vérification.
+  setTimeout(() => void check().catch((e) => logger.error({ err: String(e) }, "surveillance des clés")), 2 * 60_000).unref();
+  setInterval(() => void check().catch((e) => logger.error({ err: String(e) }, "surveillance des clés")), 6 * 60 * 60_000).unref();
 }
