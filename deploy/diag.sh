@@ -67,6 +67,46 @@ else
   printf '  WHATSAPP_APP_ID ou WHATSAPP_APP_SECRET absent — vérification impossible\n'
 fi
 
+t "Pont vers ton Chrome (CDP)"
+CDP=$(val BROWSER_CDP_URL)
+if [ -z "$CDP" ]; then
+  printf '  BROWSER_CDP_URL vide — le bot utilise son propre Chromium (normal si le pont n est pas voulu)\n'
+else
+  printf '  BROWSER_CDP_URL          %s\n' "$CDP"
+  HOSTP=${CDP#http://}; GWIP=${HOSTP%%:*}; GWPORT=${HOSTP##*:}
+
+  # 1. sshd accepte-t-il de publier un port sur autre chose que la boucle locale ?
+  #    Sans « GatewayPorts clientspecified », sshd accepte le -R, le dit à
+  #    personne, et écoute sur 127.0.0.1 seul : le conteneur ne voit rien.
+  #    C'est LA panne silencieuse de ce montage.
+  if grep -rqE '^[[:space:]]*GatewayPorts[[:space:]]+clientspecified' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null; then
+    printf '  sshd GatewayPorts        \033[1;32mclientspecified (OK)\033[0m\n'
+  else
+    printf '  sshd GatewayPorts        \033[1;31mABSENT — le tunnel inverse ne sortira jamais de 127.0.0.1\033[0m\n'
+    printf '                           correction : ssh root@<serveur> puis bash deploy/chrome-bridge-server.sh\n'
+  fi
+
+  # 2. Quelqu'un écoute-t-il réellement sur l'adresse attendue ?
+  ECOUTE=$( (ss -lnt 2>/dev/null || netstat -lnt 2>/dev/null) | grep -E "[:.]$GWPORT[[:space:]]" )
+  if [ -n "$ECOUTE" ]; then
+    printf '  écoute sur le port %s    \033[1;32moui\033[0m\n' "$GWPORT"
+    printf '%s\n' "$ECOUTE" | sed 's/^/    | /'
+    printf '%s' "$ECOUTE" | grep -q "$GWIP:$GWPORT" \
+      && printf '  liée à %s        \033[1;32moui — le conteneur peut la joindre\033[0m\n' "$GWIP" \
+      || printf '  liée à %s        \033[1;31mNON (127.0.0.1 seulement) — le conteneur ne la joindra pas\033[0m\n' "$GWIP"
+  else
+    printf '  écoute sur le port %s    \033[1;31mpersonne\033[0m\n' "$GWPORT"
+    printf '                           ta fenêtre PowerShell chrome-bridge.ps1 est fermée, ou son ssh a été refusé\n'
+  fi
+
+  # 3. Le conteneur, lui, arrive-t-il à parler à Chrome ? C'est la seule
+  #    question qui compte vraiment : les deux contrôles ci-dessus ne sont
+  #    que les causes possibles de sa réponse.
+  VER=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 5 "http://$GWIP:$GWPORT/json/version" 2>/dev/null | tr -d '\n' | head -c 200)
+  [ -n "$VER" ] && printf '  \033[1;32mle conteneur JOINT ton Chrome\033[0m : %s\n' "$VER" \
+                || printf '  \033[1;31mle conteneur ne joint pas ton Chrome\033[0m (c est ce que le bot signale)\n'
+fi
+
 t "Coffre"
 N=$("${COMPOSE[@]}" exec -T db psql -qtA -U manzi -d manzi -c 'select count(*) from credentials' 2>/dev/null | tr -d ' \r')
 printf '  identifiants enregistrés : %s\n' "${N:-lecture impossible}"
