@@ -41,14 +41,25 @@ mkdir -p "$PROFILE"
 # l'hôte (voir docker-compose) : il n'est joignable que depuis le réseau
 # interne de la pile. Sur un poste personnel ce serait une faute ; ici c'est
 # une liaison entre deux conteneurs du même serveur.
+# --no-sandbox : Chromium refuse de démarrer dans un conteneur sans lui
+# (zygote_host_impl_linux, crbug.com/638180). Le bac à sable de Chromium a
+# besoin de privilèges que ce conteneur n'a pas, et ne doit pas avoir.
+#
+# Ce qu'on perd est réel : une faille de moteur de rendu n'est plus contenue
+# par Chromium. Ce qu'on met à la place : le conteneur lui-même, sans
+# privilèges, et un utilisateur non root. Une faille de rendu tombe donc sur
+# un compte sans droits dans un conteneur isolé, au lieu de root.
 "$CHROME" \
+  --no-sandbox \
+  --disable-gpu \
+  --disable-dev-shm-usage \
   --remote-debugging-port=9222 \
   --remote-debugging-address=0.0.0.0 \
   --user-data-dir="$PROFILE" \
   --no-first-run --no-default-browser-check --disable-session-crashed-bubble \
   --password-store=basic \
   --disable-blink-features=AutomationControlled \
-  --window-position=0,0 --window-size="${SCREEN%x*}" \
+  --window-position=0,0 --window-size="$(printf %s "$SCREEN" | cut -d x -f1),$(printf %s "$SCREEN" | cut -d x -f2)" \
   --start-maximized \
   --lang=fr-FR \
   "about:blank" >/tmp/chrome.log 2>&1 &

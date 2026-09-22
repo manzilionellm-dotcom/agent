@@ -20,7 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 COPY docker/desktop/start.sh /opt/start.sh
-RUN chmod +x /opt/start.sh && mkdir -p /profile
+# `pwuser` vient de l'image Playwright. Le profil lui appartient dès l'image :
+# un volume nommé neuf hérite du contenu ET du propriétaire du répertoire
+# qu'il recouvre, donc les sessions s'écrivent sans droits root.
+RUN chmod +x /opt/start.sh \
+ && mkdir -p /profile /home/pwuser/.vnc \
+ && chown -R pwuser:pwuser /profile /home/pwuser
+
+USER pwuser
 
 EXPOSE 6080 9222
 CMD ["/opt/start.sh"]

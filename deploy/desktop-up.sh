@@ -22,6 +22,25 @@ die() { printf '\nERREUR: %s\n' "$*" >&2; exit 1; }
 COMPOSE=(docker compose -f docker-compose.yml)
 [ -f docker-compose.eco.yml ] && COMPOSE+=(-f docker-compose.eco.yml)
 
+# Le profil tourne sous un compte non root. Un volume créé avant ce
+# changement appartient à root, et le navigateur ne peut alors rien y écrire.
+# On ne le recrée QUE s'il est vide : un profil rempli porte les sessions, et
+# les jeter obligerait à tout reconnecter à la main.
+VOL=$(docker volume ls -q --filter name=_desktop | head -1)
+if [ -n "$VOL" ]; then
+  VIDE=$(docker run --rm -v "$VOL":/p alpine sh -c 'ls -A /p 2>/dev/null | head -1' 2>/dev/null)
+  PROP=$(docker run --rm -v "$VOL":/p alpine stat -c %u /p 2>/dev/null)
+  if [ -z "$VIDE" ] && [ "$PROP" = 0 ]; then
+    say "profil vide et appartenant à root — recréation pour le compte non root"
+    docker rm -f manzi-desktop >/dev/null 2>&1 || true
+    docker volume rm "$VOL" >/dev/null 2>&1 || true
+  elif [ -n "$VIDE" ] && [ "$PROP" = 0 ]; then
+    say "ATTENTION : le profil contient des données mais appartient à root"
+    echo "    le navigateur ne pourra pas y écrire. Pour repartir de zéro (sessions perdues) :"
+    echo "      docker rm -f manzi-desktop && docker volume rm $VOL"
+  fi
+fi
+
 say "construction du navigateur du serveur (long la première fois)"
 "${COMPOSE[@]}" up -d --build desktop || die "construction impossible — voir: ${COMPOSE[*]} logs desktop"
 
