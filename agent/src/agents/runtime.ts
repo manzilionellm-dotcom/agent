@@ -6,7 +6,7 @@ import { runMission } from "../missions/index.js";
 import { resolveMission } from "../missions/index.js";
 import { customToMission } from "../missions/index.js";
 import { agentSpend, getAgent, setAgentState, AUTONOMY, type AgentRow } from "./store.js";
-import { dailyBudget } from "../providers.js";
+import { dailyBudget, testProvider } from "../providers.js";
 import { claimNext, completeTask, failTask, blockTask, recoverOrphans, checkpoint, WORKER_ID, type TaskRow } from "./tasks.js";
 
 /**
@@ -43,6 +43,33 @@ async function budgetBlocked(agent: AgentRow): Promise<string | undefined> {
 }
 
 /**
+ * La clé dont l'agent aura besoin est-elle VALIDE ? Pas « présente » : valide.
+ *
+ * Coût de la question : un appel HTTP. Coût de ne pas la poser, mesuré sur ce
+ * serveur le 22 septembre : un agent censé travailler sur GitHub a tourné
+ * 30 tours sans jeton utilisable, brûlé 1,14 $ et rendu un rapport vide — puis
+ * a recommencé à l'identique, pour 2,28 $ au total et zéro dépôt traité.
+ *
+ * Un jeton présent mais refusé passe tous les tests d'existence : c'était
+ * exactement le cas ici. Seul un appel réel fait la différence.
+ */
+const PREVOL_TTL_MS = 5 * 60_000;
+const prevol = new Map<string, { at: number; err?: string }>();
+
+async function outilsIndisponibles(toolset: string): Promise<string | undefined> {
+  if (toolset !== "code" && toolset !== "complet") return undefined;
+  const cache = prevol.get("github");
+  if (cache && Date.now() - cache.at < PREVOL_TTL_MS) return cache.err;
+  const t = await testProvider("github").catch(() => undefined);
+  // Pas de verdict (service absent du panneau, panne du test) : on laisse
+  // passer. Un pré-vol qui bloque sur son propre échec est pire que pas de
+  // pré-vol — il arrêterait un agent qui aurait très bien travaillé.
+  const err = t && !t.ok ? `GitHub inutilisable : ${t.message} Ajoute ou corrige le jeton sur la page /panel.` : undefined;
+  prevol.set("github", { at: Date.now(), err });
+  return err;
+}
+
+/**
  * Exécute une tâche. Les échecs sont classés (section 30) : ce qui est
  * passager retourne en file, ce qui est définitif s'arrête, et ce qui attend
  * un humain se bloque au lieu de consommer des tentatives pour rien.
@@ -65,6 +92,16 @@ async function execute(task: TaskRow): Promise<void> {
 
   if (agent.autonomy <= AUTONOMY.READ_ONLY) {
     await blockTask(task.id, "agent en lecture seule (autonomie 0) : relève son autonomie pour qu'il agisse");
+    return;
+  }
+
+  // Comme un plafond : une tâche qu'on sait vouée à l'échec attend, elle ne
+  // brûle ni son budget ni ses tentatives. Elle repartira seule dès que la
+  // clé sera corrigée au panneau.
+  const outils = await outilsIndisponibles(agent.toolset);
+  if (outils) {
+    await blockTask(task.id, outils);
+    await setAgentState(agent.id, "blocked", outils);
     return;
   }
 
@@ -100,6 +137,16 @@ async function execute(task: TaskRow): Promise<void> {
       await completeTask(task.id, res.text, res.usage.usd);
     } else if (res.status === "budget") {
       await blockTask(task.id, `budget de mission épuisé (${res.usage.usd.toFixed(2)} $)`);
+    } else if (!res.text.trim() && res.usage.usd > 0) {
+      // Elle a tourné, elle a payé, et elle n'a rien dit. Réessayer à
+      // l'identique redonnera le même silence pour le même prix — c'est
+      // précisément ce qui a doublé la facture du 22 septembre. On s'arrête
+      // et on nomme la dépense, pour qu'elle serve au moins à ça.
+      await failTask(
+        task.id,
+        `${res.usage.iterations} tours, ${res.usage.usd.toFixed(2)} $ dépensés, compte rendu vide. Arrêt sans nouvelle tentative : la relancer telle quelle coûterait autant pour le même résultat. Regarde le journal de l'agent pour voir sur quoi il butait.`,
+        { usd: res.usage.usd, permanent: true },
+      );
     } else {
       await failTask(task.id, res.text.slice(-1500) || "mission en échec", { usd: res.usage.usd });
     }
