@@ -75,6 +75,17 @@ else
   printf '  BROWSER_CDP_URL          %s\n' "$CDP"
   HOSTP=${CDP#http://}; GWIP=${HOSTP%%:*}; GWPORT=${HOSTP##*:}
 
+  # L'adresse configurée doit être celle par laquelle le sandbox sort. docker0
+  # (172.17.0.1) n'est PAS la passerelle d'un conteneur placé sur un réseau
+  # compose : le tunnel monte, sshd le confirme, et le conteneur part quand
+  # même en timeout parce que cette adresse ne mène nulle part depuis chez lui.
+  ROUTE=$("${COMPOSE[@]}" exec -T sandbox sh -c "ip route 2>/dev/null | awk '/^default/ {print \$3}'" 2>/dev/null | tr -d '\r' | head -1)
+  if [ -n "$ROUTE" ]; then
+    [ "$ROUTE" = "$GWIP" ] \
+      && printf '  passerelle du sandbox    \033[1;32m%s (concorde)\033[0m\n' "$ROUTE" \
+      || printf '  passerelle du sandbox    \033[1;31m%s — DIFFÉRENTE de %s, le conteneur ne joindra jamais ce port\033[0m\n                           correction : ssh root@<serveur> puis bash deploy/chrome-bridge-server.sh\n' "$ROUTE" "$GWIP"
+  fi
+
   # 1. sshd accepte-t-il de publier un port sur autre chose que la boucle locale ?
   #    Sans « GatewayPorts clientspecified », sshd accepte le -R, le dit à
   #    personne, et écoute sur 127.0.0.1 seul : le conteneur ne voit rien.

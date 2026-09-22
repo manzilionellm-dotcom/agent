@@ -26,14 +26,33 @@ cd "$DIR"
 OWNER=$(stat -c %U "$DIR")
 
 # 1. L'adresse que le sandbox appelle ------------------------------------------
-# On la demande au conteneur lui-même plutôt que de la deviner : c'est Docker
-# qui décide à quoi `host.docker.internal` se résout.
-GW=$(docker exec manzi-sandbox getent hosts host.docker.internal 2>/dev/null | awk '{print $1}' | head -1 || true)
+#
+# Piège coûteux : `docker0` (172.17.0.1) n'est PAS la passerelle du sandbox.
+# Le sandbox vit sur un réseau créé par docker compose, dont la passerelle est
+# une autre adresse (172.18.0.1, 172.20.0.1…). Un tunnel publié sur 172.17.0.1
+# monte parfaitement, sshd le confirme, et le conteneur part quand même en
+# timeout — parce que cette adresse-là ne mène nulle part depuis SON réseau.
+#
+# On demande donc au conteneur par où il sort : sa route par défaut. C'est,
+# par construction, l'adresse de l'hôte telle qu'il peut la joindre.
+GW=$(docker exec manzi-sandbox sh -c "ip route 2>/dev/null | awk '/^default/ {print \$3}'" 2>/dev/null | head -1 || true)
+SRC=route
+if [ -z "$GW" ]; then
+  GW=$(docker exec manzi-sandbox getent hosts host.docker.internal 2>/dev/null | awk '{print $1}' | head -1 || true)
+  SRC=host.docker.internal
+fi
 if [ -z "$GW" ]; then
   GW=$(ip -4 addr show docker0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1 || true)
+  SRC=docker0
 fi
 [ -n "$GW" ] || die "impossible de déterminer l'adresse de la passerelle Docker (le sandbox tourne-t-il ?)"
-say "le sandbox joindra ton Chrome sur $GW:9222"
+
+# L'hôte doit réellement porter cette adresse : sans ça, `ssh -R` refusera de
+# s'y lier, et on l'apprendrait seulement depuis le PC Windows.
+if ! ip -4 addr show 2>/dev/null | grep -qw "$GW"; then
+  die "l'hôte ne porte pas l'adresse $GW (déduite via $SRC) — le tunnel ne pourrait pas s'y lier"
+fi
+say "le sandbox joindra ton Chrome sur $GW:9222 (adresse déduite via $SRC)"
 
 # 2. Autoriser un ssh -R à écouter sur cette adresse ----------------------------
 # `clientspecified` et non `yes` : `yes` ferait écouter sur toutes les
