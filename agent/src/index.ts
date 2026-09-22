@@ -19,7 +19,8 @@ import { createAgent, getAgent, listAgents, deleteAgent, agentSpend } from "./ag
 import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
 import { startRuntime, stopRuntime } from "./agents/runtime.js";
 import { timeline } from "./events.js";
-import { homePage, privacyPage, termsPage } from "./pages.js";
+import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
+import { forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -49,6 +50,73 @@ function authorized(req: IncomingMessage): boolean {
   const given = Buffer.from(h.replace(/^Bearer\s+/i, ""));
   const expected = Buffer.from(token);
   return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+/**
+ * Authentification de la page /vault par cookie.
+ *
+ * Un formulaire HTML ne peut pas porter d'en-tête `Authorization` : le
+ * contrôle Bearer du reste de l'API ne s'applique donc pas ici. Le jeton
+ * arrive une seule fois dans `?k=`, on le troque contre un cookie
+ * HttpOnly + SameSite=Strict, et la redirection nettoie la barre d'adresse
+ * — sinon le jeton reste dans l'historique du navigateur et dans le
+ * `Referer` de la moindre ressource externe.
+ */
+function vaultCookieOk(req: IncomingMessage): boolean {
+  const token = config().ORCHESTRATOR_TOKEN;
+  if (!token) return false;
+  const raw = /(?:^|;\s*)manzi_vault=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
+  if (!raw) return false;
+  const given = Buffer.from(decodeURIComponent(raw));
+  const expected = Buffer.from(token);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const token = config().ORCHESTRATOR_TOKEN;
+  const html = (body: string, code = 200): void => {
+    res.writeHead(code, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    res.end(body);
+  };
+
+  const key = url.searchParams.get("k");
+  if (key && token && Buffer.from(key).length === Buffer.from(token).length && timingSafeEqual(Buffer.from(key), Buffer.from(token))) {
+    // `Secure` seulement derrière HTTPS : en le posant toujours, le cookie
+    // serait rejeté lors d'un test en local sur 127.0.0.1 et la page
+    // demanderait le jeton en boucle sans jamais dire pourquoi.
+    const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
+    res.writeHead(302, {
+      location: "/vault",
+      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/vault; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
+    });
+    return void res.end();
+  }
+
+  if (!vaultCookieOk(req)) {
+    logger.warn({ ip: req.socket.remoteAddress }, "accès refusé au coffre");
+    return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Ouvre cette page avec <code>/vault?k=&lt;ORCHESTRATOR_TOKEN&gt;</code>.", 401);
+  }
+
+  let notice = "";
+  if (req.method === "POST") {
+    const form = new URLSearchParams((await readRawBody(req)).toString("utf8"));
+    const get = (k: string): string => (form.get(k) ?? "").trim();
+    try {
+      if (get("op") === "delete") {
+        notice = (await forgetCredential(get("site"))) ? `${get("site")} supprimé.` : `${get("site")} n'était pas enregistré.`;
+      } else {
+        const saved = await putCredential({ site: get("site"), login: get("login"), secret: form.get("secret") ?? "", totp: get("totp") || undefined, url: get("url") || undefined, note: get("note") });
+        notice = `${saved.site} enregistré pour ${saved.login}${saved.has_totp ? " (double authentification incluse)" : ""}.`;
+      }
+    } catch (e) {
+      notice = `Refusé : ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
+  // La liste ne peut pas se lire si VAULT_KEY manque — elle n'en a pas besoin
+  // (rien n'est déchiffré ici), mais le dire évite une page blanche.
+  const entries = await listCredentials().catch(() => []);
+  return html(vaultPage(entries, notice, vaultEnabled()));
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -128,6 +196,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" });
     return void res.end(PUBLIC_PAGES[url.pathname]!());
   }
+  // Coffre d'identifiants. Sa propre authentification, avant le contrôle
+  // Bearer : un navigateur ne sait pas envoyer d'en-tête Authorization sur
+  // un formulaire. Le jeton passe UNE fois en ?k=, est échangé contre un
+  // cookie, et la redirection le retire immédiatement de la barre d'adresse.
+  if (url.pathname === "/vault") return vaultRoute(req, res, url);
+
   if (req.method === "GET" && url.pathname === "/healthz") {
     const spent = await spentToday().catch(() => -1);
     return json(res, spent < 0 ? 500 : 200, { ok: spent >= 0, mode: config().AUTONOMY_MODE, spentTodayUsd: spent, mcp: mcpStatus(), whatsapp: config().WHATSAPP_PROVIDER, jobs: scheduledJobs() });

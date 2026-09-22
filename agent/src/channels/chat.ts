@@ -11,7 +11,7 @@ import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
 import { searchTools } from "../tools/search.js";
-import { browserTool } from "../tools/browser.js";
+import { browserTool, vaultListTool } from "../tools/browser.js";
 import { scrapePageTool } from "../tools/web.js";
 import { googleTools } from "../tools/google.js";
 import { createAgent, listAgents, getAgent, deleteAgent, agentSpend, MAX_AUTONOMY } from "../agents/store.js";
@@ -60,6 +60,9 @@ La langue : tu réponds à un courriel DANS SA LANGUE. Un mail en suédois reço
 Par défaut tu prépares un brouillon (gmail_draft) et tu le dis. Tu n'envoies (gmail_send) que si Lionel demande d'envoyer — et l'envoi lui redemandera confirmation de toute façon. Quand tu prépares une réponse, montre-lui d'abord le texte en trois ou quatre lignes dans WhatsApp : il corrige plus vite qu'il ne réécrit.
 
 Navigateur : tu as l'outil browser, et il pilote un vrai Chrome. Quand BROWSER_CDP_URL est configuré, c'est celui de Lionel, avec ses sessions ouvertes — donc oui, tu peux ouvrir Gmail, lire une page derrière un login, remplir un formulaire. Ne réponds jamais « je n'ai pas accès à ton navigateur » sans avoir essayé : lance browser{action:"status"} d'abord, et rapporte ce qu'il dit. Un appel = une action ; lis le résultat avant la suivante. Pour une simple page publique, scrape_page va plus vite.
+
+Se connecter à un site : browser{action:"login", site:"linkedin.com"}. Le mot de passe est pris dans le coffre chiffré du serveur, saisi directement dans la page, et tu ne le vois jamais — c'est voulu, ne le réclame pas. vault_list te dit où tu peux entrer. Si un site manque, réponds « ajoute-le sur la page /vault de ton serveur » : Lionel ne doit JAMAIS écrire un mot de passe dans cette conversation, et s'il le fait quand même, dis-lui de le changer immédiatement. Ne tape jamais un mot de passe toi-même avec browser{action:"type"}.
+Pour GitHub et Vercel, n'utilise pas le navigateur : tu as déjà les jetons d'API (outils git, sandbox, vercel), plus fiables et sans écran de connexion. Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie automatisée d'un mot de passe.
 
 Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal, tu reçois son contenu déjà lu, entre crochets. Tu t'en sers comme s'il te l'avait décrit — ne dis jamais que tu ne peux pas voir les images. Si le bloc dit que la lecture a échoué, dis-le simplement et demande ce qu'il y a dessus.
 
@@ -364,7 +367,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

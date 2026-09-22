@@ -136,7 +136,189 @@ const handlers = {
   // obtenu. Quand le tunnel est fermé il annonçait donc "cdp" en servant le
   // profil local, ce qui envoie chercher la panne à l'exact opposé.
   async status() { return { mode, cdp_configure: Boolean(process.env.BROWSER_CDP_URL), cdp_erreur: cdpError, url: page.url(), tabs: context.pages().length }; },
+
+  /**
+   * Connexion automatique à un site.
+   *
+   * Les identifiants arrivent par l'entrée standard depuis l'orchestrateur,
+   * qui les a déchiffrés du coffre. Ils ne sont ni journalisés, ni renvoyés,
+   * ni visibles par le modèle : ce handler ne rend qu'un état.
+   *
+   * Le formulaire est trouvé par heuristique, dans cet ordre : identifiant,
+   * puis mot de passe, puis code à six chiffres. Les trois étapes sont
+   * séparées parce que la moitié des sites sérieux demandent l'identifiant
+   * d'abord et n'affichent le champ mot de passe qu'ensuite ; un script qui
+   * suppose les deux champs présents en même temps échoue sur Microsoft,
+   * Amazon et la plupart des banques.
+   */
+  async login(a) {
+    if (!a.login || !a.secret) throw new Error("identifiants manquants");
+    const url = a.url;
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.waitForTimeout(1500);
+    await dismissBanners();
+
+    const before = page.url();
+    let steps = [];
+
+    // Déjà connecté : ni champ identifiant ni champ mot de passe. On le dit
+    // au lieu de chercher un formulaire qui n'existe pas, sinon chaque appel
+    // sur un site déjà ouvert finit en « champ introuvable ».
+    if (!(await firstVisible(PASSWORD_SEL)) && !(await firstVisible(IDENT_SEL))) {
+      return { signed_in: true, already: true, url: page.url(), title: await page.title(), steps: ["aucun formulaire de connexion : session déjà ouverte"], text: await text(1_500) };
+    }
+
+    const ident = await firstVisible(IDENT_SEL);
+    if (ident) {
+      await ident.fill(a.login);
+      steps.push("identifiant saisi");
+      // Si le mot de passe n'est pas encore là, c'est un formulaire en deux
+      // temps : on valide l'identifiant et on attend le second écran.
+      if (!(await firstVisible(PASSWORD_SEL))) {
+        await submitStep();
+        await page.waitForTimeout(2500);
+        await dismissBanners();
+        steps.push("étape 1 validée");
+      }
+    }
+
+    const pw = await waitVisible(PASSWORD_SEL, 12_000);
+    if (!pw) return { signed_in: false, url: page.url(), title: await page.title(), steps, error: "champ mot de passe introuvable", text: await text(2_000) };
+    await pw.fill(a.secret);
+    steps.push("mot de passe saisi");
+    await submitStep();
+    await page.waitForTimeout(3500);
+    await dismissBanners();
+
+    // Double authentification. Sans ça le coffre s'arrête au premier site qui
+    // compte : le code à six chiffres est la règle, plus l'exception.
+    const otp = await firstVisible(OTP_SEL);
+    if (otp) {
+      if (!a.totp) {
+        return { signed_in: false, url: page.url(), title: await page.title(), steps, needs_code: true, error: "le site demande un code à six chiffres et aucune clé TOTP n'est enregistrée pour lui", text: await text(1_500) };
+      }
+      await otp.fill(a.totp);
+      steps.push("code à usage unique saisi");
+      await submitStep();
+      await page.waitForTimeout(3500);
+    }
+
+    // Succès = plus de champ mot de passe visible. C'est le seul signal
+    // universel : le texte de confirmation, lui, change à chaque site et à
+    // chaque langue.
+    const stillAsking = Boolean(await firstVisible(PASSWORD_SEL));
+    return {
+      signed_in: !stillAsking,
+      url: page.url(),
+      title: await page.title(),
+      moved: page.url() !== before,
+      steps,
+      text: await text(2_500),
+    };
+  },
+
+  /**
+   * Sauvegarde / restauration des sessions (cookies + localStorage).
+   *
+   * Le profil vit dans un volume Docker, donc il survit déjà aux
+   * redémarrages — mais pas à une reconstruction d'image ni à une migration
+   * de serveur. Une session reconquise, c'est une double authentification à
+   * refaire à la main pour chaque site : ça vaut un fichier.
+   */
+  async session(a) {
+    const file = "/work/browser-session.json";
+    if (a.op === "save") {
+      await context.storageState({ path: file });
+      const c = await context.cookies();
+      return { saved: file, cookies: c.length, domains: [...new Set(c.map((x) => x.domain))].length };
+    }
+    if (a.op === "load") {
+      if (!fs.existsSync(file)) throw new Error(`aucune sauvegarde de session (${file})`);
+      const st = JSON.parse(fs.readFileSync(file, "utf8"));
+      await context.addCookies(st.cookies || []);
+      return { restored: (st.cookies || []).length };
+    }
+    throw new Error("op attendu : save | load");
+  },
 };
+
+/* --- Heuristiques de formulaire ------------------------------------------ */
+
+/** `:visible` compte : les sites gardent des formulaires cachés (mobile, modale fermée) qu'on remplirait à vide. */
+const IDENT_SEL = [
+  'input[autocomplete="username"]:visible',
+  'input[type="email"]:visible',
+  'input[name*="email" i]:visible',
+  'input[name*="user" i]:visible',
+  'input[name*="login" i]:visible',
+  'input[id*="email" i]:visible',
+  'input[id*="user" i]:visible',
+  'input[type="tel"][name*="phone" i]:visible',
+];
+
+const PASSWORD_SEL = ['input[type="password"]:visible'];
+
+const OTP_SEL = [
+  'input[autocomplete="one-time-code"]:visible',
+  'input[name*="otp" i]:visible',
+  'input[name*="totp" i]:visible',
+  'input[id*="otp" i]:visible',
+  'input[name*="code" i]:visible',
+  'input[maxlength="6"]:visible',
+];
+
+async function firstVisible(selectors) {
+  for (const s of selectors) {
+    const l = page.locator(s).first();
+    if (await l.count().then((n) => n > 0).catch(() => false)) return l;
+  }
+  return null;
+}
+
+async function waitVisible(selectors, timeoutMs) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const l = await firstVisible(selectors);
+    if (l) return l;
+    if (Date.now() > until) return null;
+    await page.waitForTimeout(400);
+  }
+}
+
+/** Valide l'étape courante : un bouton explicite s'il existe, la touche Entrée sinon. */
+async function submitStep() {
+  const names = /^(se connecter|connexion|continuer|suivant|valider|log ?in|sign ?in|continue|next|submit|logga in|fortsätt)$/i;
+  const btn = page.getByRole("button", { name: names }).first();
+  if (await btn.count().then((n) => n > 0).catch(() => false)) {
+    await btn.click({ timeout: 8_000 }).catch(() => page.keyboard.press("Enter"));
+    return;
+  }
+  const submit = page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first();
+  if (await submit.count().then((n) => n > 0).catch(() => false)) {
+    await submit.click({ timeout: 8_000 }).catch(() => page.keyboard.press("Enter"));
+    return;
+  }
+  await page.keyboard.press("Enter");
+}
+
+/**
+ * Bandeaux de cookies. Ce n'est pas un détail de confort : en Europe le
+ * bandeau est une modale qui capte les clics, et sans lui le formulaire de
+ * connexion est là, visible, et parfaitement inatteignable.
+ */
+async function dismissBanners() {
+  const names = /^(tout accepter|accepter tout|accepter|j'accepte|accept all|allow all|godkänn alla|acceptera|ok, tout accepter)$/i;
+  for (const frame of page.frames()) {
+    try {
+      const b = frame.getByRole("button", { name: names }).first();
+      if (await b.count().then((n) => n > 0)) {
+        await b.click({ timeout: 4_000 });
+        await page.waitForTimeout(600);
+        return;
+      }
+    } catch { /* un iframe peut disparaître pendant qu'on l'interroge */ }
+  }
+}
 
 boot().then(() => {
   const server = http.createServer(async (req, res) => {

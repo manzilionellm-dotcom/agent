@@ -14,7 +14,7 @@ import { xProfileTool } from "../tools/x.js";
 import { searchTools } from "../tools/search.js";
 import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
-import { browserTool } from "../tools/browser.js";
+import { browserTool, vaultListTool } from "../tools/browser.js";
 import { googleTools } from "../tools/google.js";
 import { getCustomMission, type CustomMissionRow, type Toolset } from "./custom.js";
 
@@ -44,7 +44,7 @@ export type MissionContext = { now: Date; memory: string; siteUrl: string; repo:
 const CORE_TOOLS = [memoryTool, rememberFact, recallFacts, taskTool];
 const SANDBOX_TOOLS = [bashTool, readFileTool, writeFileTool];
 const CLAUDE_WEB = () => (config().LLM_PROVIDER === "anthropic" ? [webSearchTool, webFetchTool] : []);
-const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, browserTool, xProfileTool];
+const WEB_TOOLS = [...CLAUDE_WEB(), ...searchTools(), scrapePageTool, browserTool, vaultListTool, xProfileTool];
 
 export const MISSIONS: Mission[] = [
   {
@@ -171,7 +171,7 @@ Critère de succès : tous les concurrents relevés ou marqués « injoignable �
     budgetUsd: 4,
     maxIterations: 50,
     mcpServers: ["github"],
-    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, auditTool, browserTool, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool],
+    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, auditTool, browserTool, vaultListTool, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool],
     task: ({ now, siteUrl, repo }) => `Date: ${now.toISOString()}. Site: ${siteUrl}. Dépôt: ${repo}.
 Mission AUDIT DE SITE hebdomadaire (technique, SEO, contenu, données structurées, performance, conversion).
 1. site_audit sur la page d'accueil, la page comparateur, 2 articles récents et 1 page profonde (mobile). Desktop sur l'accueil.

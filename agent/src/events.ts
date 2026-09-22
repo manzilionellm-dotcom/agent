@@ -22,6 +22,7 @@ export type EventKind =
   | "routine.started" | "routine.completed"
   | "approval.requested" | "approval.decided"
   | "memory.created" | "skill.created" | "skill.updated"
+  | "vault.stored" | "vault.forgotten"
   | "system.boot" | "system.alert";
 
 export type AgentEvent = {

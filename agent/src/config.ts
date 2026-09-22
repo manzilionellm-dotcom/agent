@@ -86,6 +86,13 @@ const Env = z.object({
   VERIFY_MISSIONS: z.coerce.boolean().default(true),
   /** Domaines interdits au navigateur (suffixes, séparés par des virgules), ex: "ma-banque.fr,paypal.com". */
   BROWSER_DENY_DOMAINS: z.string().default(""),
+  /**
+   * Clé maîtresse du coffre d'identifiants (voir vault.ts). Vide = coffre
+   * désactivé, l'agent ne peut se connecter nulle part de lui-même.
+   * Elle ne va PAS en base : c'est ce qui fait qu'une sauvegarde Postgres
+   * volée ne contient aucun mot de passe utilisable.
+   */
+  VAULT_KEY: z.string().min(16, "au moins 16 caractères — `openssl rand -base64 32`").optional(),
 
   // --- API HTTP locale (Jarvis, curl) --------------------------------------
   ORCHESTRATOR_TOKEN: z.string().optional(),

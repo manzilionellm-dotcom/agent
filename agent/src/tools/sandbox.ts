@@ -20,18 +20,40 @@ import { redactSecrets } from "../safety.js";
 const MAX_OUTPUT = 40_000;
 
 export type ExecResult = { code: number | null; stdout: string; stderr: string; timedOut: boolean };
-export type ExecOptions = { cwd?: string; timeoutMs?: number; env?: Record<string, string>; container?: string };
+export type ExecOptions = {
+  cwd?: string;
+  timeoutMs?: number;
+  env?: Record<string, string>;
+  container?: string;
+  /**
+   * Données envoyées sur l'entrée standard du processus.
+   *
+   * C'est le SEUL chemin acceptable pour un secret. Un argument de commande
+   * est lisible dans `ps` et dans /proc/<pid>/cmdline par tout ce qui tourne
+   * à côté — or ce qui tourne à côté, dans le sandbox, c'est du code écrit
+   * par un modèle. Une variable d'environnement est à peine mieux : elle
+   * reste dans /proc/<pid>/environ tant que le processus vit.
+   */
+  stdin?: string;
+};
 
 export async function sandboxExec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
   const cfg = config();
   const cwd = opts.cwd ?? cfg.SANDBOX_WORKDIR;
   const container = opts.container ?? cfg.SANDBOX_CONTAINER;
   const args = ["exec", "-w", cwd];
+  if (opts.stdin !== undefined) args.push("-i");
   for (const [k, v] of Object.entries(opts.env ?? {})) args.push("-e", `${k}=${v}`);
   args.push(container, "bash", "-lc", cmd);
 
   return new Promise((resolve) => {
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", args, { stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    if (opts.stdin !== undefined && child.stdin) {
+      // `error` sur stdin : si le conteneur est mort, écrire déclenche EPIPE,
+      // qui sans écouteur tue l'orchestrateur au lieu de rendre une erreur.
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(opts.stdin);
+    }
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -39,8 +61,8 @@ export async function sandboxExec(cmd: string, opts: ExecOptions = {}): Promise<
       timedOut = true;
       child.kill("SIGKILL");
     }, opts.timeoutMs ?? cfg.SANDBOX_TIMEOUT_MS);
-    child.stdout.on("data", (d) => (stdout = cap(stdout + d.toString())));
-    child.stderr.on("data", (d) => (stderr = cap(stderr + d.toString())));
+    child.stdout?.on("data", (d) => (stdout = cap(stdout + d.toString())));
+    child.stderr?.on("data", (d) => (stderr = cap(stderr + d.toString())));
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({ code, stdout, stderr, timedOut });

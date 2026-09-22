@@ -10,8 +10,25 @@ const fs = require("node:fs");
 
 const PORT = 9333;
 const [action, rawArgs] = process.argv.slice(2);
-if (!action) { console.error("usage: bctl <action> [json]"); process.exit(2); }
-const args = rawArgs ? JSON.parse(rawArgs) : {};
+if (!action) { console.error("usage: bctl <action> [json|-]"); process.exit(2); }
+
+/**
+ * `bctl <action> -` lit ses arguments sur l'entrée standard.
+ *
+ * Indispensable pour `login` : un mot de passe passé en argument serait
+ * lisible par `ps aux` depuis le sandbox, et le sandbox exécute du code
+ * proposé par un modèle. Sur stdin, il ne touche jamais le disque ni la
+ * table des processus.
+ */
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let b = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (d) => (b += d));
+    process.stdin.on("end", () => resolve(b));
+    process.stdin.on("error", reject);
+  });
+}
 
 function post(payload) {
   return new Promise((resolve, reject) => {
@@ -36,7 +53,14 @@ async function ensureDaemon() {
   throw new Error("le démon navigateur ne démarre pas (voir /work/browser-daemon.log)");
 }
 
-ensureDaemon()
-  .then(() => post({ action, args }))
-  .then((out) => { process.stdout.write(out); })
-  .catch((e) => { process.stdout.write(JSON.stringify({ ok: false, error: String(e.message || e) })); process.exit(1); });
+(async () => {
+  const args = rawArgs === "-" ? JSON.parse((await readStdin()) || "{}") : rawArgs ? JSON.parse(rawArgs) : {};
+  await ensureDaemon();
+  process.stdout.write(await post({ action, args }));
+})().catch((e) => {
+  // `e.message` seul : une erreur de JSON.parse recopie l'entrée dans son
+  // message, et cette entrée contient parfois un mot de passe.
+  const msg = action === "login" ? "échec de la connexion (détail masqué)" : String(e.message || e);
+  process.stdout.write(JSON.stringify({ ok: false, error: msg }));
+  process.exit(1);
+});

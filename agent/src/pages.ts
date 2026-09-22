@@ -32,6 +32,21 @@ a { color: inherit; text-decoration-color: var(--muted); text-underline-offset: 
 nav { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.25rem; font-size: .9rem; }
 nav a { margin-right: 1.25rem; color: var(--muted); }
 code { background: color-mix(in srgb, var(--fg) 8%, transparent); padding: .1em .35em; border-radius: 3px; font-size: .9em; }
+form { margin: 1rem 0 2rem; }
+label { display:block; margin: .85rem 0; font-size: .92rem; color: var(--muted); }
+input { display:block; width:100%; margin-top:.3rem; padding:.6rem .7rem; font-size:1rem; color:var(--fg);
+        background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+input:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
+button { padding:.6rem 1.1rem; font-size:.95rem; border-radius:6px; border:1px solid var(--line);
+         background:var(--accent); color:#fff; cursor:pointer; }
+button.danger { background:transparent; color:var(--muted); padding:.35rem .7rem; font-size:.85rem; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+table { width:100%; border-collapse:collapse; margin:.5rem 0 2rem; font-size:.93rem; }
+td { border-top:1px solid var(--line); padding:.7rem .4rem; vertical-align:top; }
+.muted { color:var(--muted); font-size:.85em; }
+.tag { font-size:.7rem; border:1px solid var(--line); border-radius:3px; padding:.05em .35em; color:var(--muted); }
+.notice { border-left:3px solid var(--accent); padding:.6rem .9rem; background:color-mix(in srgb, var(--fg) 5%, transparent); border-radius:0 4px 4px 0; }
+.notice.warn { border-left-color:#c60; }
 `;
 
 /**
@@ -138,6 +153,72 @@ et aucun humain ne les lit — à l'exception du propriétaire du compte lui-mê
 
 <p class="date">Contact : ${contact()}</p>`,
   );
+}
+
+/**
+ * Coffre d'identifiants — la page où l'opérateur saisit ses mots de passe.
+ *
+ * Elle existe pour une raison précise : un mot de passe ne se tape pas dans
+ * une conversation. Ni dans WhatsApp, ni dans un message à un agent, ni dans
+ * une commande shell qui finira dans un historique. Il se tape dans un champ
+ * de formulaire, comme dans n'importe quel gestionnaire de mots de passe.
+ * Cette page est ce champ.
+ *
+ * Elle n'affiche jamais un mot de passe enregistré, même à son propriétaire :
+ * une page qui peut réafficher un secret est une page dont la fuite le
+ * révèle. Pour changer une valeur, on la ressaisit.
+ */
+export function vaultPage(entries: { site: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null }[], notice = "", enabled = true): string {
+  const rows = entries.length
+    ? entries
+        .map(
+          (e) => `<tr><td><strong>${esc(e.site)}</strong>${e.has_totp ? ' <span class="tag">2FA</span>' : ""}<br><span class="muted">${esc(e.login)}</span></td>
+<td class="muted">${e.last_used_at ? esc(new Date(e.last_used_at).toLocaleDateString("fr-FR")) : "jamais"}<br>${e.uses} usage${e.uses > 1 ? "s" : ""}</td>
+<td><form method="post" onsubmit="return confirm('Supprimer ${esc(e.site)} ?')"><input type="hidden" name="op" value="delete"><input type="hidden" name="site" value="${esc(e.site)}"><button class="danger">Supprimer</button></form></td></tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="3" class="muted">Aucun identifiant enregistré.</td></tr>`;
+
+  return page(
+    "Coffre",
+    `<h1>Coffre d'identifiants</h1>
+<p class="sub">Les sites où l'agent peut se connecter tout seul, serveur allumé, PC éteint.</p>
+${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
+${enabled ? "" : `<p class="notice warn">VAULT_KEY n'est pas définie dans le .env : le coffre est en lecture seule. Génère-la avec <code>openssl rand -base64 32</code>, puis <code>bash deploy/set-env.sh --stdin</code>.</p>`}
+
+<h2>Ajouter ou remplacer</h2>
+<form method="post" autocomplete="off">
+<input type="hidden" name="op" value="put">
+<label>Site<input name="site" placeholder="linkedin.com" required ${enabled ? "" : "disabled"}></label>
+<label>Identifiant ou e-mail<input name="login" placeholder="lionel@exemple.com" required ${enabled ? "" : "disabled"}></label>
+<label>Mot de passe<input name="secret" type="password" required ${enabled ? "" : "disabled"}></label>
+<label>Clé de double authentification <span class="muted">(facultatif — la chaîne sous le QR code, pas le code à 6 chiffres)</span>
+<input name="totp" placeholder="JBSWY3DPEHPK3PXP" ${enabled ? "" : "disabled"}></label>
+<label>Page de connexion <span class="muted">(facultatif)</span><input name="url" placeholder="https://www.linkedin.com/login" ${enabled ? "" : "disabled"}></label>
+<label>Note <span class="muted">(facultatif)</span><input name="note" placeholder="compte perso" ${enabled ? "" : "disabled"}></label>
+<button ${enabled ? "" : "disabled"}>Enregistrer</button>
+</form>
+
+<h2>Enregistrés</h2>
+<table>${rows}</table>
+
+<h2>Ce qui est garanti</h2>
+<ul>
+<li>Le mot de passe est chiffré (AES-256-GCM) avec une clé qui vit dans le <code>.env</code>, pas dans la base. Une sauvegarde volée n'en livre aucun.</li>
+<li>Il n'est jamais montré au modèle, jamais écrit dans un journal, jamais passé en argument de commande. Il va du serveur au navigateur par l'entrée standard.</li>
+<li>Il n'est jamais réaffiché, ici non plus. Pour le changer, ressaisis-le.</li>
+<li>Les sites listés dans <code>BROWSER_DENY_DOMAINS</code> restent interdits même s'ils figurent ici.</li>
+</ul>
+
+<h2>Ce qui ne marchera pas</h2>
+<p>Google, Microsoft et Meta détectent la saisie automatisée d'un mot de passe et bloquent la connexion
+(« Ce navigateur ou cette application n'est peut-être pas sécurisé »). Pour Gmail et l'Agenda, l'agent passe
+par OAuth, ce qui est à la fois autorisé et plus durable. Le coffre sert à tout le reste.</p>`,
+  );
+}
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 export function termsPage(): string {

@@ -186,6 +186,22 @@ const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS events_agent_ts ON events (agent_id, ts DESC)`,
   `CREATE INDEX IF NOT EXISTS events_kind_ts ON events (kind, ts DESC)`,
 
+  // Coffre d'identifiants (voir vault.ts). Le mot de passe est chiffré avec
+  // une clé qui vit dans le .env, pas ici : une sauvegarde de cette base,
+  // seule, ne livre aucun secret.
+  `CREATE TABLE IF NOT EXISTS credentials (
+     site         TEXT PRIMARY KEY,
+     login        TEXT NOT NULL,
+     secret       TEXT NOT NULL,
+     totp         TEXT,
+     url          TEXT NOT NULL DEFAULT '',
+     note         TEXT NOT NULL DEFAULT '',
+     uses         INTEGER NOT NULL DEFAULT 0,
+     last_used_at TIMESTAMPTZ,
+     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,
