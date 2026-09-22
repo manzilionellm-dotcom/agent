@@ -67,29 +67,39 @@ if [ "$SERVICE" = tunnel-quick ]; then
   done
   [ -n "$PUBLIC" ] || die "adresse introuvable — voir: ${COMPOSE[*]} logs $SERVICE"
 else
-  # Un tunnel nommé reçoit sa configuration de Cloudflare — et la journalise
-  # en arrivant. Le nom d'hôte est donc lisible ici, plutôt que d'obliger à
-  # aller le recopier d'un tableau de bord : une adresse saisie à la main est
-  # une adresse qu'on peut taper de travers, et l'erreur ne se voit qu'au
-  # moment où un message n'arrive pas.
+  # C'est le TUNNEL qui fait autorité, pas le .env. Cloudflare lui envoie sa
+  # configuration au démarrage et cloudflared la journalise : l'adresse lue
+  # là est celle qui répond réellement. Une PUBLIC_URL saisie à la main est
+  # une hypothèse — et une hypothèse fausse ne se voit qu'au moment où un
+  # message n'arrive pas. Deux fois cette nuit, c'était un exemple de la
+  # documentation recopié tel quel.
   PUBLIC=$(val PUBLIC_URL)
-  if [ -z "$PUBLIC" ]; then
-    say "PUBLIC_URL absente : lecture du nom d'hôte dans la configuration du tunnel"
-    HOST=""
-    for _ in $(seq 1 15); do
-      HOST=$("${COMPOSE[@]}" logs --no-color "$SERVICE" 2>/dev/null \
-        | tr -d '\\' | grep -oE '"hostname":"[^"]+"' | cut -d'"' -f4 | grep -v '^$' | tail -1 || true)
-      [ -n "$HOST" ] && break
-      sleep 2
-    done
-    [ -n "$HOST" ] || die "nom d'hôte introuvable dans les journaux du tunnel.
-  Lis-le sur dash.cloudflare.com → Zero Trust → Networks → Tunnels → ton
-  tunnel → onglet « Public Hostname », puis :
+  say "lecture du nom d'hôte dans la configuration reçue par le tunnel"
+  HOST=""
+  for _ in $(seq 1 15); do
+    HOST=$("${COMPOSE[@]}" logs --no-color "$SERVICE" 2>/dev/null \
+      | tr -d '\\' | grep -oE '"hostname":"[^"]+"' | cut -d'"' -f4 | grep -v '^$' | tail -1 || true)
+    [ -n "$HOST" ] && break
+    sleep 2
+  done
+
+  if [ -n "$HOST" ]; then
+    if [ "$PUBLIC" != "https://$HOST" ]; then
+      [ -n "$PUBLIC" ] && say "le .env dit « $PUBLIC », le tunnel sert « $HOST » — on garde celle du tunnel"
+      PUBLIC="https://$HOST"
+      bash "$DIR/deploy/set-env.sh" "PUBLIC_URL=$PUBLIC" >/dev/null
+      say "PUBLIC_URL corrigée : $PUBLIC"
+    else
+      say "adresse confirmée : $PUBLIC"
+    fi
+  elif [ -z "$PUBLIC" ]; then
+    die "aucun nom d'hôte dans les journaux du tunnel, et PUBLIC_URL est vide.
+  Lis l'adresse sur dash.cloudflare.com → Zero Trust → Networks → Tunnels →
+  ton tunnel → onglet « Public Hostname », puis :
       bash deploy/set-env.sh PUBLIC_URL=https://CE-QUE-TU-AS-LU
-  (l'adresse nue, sans chevrons ni guillemets)"
-    PUBLIC="https://$HOST"
-    say "trouvé : $PUBLIC — enregistré dans .env"
-    bash "$DIR/deploy/set-env.sh" "PUBLIC_URL=$PUBLIC" >/dev/null
+  (l'adresse nue : pas de chevrons, pas de guillemets, pas mon exemple)"
+  else
+    say "journaux du tunnel muets — on s'en tient à PUBLIC_URL du .env ($PUBLIC)"
   fi
 fi
 
