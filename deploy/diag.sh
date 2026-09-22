@@ -76,6 +76,16 @@ if "${COMPOSE[@]}" ps --format '{{.Service}}' 2>/dev/null | grep -qx desktop; th
   [ "$ECR" = 200 ] && printf '  écran (noVNC)    \033[1;32mservi\033[0m\n' || printf '  écran (noVNC)    \033[1;31mHTTP %s\033[0m\n' "${ECR:-aucune réponse}"
   JOINT=$("${COMPOSE[@]}" exec -T orchestrator curl -fsS --max-time 3 -o /dev/null -w '%{http_code}' http://desktop:6080/ 2>/dev/null)
   [ "$JOINT" = 200 ] && printf '  vu par /screen   \033[1;32moui\033[0m\n' || printf '  vu par /screen   \033[1;31mnon (HTTP %s)\033[0m\n' "${JOINT:-aucune}"
+  # Par l'IP, jamais par le nom : Chrome rejette un en-tête Host qui n'est ni
+  # localhost ni une adresse. Interroger « desktop » annoncerait une panne
+  # là où tout marche.
+  DIP=$("${COMPOSE[@]}" exec -T sandbox getent hosts desktop 2>/dev/null | awk '{print $1}' | head -1 | tr -d '\r')
+  if [ -n "$DIP" ]; then
+    PIL=$("${COMPOSE[@]}" exec -T sandbox curl -fsS --max-time 3 "http://$DIP:9222/json/version" 2>/dev/null | head -c 120)
+    [ -n "$PIL" ] && printf '  piloté par l agent \033[1;32moui\033[0m (%s)\n' "$DIP" || printf '  piloté par l agent \033[1;31mnon\033[0m (%s ne répond pas sur 9222)\n' "$DIP"
+  else
+    printf '  piloté par l agent \033[1;31mnon\033[0m — le sandbox ne résout pas « desktop »\n'
+  fi
 else
   printf '  conteneur desktop absent — lance : bash deploy/desktop-up.sh\n'
 fi
