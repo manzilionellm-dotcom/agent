@@ -15,6 +15,32 @@ set -uo pipefail
 
 log() { printf '[desktop] %s\n' "$*"; }
 
+# --- Descente de privilèges -------------------------------------------------
+#
+# Le conteneur démarre en root le temps de corriger le propriétaire du profil,
+# puis relance ce script sous un compte sans droits. Il ne travaille donc
+# jamais en root, et on ne dépend pas de l'état d'un volume Docker existant.
+#
+# Pourquoi pas simplement `USER pwuser` dans l'image : un volume nommé créé
+# avant ce changement appartient à root, et un conteneur non root ne peut
+# alors rien y écrire. Chromium échoue sur `/profile/SingletonLock:
+# Permission denied` et redémarre en boucle. Corriger ici marche quel que
+# soit l'état du volume, y compris celui laissé par une version précédente.
+USER_NAME=pwuser
+if [ "$(id -u)" = 0 ]; then
+  mkdir -p "$PROFILE"
+  if [ "$(stat -c %u "$PROFILE" 2>/dev/null)" != "$(id -u "$USER_NAME" 2>/dev/null)" ]; then
+    log "profil appartenant à un autre compte — correction en cours"
+    chown -R "$USER_NAME:$USER_NAME" "$PROFILE" || log "chown partiel : certains fichiers résistent"
+  fi
+  export HOME="/home/$USER_NAME"
+  if command -v setpriv >/dev/null 2>&1; then
+    exec setpriv --reuid="$USER_NAME" --regid="$USER_NAME" --init-groups "$0" "$@"
+  fi
+  exec su "$USER_NAME" -s /bin/bash -c "exec $0"
+fi
+log "démarrage sous $(id -un)"
+
 # --- Écran ------------------------------------------------------------------
 rm -f /tmp/.X99-lock
 Xvfb :99 -screen 0 "$SCREEN" -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &

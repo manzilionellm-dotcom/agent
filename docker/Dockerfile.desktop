@@ -23,11 +23,13 @@ COPY docker/desktop/start.sh /opt/start.sh
 # `pwuser` vient de l'image Playwright. Le profil lui appartient dès l'image :
 # un volume nommé neuf hérite du contenu ET du propriétaire du répertoire
 # qu'il recouvre, donc les sessions s'écrivent sans droits root.
+# Pas de `USER pwuser` ici : le conteneur démarre en root juste le temps de
+# rendre le profil accessible au compte de service, puis start.sh descend de
+# lui-même. Figer l'utilisateur dans l'image rendrait illisible tout volume
+# créé auparavant.
 RUN chmod +x /opt/start.sh \
  && mkdir -p /profile /home/pwuser/.vnc \
  && chown -R pwuser:pwuser /profile /home/pwuser
-
-USER pwuser
 
 EXPOSE 6080 9222
 CMD ["/opt/start.sh"]
