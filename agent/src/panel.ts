@@ -198,6 +198,8 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
+${st.depense.jour >= st.depense.plafond ? `<p class="notice bad">Plafond du jour atteint (${st.depense.jour.toFixed(2)} $ sur ${st.depense.plafond} $) : l'agent refuse de lancer une mission jusqu'à minuit. Relève-le en bas de page, ou laisse-le couper si c'est voulu.</p>` : ""}
+${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé aujourd'hui » vient du compteur global, qui existait avant ce panneau. Le détail par service, lui, ne compte que depuis l'installation du panneau : c'est pour ça que les deux chiffres ne collent pas encore. Ils se rejoindront d'ici 24 h.</p>` : ""}
 
 <div class="tuiles">
   <div class="t"><b>${st.depense.jour.toFixed(2)} $</b><span>dépensé aujourd'hui · plafond ${st.depense.plafond} $</span>
