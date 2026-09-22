@@ -83,6 +83,25 @@ else
                 || echo "    ATTENTION : « desktop » résout en $IP mais ne répond pas sur 9223"
 fi
 
+# Le PROCESSUS a-t-il la bonne adresse, ou seulement le fichier ?
+#
+# Un conteneur charge son env_file à sa création. Écrire dans .env sans le
+# recréer laisse un orchestrateur qui vise encore l'ancienne adresse, et le
+# bot répond « CDP timeout sur 172.17.0.1:9222 » alors que le .env dit
+# « desktop:9223 » depuis dix minutes. Vérifier le fichier ne prouve rien —
+# c'est ce que voit le processus qui compte.
+VU=$("${COMPOSE[@]}" exec -T orchestrator printenv BROWSER_CDP_URL 2>/dev/null | tr -d '\r')
+if [ "$VU" = "http://desktop:9223" ]; then
+  echo "    l'orchestrateur vise bien le navigateur du serveur"
+else
+  echo "    correction : l'orchestrateur voyait « ${VU:-rien} » — on le recrée"
+  "${COMPOSE[@]}" up -d --force-recreate orchestrator >/dev/null
+  for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 1; done
+  VU=$("${COMPOSE[@]}" exec -T orchestrator printenv BROWSER_CDP_URL 2>/dev/null | tr -d '\r')
+  [ "$VU" = "http://desktop:9223" ] && echo "    corrigé : $VU" \
+                                    || echo "    ATTENTION : il voit toujours « ${VU:-rien} »"
+fi
+
 # La route existe-t-elle vraiment dans le binaire qui tourne ? Un faux billet
 # doit recevoir « lien expiré », PAS « Bearer requis ». La seconde réponse
 # signifie que l'image est plus ancienne que le code.
