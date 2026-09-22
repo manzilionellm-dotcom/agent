@@ -127,6 +127,12 @@ else
   skip "Surveillance du webhook" "demande root (minuteur systemd) — plus tard : ssh root@<serveur> 'bash $DIR/deploy/whatsapp-watch-install.sh'"
 fi
 
+# 5b. Adresse publique ---------------------------------------------------------
+# Elle conditionne les liens du coffre, de l'écran, et la demande d'aide de
+# l'agent. whatsapp-up.sh vient normalement de l'écrire ; ce filet la retrouve
+# quand ses journaux sont muets, en lisant ce que Meta a enregistré.
+step "Adresse publique" asowner "bash deploy/public-url.sh" || true
+
 # 6. Lien vers le coffre -----------------------------------------------------
 # Généré en dernier : il ne vaut que dix minutes et une seule ouverture, donc
 # l'émettre avant vingt minutes de reconstruction reviendrait à l'offrir mort.
@@ -156,6 +162,10 @@ CE QUI TOURNE MAINTENANT
                  Temu, Amazon · annuaires Allabolag, Hitta, Eniro, Maps
                  · emploi Platsbanken, Indeed, LinkedIn.
                  Essaie : « compare le prix de X sur blocket et sur 1688 ».
+
+TABLEAU DE BORD — agents, tâches, journal, dépense, en une page
+
+  bash deploy/board-link.sh     (lien à usage unique, s'ouvre sur ton téléphone)
 
 TON COFFRE D'IDENTIFIANTS
 ${LIEN:-  (lien indisponible — relance : bash deploy/vault-link.sh)}

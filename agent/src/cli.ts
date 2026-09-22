@@ -31,9 +31,14 @@ if (!name) {
       // Lien à usage unique vers la page du coffre. Le jeton de l'API ne
       // circule plus dans une URL : celui-ci meurt à la première ouverture,
       // donc le recopier quelque part ne coûte rien.
+      // `vault-link [page]` : coffre par défaut, mais la même porte sert
+      // l'écran du navigateur et le tableau de bord. Un billet par page,
+      // puisqu'un billet meurt à l'ouverture.
+      const page = (rest[0] ?? "vault").replace(/^\//, "");
+      if (!["vault", "screen", "board"].includes(page)) throw new Error(`page inconnue : ${page} (vault | screen | board)`);
       const t = await createVaultTicket(10);
       const base = config().PUBLIC_URL ?? "http://127.0.0.1:8787";
-      console.log(`\n  ${base}/vault?t=${t.id}\n`);
+      console.log(`\n  ${base}/${page}?t=${t.id}\n`);
       console.log(`  Valable jusqu'à ${t.expiresAt.toLocaleTimeString("fr-FR")}, une seule ouverture.`);
       if (!config().PUBLIC_URL) console.log(`  (PUBLIC_URL absente : passe par « ssh -L 8787:127.0.0.1:8787 manzi@… »)`);
     } else if (name === "report") {

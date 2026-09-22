@@ -58,6 +58,21 @@ export function emitEvent(e: AgentEvent): void {
 
 export type TimelineRow = { id: number; kind: string; level: string; message: string; data: Record<string, unknown>; ts: string; task_id: number | null };
 
+export type EventRow = TimelineRow & { agent_id: string | null };
+
+/**
+ * Les derniers événements, tous agents confondus — et ceux qui n'en ont pas
+ * (démarrage, alertes). `timeline` répond pour UN agent ; le tableau de bord,
+ * lui, montre ce qui se passe, sans qu'on ait à deviner d'abord chez qui.
+ */
+export async function recentEvents(limit = 60): Promise<EventRow[]> {
+  const r = await db().query<EventRow>(
+    `SELECT id, kind, level, message, data, ts, task_id, agent_id FROM events ORDER BY ts DESC LIMIT $1`,
+    [Math.min(limit, 500)],
+  );
+  return r.rows;
+}
+
 /** La timeline d'un agent : ce que l'opérateur lit pour savoir ce que fait son agent. */
 export async function timeline(agentId: string, limit = 50): Promise<TimelineRow[]> {
   const r = await db().query<TimelineRow>(

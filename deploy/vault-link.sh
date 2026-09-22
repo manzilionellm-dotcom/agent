@@ -23,7 +23,7 @@ COMPOSE=(docker compose -f docker-compose.yml)
 PUBLIC=$(grep -E '^PUBLIC_URL=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')
 
 if [ -n "$PUBLIC" ]; then
-  "${COMPOSE[@]}" exec -T -e "PUBLIC_URL=$PUBLIC" orchestrator node dist/cli.js vault-link
+  "${COMPOSE[@]}" exec -T -e "PUBLIC_URL=$PUBLIC" orchestrator node dist/cli.js vault-link "${1:-vault}"
 else
-  "${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link
+  "${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link "${1:-vault}"
 fi

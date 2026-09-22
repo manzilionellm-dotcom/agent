@@ -22,6 +22,7 @@ import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
 import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
 import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
+import { boardJson, boardPage } from "./board.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -80,23 +81,28 @@ function vaultCookieOk(req: IncomingMessage): boolean {
  * cookie. Le billet arrive par WhatsApp quand l'agent demande un coup de
  * main, ou se génère à la main avec `deploy/vault-link.sh`.
  */
-async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: URL, destination: string): Promise<void> {
   const token = config().ORCHESTRATOR_TOKEN;
-  const ticket = url.searchParams.get("t");
-  if (ticket) {
-    if (!token) return void json(res, 503, { error: "ORCHESTRATOR_TOKEN absent" });
-    if (!(await consumeVaultTicket(ticket).catch(() => false))) {
-      logger.warn({ ip: req.socket.remoteAddress }, "billet d'écran invalide ou déjà utilisé");
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-      return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Demande-en un autre au bot, ou lance <code>bash deploy/vault-link.sh</code>.");
-    }
-    const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
-    res.writeHead(302, {
-      location: SCREEN_ENTRY,
-      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
-    });
-    return void res.end();
+  const ticket = url.searchParams.get("t") ?? "";
+  if (!token) return void json(res, 503, { error: "ORCHESTRATOR_TOKEN absent" });
+  if (!(await consumeVaultTicket(ticket).catch(() => false))) {
+    logger.warn({ ip: req.socket.remoteAddress, destination }, "billet invalide ou déjà utilisé");
+    res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Demande-en un autre au bot, ou lance <code>bash deploy/vault-link.sh</code>.");
   }
+  // `Secure` seulement derrière HTTPS : posé toujours, le cookie serait
+  // rejeté lors d'un test local sur 127.0.0.1, et la page redemanderait un
+  // billet en boucle sans jamais dire pourquoi.
+  const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
+  res.writeHead(302, {
+    location: destination,
+    "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
+  });
+  res.end();
+}
+
+async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  if (url.searchParams.get("t")) return ticketToCookie(req, res, url, SCREEN_ENTRY);
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress, path: url.pathname }, "accès refusé à l'écran");
     res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
@@ -247,6 +253,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // cookie, et la redirection le retire immédiatement de la barre d'adresse.
   if (url.pathname === "/vault") return vaultRoute(req, res, url);
   if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return screenRoute(req, res, url);
+
+  // Tableau de bord. Même porte que le coffre et l'écran : un billet à usage
+  // unique échangé contre un cookie. Il n'affiche que ce que l'API rendait
+  // déjà — la nouveauté est qu'on peut le regarder depuis un téléphone.
+  if (url.pathname === "/board" || url.pathname === "/board.json") {
+    if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/board");
+    if (!vaultCookieOk(req)) {
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+      return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien : <code>bash deploy/board-link.sh</code>");
+    }
+    if (url.pathname === "/board.json") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      return void res.end(await boardJson());
+    }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    return void res.end(boardPage());
+  }
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     const spent = await spentToday().catch(() => -1);

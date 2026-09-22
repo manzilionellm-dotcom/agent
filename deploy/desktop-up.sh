@@ -93,8 +93,12 @@ case "$REP" in
   *) echo "    route /screen en place" ;;
 esac
 
+# Sans adresse publique, le lien sort en 127.0.0.1 et l'agent ne peut rien
+# demander depuis le téléphone de l'opérateur. On la rétablit d'abord.
+bash deploy/public-url.sh >/dev/null 2>&1 || true
+
 say "génération d'un lien pour ouvrir l'écran"
-LIEN=$("${COMPOSE[@]}" exec -T orchestrator node dist/cli.js vault-link 2>&1 | sed 's|/vault?t=|/screen?t=|')
+LIEN=$(bash deploy/vault-link.sh screen 2>&1)
 
 cat <<FIN
 
