@@ -236,6 +236,78 @@ export const gmailSendTool = betaZodTool({
   },
 });
 
+/**
+ * Mettre des messages à la CORBEILLE — et pas les détruire.
+ *
+ * Cet outil manquait, et son absence se voyait de la pire façon : à « vide
+ * mes non-lus », l'agent répondait « non, je ne le fais pas », alors que la
+ * vraie raison était qu'il n'avait pas de quoi. Un manque déguisé en refus
+ * fait perdre deux fois — le travail n'est pas fait, et on croit que c'est
+ * délibéré.
+ *
+ * La corbeille plutôt que `delete` : Gmail garde 30 jours, donc une erreur de
+ * requête se rattrape en un clic. `delete` est définitif et ne laisse aucune
+ * trace — le mauvais outil pour une action pilotée par une phrase dictée au
+ * téléphone, parfois mal transcrite.
+ *
+ * Un plafond de 200 par appel, et la requête est rendue dans la réponse :
+ * c'est ce qui permet de relire ce qui a été visé quand le résultat surprend.
+ */
+export const gmailTrashTool = betaZodTool({
+  name: "gmail_trash",
+  description:
+    "Met des e-mails à la corbeille Gmail (récupérables 30 jours, rien n'est détruit). Sert au ménage : publicités, non-lus, un expéditeur précis. Donne SOIT une requête Gmail (query), SOIT une liste d'identifiants (ids) obtenus par gmail_list. Avec `apercu: true` tu ne supprimes rien : tu obtiens la liste de ce qui serait mis à la corbeille — à faire d'abord quand la requête vise large.",
+  inputSchema: z.object({
+    query: z.string().optional().describe("Requête Gmail, ex: 'is:unread category:promotions', 'from:news@x.com', 'older_than:1y is:unread'."),
+    ids: z.array(z.string()).max(200).optional().describe("Identifiants de messages à corbeiller, si tu les as déjà."),
+    max: z.number().int().min(1).max(200).default(50).describe("Plafond par appel. Rappelle l'outil pour continuer."),
+    apercu: z.boolean().default(false).describe("true = ne supprime rien, montre seulement ce qui serait visé."),
+  }),
+  run: async (i) => {
+    let ids = i.ids ?? [];
+    if (!ids.length) {
+      if (!i.query) return "Error: donne une requête (query) ou une liste d'identifiants (ids).";
+      const r = await api<{ messages?: Array<{ id: string }>; resultSizeEstimate?: number }>(
+        `${GMAIL}/messages?q=${encodeURIComponent(i.query)}&maxResults=${i.max}`,
+      );
+      ids = (r.messages ?? []).map((m) => m.id);
+      if (!ids.length) return `aucun message ne correspond à « ${i.query} » — rien à mettre à la corbeille.`;
+    }
+
+    if (i.apercu) {
+      // On rend de quoi JUGER : un identifiant ne dit rien, un expéditeur et
+      // un objet disent tout. Dix suffisent pour voir si la requête vise juste.
+      const apercus = await Promise.all(
+        ids.slice(0, 10).map(async (id) => {
+          const m = await api<{ payload?: { headers?: Array<{ name: string; value: string }> } }>(
+            `${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
+          ).catch(() => undefined);
+          const h = (n: string) => m?.payload?.headers?.find((x) => x.name.toLowerCase() === n)?.value ?? "?";
+          return `  ${h("from")} — ${h("subject")}`;
+        }),
+      );
+      return `${ids.length} message(s) visés par « ${i.query ?? "la liste fournie"} ». Les 10 premiers :\n${apercus.join("\n")}\n\nRappelle gmail_trash avec apercu:false pour les mettre à la corbeille.`;
+    }
+
+    // `batchModify` ferait le tour en un appel, mais un seul message refusé y
+    // fait échouer le lot entier sans dire lequel. Un par un : on sait
+    // exactement combien sont partis, et un échec isolé ne bloque pas le reste.
+    let ok = 0;
+    const echecs: string[] = [];
+    for (const id of ids) {
+      try {
+        await api(`${GMAIL}/messages/${id}/trash`, { method: "POST" });
+        ok++;
+      } catch (e) {
+        echecs.push(`${id}: ${String(e).slice(0, 80)}`);
+      }
+    }
+    logger.info({ ok, echecs: echecs.length, query: i.query }, "messages mis à la corbeille");
+    const fin = echecs.length ? ` ${echecs.length} refusé(s) : ${echecs.slice(0, 3).join(" · ")}` : "";
+    return `${ok} message(s) à la corbeille${i.query ? ` pour « ${i.query} »` : ""}. Récupérables 30 jours dans Gmail.${fin}${ids.length >= i.max ? ` Le plafond de ${i.max} est atteint : rappelle-moi pour la suite.` : ""}`;
+  },
+});
+
 /* --- agenda --------------------------------------------------------------- */
 
 export const calendarTool = betaZodTool({
@@ -263,5 +335,5 @@ export const calendarTool = betaZodTool({
 
 /** Les outils Google, ou rien du tout s'ils ne sont pas configurés — un outil qui échoue à chaque appel coûte des tours pour rien. */
 export function googleTools() {
-  return googleConfigured() ? [gmailListTool, gmailReadTool, gmailThreadTool, gmailDraftTool, gmailSendTool, calendarTool] : [];
+  return googleConfigured() ? [gmailListTool, gmailReadTool, gmailThreadTool, gmailDraftTool, gmailSendTool, gmailTrashTool, calendarTool] : [];
 }
