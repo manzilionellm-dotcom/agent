@@ -25,6 +25,7 @@ const PORT = 9333;
 const IDLE_MS = 15 * 60_000;
 const PROFILE = "/work/browser-profile";
 const SHOTS = "/work/browser-shots";
+const DOWNLOADS = "/work/downloads";
 
 let browser, context, page, idleTimer;
 
@@ -68,6 +69,7 @@ async function boot() {
     context = await chromium.launchPersistentContext(PROFILE, {
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+      acceptDownloads: true,
       viewport: { width: 1280, height: 900 },
       locale: "fr-FR",
       userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -88,6 +90,7 @@ async function boot() {
     }
   }
   fs.mkdirSync(SHOTS, { recursive: true });
+  fs.mkdirSync(DOWNLOADS, { recursive: true });
   console.log(`navigateur prêt en mode ${mode}${cdpError ? " (CDP indisponible)" : ""}`);
 }
 
@@ -102,21 +105,149 @@ async function text(maxChars) {
   return body.replace(/\n{3,}/g, "\n\n").slice(0, maxChars || 20_000);
 }
 
-function locator(a) {
-  if (a.selector) return page.locator(a.selector).first();
-  if (a.text) return page.getByText(a.text, { exact: !!a.exact }).first();
-  if (a.role) return page.getByRole(a.role, a.name ? { name: a.name } : {}).first();
-  if (a.label) return page.getByLabel(a.label).first();
-  if (a.placeholder) return page.getByPlaceholder(a.placeholder).first();
+/** Construit un localisateur dans un contexte donné (la page, ou une de ses iframes). */
+function locatorIn(scope, a) {
+  if (a.selector) return scope.locator(a.selector).first();
+  if (a.text) return scope.getByText(a.text, { exact: !!a.exact }).first();
+  if (a.role) return scope.getByRole(a.role, a.name ? { name: a.name } : {}).first();
+  if (a.label) return scope.getByLabel(a.label).first();
+  if (a.placeholder) return scope.getByPlaceholder(a.placeholder).first();
   throw new Error("cible requise : selector | text | role(+name) | label | placeholder");
+}
+
+/**
+ * Trouve la cible dans la page OU dans une de ses iframes.
+ *
+ * Sans ça, un formulaire de paiement, un lecteur vidéo, un widget de chat ou
+ * un bandeau de consentement sont invisibles : ils vivent dans une iframe, et
+ * l'outil répondait « élément introuvable » devant un bouton parfaitement
+ * visible à l'écran. C'est la panne la plus déroutante d'un agent navigateur,
+ * parce que la capture d'écran, elle, montre le bouton.
+ */
+async function locator(a) {
+  const direct = locatorIn(page, a);
+  if (await direct.count().then((n) => n > 0).catch(() => false)) return direct;
+  for (const f of page.frames()) {
+    if (f === page.mainFrame()) continue;
+    try {
+      const l = locatorIn(f, a);
+      if (await l.count().then((n) => n > 0)) return l;
+    } catch { /* une iframe peut disparaître pendant qu'on l'interroge */ }
+  }
+  return direct; // laisse Playwright produire son message d'erreur habituel
+}
+
+/**
+ * Exécute une action susceptible d'ouvrir un onglet, et suit l'onglet ouvert.
+ *
+ * Beaucoup de sites ouvrent le détail d'une annonce, un PDF ou un paiement
+ * dans un nouvel onglet. Sans ce suivi, l'agent cliquait, ne voyait rien
+ * changer, et concluait que le clic n'avait pas marché.
+ */
+async function followPopup(fn) {
+  const before = context.pages().length;
+  const popup = context.waitForEvent("page", { timeout: 4_000 }).catch(() => null);
+  await fn();
+  const p = await popup;
+  if (p && context.pages().length > before) {
+    await p.waitForLoadState("domcontentloaded").catch(() => undefined);
+    page = p;
+    return true;
+  }
+  return false;
 }
 
 const handlers = {
   async goto(a) { const r = await page.goto(a.url, { waitUntil: a.wait || "domcontentloaded", timeout: 45_000 }); await page.waitForTimeout(a.settle_ms ?? 800); return { status: r ? r.status() : null, url: page.url(), title: await page.title(), text: await text(a.max_chars ?? 6_000) }; },
   async text(a) { return { url: page.url(), title: await page.title(), text: await text(a.max_chars) }; },
   async html(a) { const h = await (a.selector ? page.locator(a.selector).first().innerHTML() : page.content()); return { html: h.slice(0, a.max_chars || 20_000) }; },
-  async click(a) { await locator(a).click({ timeout: 10_000 }); await page.waitForTimeout(a.settle_ms ?? 800); return { url: page.url(), title: await page.title(), text: await text(3_000) }; },
-  async type(a) { const l = locator(a); await l.click({ timeout: 10_000 }); if (a.clear !== false) await l.fill(""); await l.type(a.value, { delay: 20 }); if (a.enter) await page.keyboard.press("Enter"); await page.waitForTimeout(a.settle_ms ?? 600); return { ok: true, url: page.url() }; },
+  async click(a) {
+    const l = await locator(a);
+    const suivi = await followPopup(() => l.click({ timeout: 10_000 }));
+    await page.waitForTimeout(a.settle_ms ?? 800);
+    return { url: page.url(), title: await page.title(), nouvel_onglet: suivi, text: await text(3_000) };
+  },
+  async type(a) { const l = await locator(a); await l.click({ timeout: 10_000 }); if (a.clear !== false) await l.fill(""); await l.type(a.value, { delay: 20 }); if (a.enter) await page.keyboard.press("Enter"); await page.waitForTimeout(a.settle_ms ?? 600); return { ok: true, url: page.url() }; },
+
+  /**
+   * Liste déroulante. `type` ne marche pas sur un <select> : Playwright
+   * refuse d'y écrire, et l'agent tournait en rond sur « choisis une taille »,
+   * « choisis un pays », « choisis une catégorie » — c'est-à-dire sur la
+   * moitié des formulaires qui comptent.
+   */
+  async select(a) {
+    const l = await locator(a);
+    const opts = await l.locator("option").allTextContents().catch(() => []);
+    const par = a.value !== undefined ? { value: a.value } : a.name !== undefined ? { label: a.name } : { index: a.index ?? 0 };
+    await l.selectOption(par, { timeout: 10_000 });
+    await page.waitForTimeout(a.settle_ms ?? 600);
+    return { ok: true, choisi: a.value ?? a.name ?? a.index, options_disponibles: opts.slice(0, 40), url: page.url() };
+  },
+
+  /** Case à cocher ou interrupteur. `click` fonctionne parfois ; `check` connaît l'état voulu et est donc idempotent. */
+  async check(a) {
+    const l = await locator(a);
+    if (a.value === "false" || a.uncheck) await l.uncheck({ timeout: 10_000 });
+    else await l.check({ timeout: 10_000 });
+    await page.waitForTimeout(a.settle_ms ?? 400);
+    return { ok: true, coche: await l.isChecked().catch(() => null), url: page.url() };
+  },
+
+  /** Envoi de fichier. Le fichier doit déjà être dans /work — écrit par le sandbox, ou téléchargé plus tôt. */
+  async upload(a) {
+    const files = (Array.isArray(a.files) ? a.files : [a.file]).filter(Boolean);
+    if (!files.length) throw new Error("file (ou files) requis : chemin absolu sous /work");
+    for (const f of files) {
+      if (!f.startsWith("/work/")) throw new Error(`chemin hors de /work : ${f}`);
+      if (!fs.existsSync(f)) throw new Error(`fichier introuvable : ${f}`);
+    }
+    const l = await locator(a);
+    await l.setInputFiles(files, { timeout: 15_000 });
+    await page.waitForTimeout(a.settle_ms ?? 800);
+    return { ok: true, envoyes: files, url: page.url() };
+  },
+
+  /**
+   * Téléchargement : clique, attend le fichier, le range dans /work/downloads.
+   *
+   * De là, le sandbox peut le lire et la chaîne de lecture de pièces jointes
+   * peut en extraire le texte. Sans ça, une facture en PDF derrière un bouton
+   * « Télécharger » était hors de portée — et c'est précisément le genre de
+   * document qu'on veut récupérer.
+   */
+  async download(a) {
+    fs.mkdirSync(DOWNLOADS, { recursive: true });
+    const wait = page.waitForEvent("download", { timeout: a.timeout_ms ?? 60_000 });
+    if (a.url) await page.goto(a.url).catch(() => undefined);
+    else await (await locator(a)).click({ timeout: 10_000 });
+    const dl = await wait;
+    const nom = (dl.suggestedFilename() || `fichier-${Date.now()}`).replace(/[^\w.\-]/g, "_");
+    const dest = `${DOWNLOADS}/${Date.now()}-${nom}`;
+    await dl.saveAs(dest);
+    return { ok: true, fichier: dest, nom_propose: dl.suggestedFilename(), octets: fs.statSync(dest).size, url: page.url() };
+  },
+
+  /** Ce que la page contient comme formulaires : les champs, leur nom, leur type. Évite de deviner un sélecteur. */
+  async form(a) {
+    const scope = a.selector ? page.locator(a.selector).first() : page.locator("body");
+    return {
+      url: page.url(),
+      champs: await scope
+        .locator("input, select, textarea, button[type=submit]")
+        .evaluateAll((els) =>
+          els.slice(0, 60).map((e) => ({
+            balise: e.tagName.toLowerCase(),
+            type: e.getAttribute("type") || "",
+            nom: e.getAttribute("name") || e.id || "",
+            etiquette: (e.labels && e.labels[0] && e.labels[0].innerText.trim().slice(0, 60)) || e.getAttribute("aria-label") || e.getAttribute("placeholder") || "",
+            options: e.tagName === "SELECT" ? Array.from(e.options).slice(0, 30).map((o) => o.value || o.text) : undefined,
+            requis: e.hasAttribute("required"),
+            visible: Boolean(e.offsetParent) || e.tagName === "SELECT",
+          })),
+        )
+        .catch(() => []),
+    };
+  },
   async press(a) { await page.keyboard.press(a.key); await page.waitForTimeout(400); return { ok: true, url: page.url() }; },
   async scroll(a) { await page.mouse.wheel(0, a.dy ?? 1200); await page.waitForTimeout(400); return { ok: true }; },
   async screenshot(a) { const file = `${SHOTS}/${Date.now()}.png`; await page.screenshot({ path: file, fullPage: !!a.full }); return { file, base64: fs.readFileSync(file).toString("base64") }; },

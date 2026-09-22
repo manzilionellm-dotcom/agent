@@ -20,7 +20,12 @@ import { findSite } from "../browsing/sites.js";
  * le mode manuel et donne des ordres précis.
  */
 
-const Action = z.enum(["goto", "text", "html", "click", "type", "press", "scroll", "screenshot", "links", "eval", "wait", "tabs", "back", "cookies", "status", "login", "session"]);
+const Action = z.enum([
+  "goto", "text", "html", "click", "type", "press", "scroll", "screenshot", "links", "eval", "wait",
+  "tabs", "back", "cookies", "status", "login", "session",
+  // Ce qu'il faut pour remplir un vrai formulaire, pas une maquette :
+  "select", "check", "upload", "download", "form", "listings",
+]);
 
 export function makeBrowserTool(container?: string) {
   return betaZodTool({
@@ -28,7 +33,13 @@ export function makeBrowserTool(container?: string) {
     description:
       "Navigateur réel persistant (Chrome). Actions : goto{url} · text{max_chars} (contenu lisible, arbre d'accessibilité) · click{selector|text|role+name|label} · type{selector|label|placeholder, value, enter?} · press{key} · scroll{dy} · screenshot{full?} · links{max} · eval{js} · wait{selector|ms} · tabs{op:list|new|switch|close, index?, url?} · back · cookies{url} · status · " +
       "login{site} : se connecte au site avec l'identifiant enregistré dans le coffre de l'opérateur (tu ne vois jamais le mot de passe, tu ne le demandes jamais, tu ne le tapes jamais toi-même ; utilise `vault_list` pour savoir quels sites sont disponibles) · " +
-      "session{op:save|load} : sauvegarde ou restaure les sessions ouvertes. " +
+      "session{op:save|load} : sauvegarde ou restaure les sessions ouvertes · " +
+      "form{selector?} : liste les champs d'un formulaire (nom, type, étiquette, options) — appelle-le plutôt que de deviner un sélecteur · " +
+      "select{selector|label, value|name|index} : liste déroulante (type ne marche pas sur un <select>) · " +
+      "check{selector|label, uncheck?} : case à cocher · " +
+      "upload{selector|label, file} : envoie un fichier de /work · " +
+      "download{selector|text|url} : clique et récupère le fichier dans /work/downloads (factures PDF, exports). " +
+      "Les cibles sont cherchées aussi dans les iframes, et un clic qui ouvre un onglet le suit tout seul. " +
       "Un appel = une action ; lis le résultat avant la suivante. Ne saisis JAMAIS un mot de passe avec `type` — si un site en demande un, utilise `login`.",
     inputSchema: z.object({
       action: Action,
@@ -53,6 +64,10 @@ export function makeBrowserTool(container?: string) {
       timeout_ms: z.number().int().optional(),
       site: z.string().optional().describe("Site du coffre pour l'action login, ex: linkedin.com, blocket.se"),
       op: z.enum(["list", "new", "switch", "close", "save", "load"]).optional(),
+      file: z.string().optional().describe("Chemin absolu sous /work, pour upload"),
+      files: z.array(z.string()).optional(),
+      uncheck: z.boolean().optional().describe("check : décocher au lieu de cocher"),
+      scrolls: z.number().int().min(0).max(10).optional(),
       index: z.number().int().optional(),
       wait: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
       settle_ms: z.number().int().optional(),
