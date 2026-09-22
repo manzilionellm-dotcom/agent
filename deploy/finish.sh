@@ -3,11 +3,17 @@
 #
 #   bash deploy/finish.sh
 #
+#   bash deploy/finish.sh --rotate    # + remplace ORCHESTRATOR_TOKEN
+#
 # Enchaîne, dans l'ordre qui compte :
-#   1. mise à jour du code et reconstruction        (install.sh --eco)
-#   2. pont vers ton Chrome                          (chrome-bridge-server.sh)
-#   3. webhook WhatsApp déclaré à Meta               (whatsapp-up.sh)
-#   4. surveillance du webhook toutes les 10 min     (whatsapp-watch-install.sh)
+#   0. clé du coffre d'identifiants                  (avant la reconstruction :
+#      l'orchestrateur lit son .env au démarrage, pas après)
+#   1. mise à jour du code et reconstruction         (install.sh --eco)
+#   2. jeton d'API neuf, si --rotate                 (rotate-token.sh)
+#   3. pont vers ton Chrome                          (chrome-bridge-server.sh)
+#   4. webhook WhatsApp déclaré à Meta               (whatsapp-up.sh)
+#   5. surveillance du webhook toutes les 10 min     (whatsapp-watch-install.sh)
+#   6. lien d'accès au coffre, à usage unique        (vault-link.sh)
 #
 # Chaque étape est idempotente : relancer ce script ne casse rien et répare ce
 # qui a bougé. Une étape en échec n'arrête pas les suivantes quand elles sont
@@ -51,20 +57,45 @@ step() { # $1 = libellé, $2… = commande
   STATUS+=("RATE $label"); return 1
 }
 
+ROTATE=0
+for a in "$@"; do [ "$a" = "--rotate" ] && ROTATE=1; done
+
+# 0. Clé du coffre -------------------------------------------------------------
+# AVANT la reconstruction, pas après : l'orchestrateur lit son .env au
+# démarrage. Écrire la clé une fois qu'il tourne donne un coffre présent dans
+# le fichier et absent du processus, c'est-à-dire un coffre qui refuse tout
+# sans expliquer pourquoi.
+if asowner "grep -qE '^VAULT_KEY=.+' .env"; then
+  ok "Clé du coffre déjà en place (conservée : la changer rendrait illisibles les mots de passe enregistrés)"
+  STATUS+=("OK   Clé du coffre")
+else
+  step "Clé du coffre" asowner "openssl rand -base64 32 | sed 's|^|VAULT_KEY=|' | bash deploy/set-env.sh --stdin" || true
+fi
+
 # 1. Code à jour et images reconstruites --------------------------------------
 step "Code et images" asowner "git pull --ff-only && ./install.sh --eco" || die "reconstruction impossible : rien d'autre ne peut suivre"
 
-# 2. Pont vers Chrome ----------------------------------------------------------
+# 2. Jeton d'API neuf, sur demande ---------------------------------------------
+# Après la reconstruction : rotate-token.sh vérifie que l'ancien jeton est
+# bien refusé, et cette vérification n'a de sens que contre le serveur final.
+[ "$ROTATE" = 1 ] && { step "Jeton d'API remplacé" asowner "bash deploy/rotate-token.sh" || true; }
+
+# 3. Pont vers Chrome ----------------------------------------------------------
 # Avant le webhook : ce script recrée l'orchestrateur, et on veut que la
 # déclaration à Meta soit faite APRÈS le dernier redémarrage.
 step "Pont vers ton Chrome" bash "$DIR/deploy/chrome-bridge-server.sh" || true
 GW=$(asowner "grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2-" | sed 's|http://||; s|:9222||' | tr -d '"\r')
 
-# 3. Webhook WhatsApp -----------------------------------------------------------
+# 4. Webhook WhatsApp -----------------------------------------------------------
 step "Webhook WhatsApp" asowner "bash deploy/whatsapp-up.sh" || true
 
-# 4. Surveillance du webhook ------------------------------------------------------
+# 5. Surveillance du webhook ------------------------------------------------------
 step "Surveillance du webhook" bash "$DIR/deploy/whatsapp-watch-install.sh" || true
+
+# 6. Lien vers le coffre -----------------------------------------------------
+# Généré en dernier : il ne vaut que dix minutes et une seule ouverture, donc
+# l'émettre avant vingt minutes de reconstruction reviendrait à l'offrir mort.
+LIEN=$(asowner "bash deploy/vault-link.sh" 2>&1) || LIEN=""
 
 # Récapitulatif --------------------------------------------------------------------
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -78,7 +109,23 @@ CE QUI TOURNE MAINTENANT
 
   WhatsApp     : écris au bot, il répond. Photos, captures et PDF lus.
   Missions     : « lance la veille », « crée une mission qui... »
+  Agents       : rôles durables, tâches qui reprennent après un redémarrage.
   Surveillance : le webhook se redéclare seul si l'adresse du tunnel change.
+  Courrier     : Gmail et Agenda, si l'autorisation Google a été donnée.
+  Navigateur   : formulaires complets (listes déroulantes, cases, fichiers),
+                 iframes, onglets qui s'ouvrent seuls, téléchargements.
+  Places de marché : Blocket, Tradera, Vinted, 1688, Alibaba, AliExpress,
+                 Temu, Amazon · annuaires Allabolag, Hitta, Eniro, Maps
+                 · emploi Platsbanken, Indeed, LinkedIn.
+                 Essaie : « compare le prix de X sur blocket et sur 1688 ».
+
+TON COFFRE D'IDENTIFIANTS
+${LIEN:-  (lien indisponible — relance : bash deploy/vault-link.sh)}
+
+  Ce lien meurt à la première ouverture ; il ne contient aucun secret
+  réutilisable. Tu y saisis tes mots de passe dans un formulaire — jamais
+  dans une conversation. Le bot s'en sert sans jamais les voir.
+  Un autre lien : bash deploy/vault-link.sh
 
 IL RESTE UNE COMMANDE, SUR TON PC WINDOWS
 
