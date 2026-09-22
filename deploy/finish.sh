@@ -169,9 +169,15 @@ CE QUI TOURNE MAINTENANT
                  · emploi Platsbanken, Indeed, LinkedIn.
                  Essaie : « compare le prix de X sur blocket et sur 1688 ».
 
-TABLEAU DE BORD — agents, tâches, journal, dépense, en une page
+OUVRIR UNE PAGE — depuis ton PC Windows, le navigateur s'ouvre tout seul
 
-  bash deploy/board-link.sh     (lien à usage unique, s'ouvre sur ton téléphone)
+  scp $OWNER@$IP:$DIR/deploy/ouvrir.ps1 \$HOME\\ouvrir.ps1
+  \$HOME\\ouvrir.ps1            tableau de bord (agents, tâches, dépense)
+  \$HOME\\ouvrir.ps1 screen     écran du navigateur du serveur
+  \$HOME\\ouvrir.ps1 vault      coffre d'identifiants
+
+  Depuis le serveur, si tu préfères le lien brut :
+  bash deploy/vault-link.sh board|screen|vault
 
 TON COFFRE D'IDENTIFIANTS
 ${LIEN:-  (lien indisponible — relance : bash deploy/vault-link.sh)}

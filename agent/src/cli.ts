@@ -25,7 +25,13 @@ if (!name) {
 
 (async () => {
   await migrate();
-  await connectMcpServers();
+  // Fabriquer un lien n'a besoin ni des serveurs MCP ni de leurs journaux.
+  // Les connecter coûtait trois secondes et noyait l'unique ligne utile —
+  // l'adresse — sous des pages de JSON, au point qu'on la recopiait de
+  // travers. Une commande dont la sortie est illisible est une commande
+  // qu'on utilise mal.
+  const leger = name === "vault-link";
+  if (!leger) await connectMcpServers();
   try {
     if (name === "vault-link") {
       // Lien à usage unique vers la page du coffre. Le jeton de l'API ne
@@ -57,7 +63,7 @@ if (!name) {
       await launch(m);
     }
   } finally {
-    await disconnectMcpServers();
+    if (!leger) await disconnectMcpServers();
     await closeDb();
   }
 })().catch((err) => {
