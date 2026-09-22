@@ -172,10 +172,14 @@ CE QUI TOURNE MAINTENANT
 OUVRIR UNE PAGE — depuis ton PC Windows, le navigateur s'ouvre tout seul
 
   scp $OWNER@$IP:$DIR/deploy/ouvrir.ps1 \$HOME\\ouvrir.ps1
-  \$HOME\\ouvrir.ps1            tableau de bord (agents, tâches, dépense)
-  \$HOME\\ouvrir.ps1 screen     écran du navigateur du serveur
-  \$HOME\\ouvrir.ps1 vault      coffre d'identifiants
-  \$HOME\\ouvrir.ps1 panel      clés d'API, consommation, plafond
+  & "\$HOME\\ouvrir.ps1"            tableau de bord (agents, tâches, dépense)
+  & "\$HOME\\ouvrir.ps1" screen     écran du navigateur du serveur
+  & "\$HOME\\ouvrir.ps1" vault      coffre d'identifiants
+  & "\$HOME\\ouvrir.ps1" panel      clés d'API, consommation, plafond
+
+  Le « & » et les guillemets ne sont pas décoratifs : PowerShell refuse de
+  lancer un chemin qui commence par une variable sans son opérateur d'appel,
+  et répond « Jeton inattendu » — ce qui ne dit pas qu'il manque un &.
 
   Depuis le serveur, si tu préfères le lien brut :
   bash deploy/vault-link.sh board|screen|vault|panel

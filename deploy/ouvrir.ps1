@@ -1,9 +1,14 @@
 # Ouvre une page de Manzi Junior directement dans ton navigateur.
 #
-#   .\ouvrir.ps1            -> le tableau de bord
-#   .\ouvrir.ps1 screen     -> l'ecran du navigateur du serveur
-#   .\ouvrir.ps1 vault      -> le coffre d'identifiants
-#   .\ouvrir.ps1 panel      -> les cles d'API, la consommation, le plafond
+#   & "$HOME\ouvrir.ps1"            -> le tableau de bord
+#   & "$HOME\ouvrir.ps1" screen     -> l'ecran du navigateur du serveur
+#   & "$HOME\ouvrir.ps1" vault      -> le coffre d'identifiants
+#   & "$HOME\ouvrir.ps1" panel      -> les cles d'API, la consommation, le plafond
+#
+# Le "&" est obligatoire : PowerShell refuse de lancer un chemin qui commence
+# par une variable sans son operateur d'appel, et repond "Jeton inattendu",
+# ce qui ne dit a personne qu'il manque un &. Depuis le dossier du script,
+# .\ouvrir.ps1 panel marche aussi.
 #
 # Ce script existe parce que l'etape "copier le lien du terminal vers la
 # barre d'adresse" a rate quatre fois de suite : colle dans PowerShell, le
