@@ -13,7 +13,7 @@ import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
 import { searchTools } from "../tools/search.js";
-import { browserTool, vaultListTool } from "../tools/browser.js";
+import { browserTool, lastScreenshot, vaultListTool } from "../tools/browser.js";
 import { marketTools } from "../tools/market.js";
 import { scrapePageTool } from "../tools/web.js";
 import { googleTools } from "../tools/google.js";
@@ -135,15 +135,20 @@ function screenshotTool(channel: string, peer: string) {
   return betaZodTool({
     name: "send_screenshot",
     description:
-      "Envoie à l'opérateur une image prise par le navigateur (chemin rendu par browser{action:\"screenshot\"}, sous /work). Sert à MONTRER une preuve : un résultat trouvé, un formulaire rempli, une page bloquante. Une capture après chaque étape qui compte vaut mieux qu'un résumé.",
+      "Envoie à l'opérateur la dernière image prise par le navigateur. Sert à MONTRER une preuve : un résultat trouvé, un formulaire rempli, une page bloquante. Appelle-le juste après browser{action:\"screenshot\"} — sans `file`, il envoie cette capture-là. Une capture après chaque étape qui compte vaut mieux qu'un résumé.",
     inputSchema: z.object({
-      file: z.string().describe("Chemin de l'image dans le sandbox, ex: /work/browser-shots/1738.png"),
+      file: z.string().optional().describe("Inutile en général : par défaut c'est la dernière capture prise. À ne renseigner que pour renvoyer une image précédente (/work/...png)."),
       caption: z.string().max(900).optional().describe("Une ligne qui dit ce qu'on voit"),
     }),
     run: async (i) => {
       if (channel !== "whatsapp") return "Envoi d'image indisponible sur ce canal — décris ce que montre la capture.";
-      const r = await sendWhatsAppImage(peer, i.file, i.caption ?? "");
-      return r.ok ? `capture envoyée (${i.file})` : `Error: ${r.error}`;
+      // Le chemin par défaut est celui de la dernière capture : c'est la
+      // machine qui s'en souvient, pas le modèle. Un chemin recopié de
+      // travers faisait échouer l'envoi sans que personne sache pourquoi.
+      const file = i.file?.trim() || lastScreenshot();
+      if (!file) return "Error: aucune capture à envoyer — prends d'abord browser{action:\"screenshot\"}.";
+      const r = await sendWhatsAppImage(peer, file, i.caption ?? "");
+      return r.ok ? `capture envoyée (${file})` : `Error: ${r.error}`;
     },
   });
 }

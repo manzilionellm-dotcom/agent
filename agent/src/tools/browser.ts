@@ -129,9 +129,19 @@ export function makeBrowserTool(container?: string) {
       }
       if (!out.ok) return `Error: ${out.error ?? "échec"}`;
       if (action === "screenshot" && out.base64) {
+        // Mémorisée pour que `send_screenshot` puisse l'envoyer sans que le
+        // modèle ait à recopier le chemin exactement — une capture qui
+        // n'arrive pas parce qu'un caractère du chemin a été mal recopié est
+        // une capture perdue pour rien.
+        if (out.file) lastShot.set(container ?? "", String(out.file));
         const img: Anthropic.Beta.Messages.BetaImageBlockParam = { type: "image", source: { type: "base64", media_type: "image/png", data: out.base64 } };
-        const provider = cfg.LLM_PROVIDER_CRITICAL === "anthropic" || cfg.LLM_PROVIDER === "anthropic";
-        return provider ? [{ type: "text", text: `capture ${out.file}` }, img] : `capture enregistrée : ${out.file} (le modèle courant n'accepte pas les images ; utilise text/links)`;
+        const voit = cfg.LLM_PROVIDER_CRITICAL === "anthropic" || cfg.LLM_PROVIDER === "anthropic";
+        // Le modèle qui ne VOIT pas l'image peut parfaitement l'ENVOYER.
+        // L'ancien texte disait « utilise text/links » : lu comme « laisse
+        // tomber la capture », il expliquait à lui seul pourquoi Lionel ne
+        // recevait jamais rien. Dans les deux cas on redit quoi en faire.
+        const suite = `capture prise : ${out.file}. Envoie-la à Lionel avec send_screenshot pour qu'il la voie.`;
+        return voit ? [{ type: "text", text: suite }, img] : `${suite} (tu ne peux pas la regarder toi-même avec ce modèle ; pour LIRE la page, utilise text ou links)`;
       }
       delete out.base64;
       const body = JSON.stringify(out, null, 1).slice(0, 30_000);
@@ -141,6 +151,19 @@ export function makeBrowserTool(container?: string) {
 }
 
 export const browserTool = makeBrowserTool();
+
+/**
+ * La dernière capture prise, par conteneur.
+ *
+ * Elle sert de valeur par défaut à `send_screenshot` : le modèle décrit ce
+ * qu'il veut montrer, la machine retrouve le fichier. Un chemin recopié de
+ * travers ne doit pas coûter la preuve.
+ */
+const lastShot = new Map<string, string>();
+
+export function lastScreenshot(container?: string): string | undefined {
+  return lastShot.get(container ?? "");
+}
 
 type BctlOut = { ok?: boolean; error?: string; base64?: string; file?: string } & Record<string, unknown>;
 

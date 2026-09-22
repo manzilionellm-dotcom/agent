@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import { sandboxExec } from "../tools/sandbox.js";
+import { sandboxExec, shellQuote } from "../tools/sandbox.js";
 
 /**
  * WhatsApp Business : deux fournisseurs interchangeables.
@@ -169,7 +169,13 @@ export async function sendWhatsAppImage(to: string, sandboxPath: string, caption
     `url = "${META_API}/${cfg.WHATSAPP_PHONE_NUMBER_ID}/media"`,
   ].join("\n");
 
-  const r = await sandboxExec(`curl -sS --max-time 60 --config -`, { timeoutMs: 90_000, stdin: conf });
+  // `test -r` avant tout : sans lui, un fichier absent (capture prise dans un
+  // AUTRE conteneur que celui qu'on interroge) sort en « téléversement refusé
+  // par Meta », ce qui envoie chercher la panne du mauvais côté.
+  const r = await sandboxExec(`test -r ${shellQuote(sandboxPath)} || { echo "MANQUANT"; exit 3; }; curl -sS --max-time 60 --config -`, { timeoutMs: 90_000, stdin: conf });
+  if (r.code === 3 || r.stdout.includes("MANQUANT")) {
+    return { ok: false, error: `image introuvable dans le sandbox : ${sandboxPath}. Reprends une capture avec browser{action:"screenshot"} et renvoie-la sans préciser le chemin.` };
+  }
   let id: string | undefined;
   try {
     id = (JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}") as { id?: string }).id;
@@ -181,7 +187,14 @@ export async function sendWhatsAppImage(to: string, sandboxPath: string, caption
     return { ok: false, error: `téléversement refusé par Meta (${r.stdout.slice(-200) || r.stderr.slice(-200) || "aucune réponse"})` };
   }
   const sent = await sendMeta(to, { type: "image", image: { id, caption: caption.slice(0, 1024) } });
-  return sent ? { ok: true } : { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
+  if (sent) return { ok: true };
+  // Hors fenêtre de 24 h, Meta refuse tout message libre. Un texte peut
+  // repasser par un modèle approuvé ; une image, non — aucun modèle n'a de
+  // pièce jointe. Le dire ici évite de chercher la panne dans le sandbox.
+  if (lastMetaError?.code === 131047 || lastMetaError?.code === 131026) {
+    return { ok: false, error: "image refusée : plus de 24 h depuis le dernier message de l'opérateur. Demande-lui de t'écrire un mot, puis renvoie la capture." };
+  }
+  return { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
 }
 
 /** Message hors fenêtre 24 h (Meta) : passe par le modèle approuvé `WHATSAPP_TEMPLATE_NAME` avec un paramètre texte. */
