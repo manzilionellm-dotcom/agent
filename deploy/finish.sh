@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Termine l'installation de Manzi Junior. Une seule commande, en root :
+# Termine l'installation de Manzi Junior. Une seule commande, SANS sudo :
 #
 #   bash deploy/finish.sh
 #
@@ -27,15 +27,35 @@ ok()   { printf '\033[1;32m   OK  %s\033[0m\n' "$*"; }
 bad()  { printf '\033[1;31m  RATE %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERREUR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" = 0 ] || die "à lancer en root"
-
 DIR="${MANZI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$DIR"
 OWNER=$(stat -c %U "$DIR")
 [ -n "$OWNER" ] || die "impossible de déterminer le propriétaire de $DIR"
-asowner() { sudo -u "$OWNER" -H bash -lc "cd '$DIR' && $*"; }
 
+# Root n'est PAS exigé.
+#
+# Deux étapes sur six en ont besoin — le pont Chrome (pare-feu, sshd) et le
+# minuteur systemd. Exiger root pour l'ensemble obligeait à passer par sudo,
+# donc à ressaisir un mot de passe alors que la connexion par clé était là
+# précisément pour qu'on ne le redemande plus jamais. Les quatre autres
+# étapes tournent sous le compte propriétaire ; les deux qui ne le peuvent
+# pas sont annoncées comme sautées, avec la commande exacte pour les faire
+# plus tard. Sauter en le disant vaut mieux que bloquer en le cachant.
+ROOT=0; [ "$(id -u)" = 0 ] && ROOT=1
 STATUS=()
+
+# En root, on redescend sur le compte propriétaire : git, docker et le .env
+# lui appartiennent, et des fichiers écrits par root dans son dépôt
+# empêchent le prochain `git pull` de passer.
+if [ "$ROOT" = 1 ]; then
+  asowner() { sudo -u "$OWNER" -H bash -lc "cd '$DIR' && $*"; }
+else
+  [ "$(id -un)" = "$OWNER" ] || die "lance ce script en tant que $OWNER (propriétaire de $DIR) ou en root"
+  asowner() { bash -lc "cd '$DIR' && $*"; }
+fi
+
+skip() { printf '\033[1;33m  SAUTÉ %s\033[0m\n   | %s\n' "$1" "$2"; STATUS+=("SAUTÉ $1"); }
+
 LOGDIR=$(mktemp -d)
 trap 'rm -rf "$LOGDIR"' EXIT
 
@@ -83,14 +103,22 @@ step "Code et images" asowner "git pull --ff-only && ./install.sh --eco" || die 
 # 3. Pont vers Chrome ----------------------------------------------------------
 # Avant le webhook : ce script recrée l'orchestrateur, et on veut que la
 # déclaration à Meta soit faite APRÈS le dernier redémarrage.
-step "Pont vers ton Chrome" bash "$DIR/deploy/chrome-bridge-server.sh" || true
+if [ "$ROOT" = 1 ]; then
+  step "Pont vers ton Chrome" bash "$DIR/deploy/chrome-bridge-server.sh" || true
+else
+  skip "Pont vers ton Chrome" "demande root (pare-feu + sshd) — plus tard : ssh root@<serveur> 'bash $DIR/deploy/chrome-bridge-server.sh'"
+fi
 GW=$(asowner "grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2-" | sed 's|http://||; s|:9222||' | tr -d '"\r')
 
 # 4. Webhook WhatsApp -----------------------------------------------------------
 step "Webhook WhatsApp" asowner "bash deploy/whatsapp-up.sh" || true
 
 # 5. Surveillance du webhook ------------------------------------------------------
-step "Surveillance du webhook" bash "$DIR/deploy/whatsapp-watch-install.sh" || true
+if [ "$ROOT" = 1 ]; then
+  step "Surveillance du webhook" bash "$DIR/deploy/whatsapp-watch-install.sh" || true
+else
+  skip "Surveillance du webhook" "demande root (minuteur systemd) — plus tard : ssh root@<serveur> 'bash $DIR/deploy/whatsapp-watch-install.sh'"
+fi
 
 # 6. Lien vers le coffre -----------------------------------------------------
 # Généré en dernier : il ne vaut que dix minutes et une seule ouverture, donc
