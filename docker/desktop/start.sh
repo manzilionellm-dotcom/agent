@@ -29,6 +29,23 @@ log() { printf '[desktop] %s\n' "$*"; }
 USER_NAME=pwuser
 if [ "$(id -u)" = 0 ]; then
   mkdir -p "$PROFILE"
+
+# Verrou d'une instance morte.
+#
+# Chromium pose `SingletonLock` dans le profil et y inscrit le nom de la
+# machine qui l'a pris. Quand un conteneur est remplacé, ce nom désigne un
+# hôte qui n'existe plus, et Chromium refuse de démarrer : « the profile
+# appears to be in use by another Chromium process on another computer ».
+# Il attend qu'on tranche ; personne ne peut le faire à sa place ici.
+#
+# Le supprimer est sûr à cet instant précis : le conteneur vient de
+# démarrer, aucun Chromium n'y tourne encore, et le profil ne peut donc
+# être ouvert nulle part ailleurs — il n'est monté que dans ce conteneur.
+for verrou in "$PROFILE"/Singleton*; do
+  [ -e "$verrou" ] || break
+  log "verrou d'une instance morte retiré : $(basename "$verrou")"
+  rm -f "$verrou"
+done
   if [ "$(stat -c %u "$PROFILE" 2>/dev/null)" != "$(id -u "$USER_NAME" 2>/dev/null)" ]; then
     log "profil appartenant à un autre compte — correction en cours"
     chown -R "$USER_NAME:$USER_NAME" "$PROFILE" || log "chown partiel : certains fichiers résistent"
