@@ -10,7 +10,9 @@
 #      l'orchestrateur lit son .env au démarrage, pas après)
 #   1. mise à jour du code et reconstruction         (install.sh --eco)
 #   2. jeton d'API neuf, si --rotate                 (rotate-token.sh)
-#   3. pont vers ton Chrome                          (chrome-bridge-server.sh)
+#   2b. navigateur du serveur, avec écran            (desktop-up.sh)
+#   3. pont vers le Chrome du poste, si root         (chrome-bridge-server.sh)
+#      — facultatif désormais : le navigateur du serveur suffit
 #   4. webhook WhatsApp déclaré à Meta               (whatsapp-up.sh)
 #   5. surveillance du webhook toutes les 10 min     (whatsapp-watch-install.sh)
 #   6. lien d'accès au coffre, à usage unique        (vault-link.sh)
@@ -100,6 +102,11 @@ step "Code et images" asowner "git pull --ff-only && ./install.sh --eco" || die 
 # bien refusé, et cette vérification n'a de sens que contre le serveur final.
 [ "$ROTATE" = 1 ] && { step "Jeton d'API remplacé" asowner "bash deploy/rotate-token.sh" || true; }
 
+# 2b. Navigateur du serveur ----------------------------------------------------
+# Avant le pont vers le Chrome du poste : celui-ci reste possible, mais il
+# n'est plus la base. Le navigateur du serveur, lui, marche portable éteint.
+step "Navigateur du serveur" asowner "bash deploy/desktop-up.sh" || true
+
 # 3. Pont vers Chrome ----------------------------------------------------------
 # Avant le webhook : ce script recrée l'orchestrateur, et on veut que la
 # déclaration à Meta soit faite APRÈS le dernier redémarrage.
@@ -140,8 +147,11 @@ CE QUI TOURNE MAINTENANT
   Agents       : rôles durables, tâches qui reprennent après un redémarrage.
   Surveillance : le webhook se redéclare seul si l'adresse du tunnel change.
   Courrier     : Gmail et Agenda, si l'autorisation Google a été donnée.
-  Navigateur   : formulaires complets (listes déroulantes, cases, fichiers),
-                 iframes, onglets qui s'ouvrent seuls, téléchargements.
+  Navigateur   : un Chromium tourne SUR LE SERVEUR, avec son propre écran.
+                 Tu l'ouvres dans une page web pour t'y connecter à tes
+                 comptes ; les sessions y restent, portable éteint.
+                 Formulaires complets (listes, cases, fichiers), iframes,
+                 onglets qui s'ouvrent seuls, téléchargements.
   Places de marché : Blocket, Tradera, Vinted, 1688, Alibaba, AliExpress,
                  Temu, Amazon · annuaires Allabolag, Hitta, Eniro, Maps
                  · emploi Platsbanken, Indeed, LinkedIn.

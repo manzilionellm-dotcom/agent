@@ -21,6 +21,16 @@ services:
       MISSION_BUDGET_USD: "1.5"
       DAILY_BUDGET_USD: "2.5"
 
+  # Le navigateur du serveur est la pièce la plus gourmande de la pile : un
+  # Chromium avec un écran. Sur 4 Go partagés, on le borne pour qu'il ne
+  # prenne jamais la mémoire de la base ou de l'orchestrateur.
+  desktop:
+    mem_limit: 1500m
+    cpus: 1
+    shm_size: 512m
+    environment:
+      SCREEN: 1280x800x24
+
   backup:
     mem_limit: 128m
 

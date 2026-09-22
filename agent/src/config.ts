@@ -115,6 +115,12 @@ const Env = z.object({
    * ex: http://host.docker.internal:9222. Vide = Chromium persistant dans le sandbox.
    */
   BROWSER_CDP_URL: z.string().url().optional(),
+  /**
+   * Adresse de l'écran du navigateur du serveur (conteneur `desktop`).
+   * Jamais publiée sur l'hôte : on y accède par /screen, qui exige un billet.
+   */
+  DESKTOP_HOST: z.string().default("desktop"),
+  DESKTOP_PORT: z.coerce.number().int().positive().default(6080),
 
   // --- GitHub / Vercel -----------------------------------------------------
   GITHUB_TOKEN: z.string().min(1),

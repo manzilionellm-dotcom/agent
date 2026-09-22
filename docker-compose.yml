@@ -71,6 +71,39 @@ services:
       - "127.0.0.1:8787:8787"   # /healthz, local uniquement (Uptime Kuma / curl)
     networks: [internal, egress]
 
+  # Navigateur du serveur, avec écran (voir docker/desktop/start.sh).
+  #
+  # C'est LE navigateur de l'agent : un Chromium qui tourne en permanence sur
+  # le serveur, dont le profil survit à tout, et que l'opérateur ouvre dans une
+  # page web pour s'y connecter à ses comptes de ses propres mains.
+  #
+  # Il remplace avantageusement le pont vers le Chrome du poste : pas de
+  # tunnel à maintenir, pas de PC à laisser allumé, et les sessions restent
+  # ouvertes quand l'opérateur est ailleurs.
+  desktop:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.desktop
+    container_name: manzi-desktop
+    restart: unless-stopped
+    init: true
+    shm_size: 1gb          # Chromium tombe en boucle avec les 64 Mo par défaut.
+    volumes:
+      - desktop:/profile   # les comptes connectés vivent ici, et nulle part ailleurs
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    cpus: 1.5
+    # AUCUN port publié sur l'hôte : ni 6080 ni 9222. L'écran se regarde à
+    # travers l'orchestrateur, qui exige un billet ; le pilotage se fait entre
+    # conteneurs. Publier 9222 reviendrait à offrir les comptes connectés.
+    networks: [internal, egress]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --max-time 3 http://127.0.0.1:9222/json/version >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
   # Sauvegarde quotidienne de la mémoire (dump gzip, rotation 14 jours).
   backup:
     image: postgres:16-alpine
@@ -95,6 +128,7 @@ services:
 volumes:
   pgdata:
   work:
+  desktop:   # profil du navigateur du serveur : sessions, cookies, extensions
 
 networks:
   internal:

@@ -1,6 +1,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
+import { createVaultTicket } from "../vault.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -68,7 +69,8 @@ AGENT WEB AUTONOME — ta façon de travailler sur Internet :
 · Tu boucles jusqu'à ce que ce soit fini. Un résultat vide, une page qui charge mal, un sélecteur qui rate : tu essaies autrement (autre requête, autre site, form pour voir les champs). Tu ne rends pas « je n'ai pas trouvé » après un seul essai.
 · Tu ne touches jamais aux fichiers de Lionel. Tout passe par le navigateur et par /work.
 · Tu ne vois, ne demandes et ne tapes JAMAIS un mot de passe. Le coffre les saisit pour toi : browser{action:"login", site:"…"}.
-· CAPTCHA, vérification anti-robot, code SMS, double authentification non enregistrée, ou page de paiement : tu t'ARRÊTES, tu envoies une capture, et tu dis à Lionel ce qui bloque. Tu ne contournes rien.
+· CAPTCHA, vérification anti-robot, code SMS, double authentification non enregistrée, ou page de paiement : tu t'ARRÊTES. Tu ne contournes rien.
+· Bloqué sur une CONNEXION précisément : appelle demande_connexion. Lionel reçoit un lien vers ton écran, se connecte lui-même, et tu reprends. C'est la bonne réponse — pas « je n'ai pas pu », et surtout pas « donne-moi ton mot de passe ».
 · Tu dis ce que tu n'as pas pu faire aussi clairement que ce que tu as fait.
 
 Formulaires : appelle browser{action:"form"} pour voir les champs (nom, type, étiquette, options) au lieu de deviner un sélecteur. Ensuite type pour le texte, select pour une liste déroulante, check pour une case, upload pour un fichier de /work, download pour récupérer une facture ou un export dans /work/downloads. Les iframes et les onglets qui s'ouvrent tout seuls sont gérés — tu n'as pas à t'en occuper.
@@ -85,6 +87,48 @@ Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer.`;
 
 type Notify = (text: string) => Promise<void>;
+
+/**
+ * « Je bute sur une connexion, viens la faire. »
+ *
+ * L'agent ne peut pas tout : un compte absent du coffre, une double
+ * authentification par SMS, un captcha. Plutôt que d'abandonner ou de
+ * réclamer un mot de passe dans la conversation — ce qui est interdit — il
+ * envoie un lien vers l'écran du navigateur du serveur. L'opérateur ouvre,
+ * se connecte de ses mains, ferme. La session reste sur le serveur, l'agent
+ * reprend, et aucun secret n'a transité par personne.
+ */
+function loginRequestTool(peer: string) {
+  return betaZodTool({
+    name: "demande_connexion",
+    description:
+      "Quand tu ne peux pas te connecter seul (compte absent du coffre, code SMS, double authentification, captcha), appelle ceci : l'opérateur reçoit un lien vers l'écran du navigateur du serveur et s'y connecte lui-même. Tu ne demandes JAMAIS un mot de passe dans la conversation. Après l'appel, dis-lui ce qu'il doit faire sur cette page, puis attends son feu vert avant de reprendre.",
+    inputSchema: z.object({
+      site: z.string().describe("Le site où la connexion manque, ex: vinted.se"),
+      raison: z.string().max(300).describe("Ce qui bloque, en une phrase : « code à six chiffres demandé », « aucun identifiant au coffre »"),
+    }),
+    run: async (i) => {
+      const base = config().PUBLIC_URL;
+      if (!base) return "Error: PUBLIC_URL absente du .env — impossible de fabriquer un lien joignable depuis l'extérieur. Dis à l'opérateur de lancer `bash deploy/whatsapp-up.sh`.";
+      const t = await createVaultTicket(15);
+      const lien = `${base}/screen?t=${t.id}`;
+      const texte = [
+        `🔐 J'ai besoin de toi pour ${i.site}.`,
+        i.raison,
+        "",
+        "Ouvre ce lien : tu verras MON navigateur, celui du serveur. Connecte-toi normalement, puis ferme l'onglet — la session reste ici et je reprends.",
+        "",
+        lien,
+        "",
+        "Valable 15 min, une seule ouverture.",
+      ].join("\n");
+      const ok = await sendWhatsApp(peer, texte);
+      return ok
+        ? `lien envoyé à l'opérateur (valable 15 min). Dis-lui en une ligne quoi faire sur ${i.site}, puis attends qu'il confirme.`
+        : "Error: le lien n'a pas pu être envoyé";
+    },
+  });
+}
 
 function screenshotTool(channel: string, peer: string) {
   return betaZodTool({
@@ -398,7 +442,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

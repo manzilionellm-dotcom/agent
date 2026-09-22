@@ -103,7 +103,19 @@ else
 fi
 
 # 5. Configurer l'orchestrateur --------------------------------------------------
-sudo -u "$OWNER" -H bash "$DIR/deploy/set-env.sh" BROWSER_CDP_URL="http://$GW:9222"
+# Le navigateur du serveur (conteneur `desktop`) est le choix par défaut depuis
+# qu'il existe : il marche portable éteint, ce que ce pont ne peut pas faire.
+# On ne le remplace donc pas sans qu'on le demande — sinon lancer ce script
+# « pour voir » débrancherait silencieusement le montage qui tient tout seul.
+ACTUEL=$(grep -E '^BROWSER_CDP_URL=' .env | head -1 | cut -d= -f2- | tr -d '"\r')
+FORCE=0
+for a in "$@"; do [ "$a" = "--force" ] && FORCE=1; done
+if [ "$ACTUEL" = "http://desktop:9222" ] && [ "$FORCE" = 0 ]; then
+  say "l'agent utilise le navigateur du serveur — on n'y touche pas"
+  echo "    (pour basculer sur le Chrome de ton poste : bash deploy/chrome-bridge-server.sh --force)"
+else
+  sudo -u "$OWNER" -H bash "$DIR/deploy/set-env.sh" BROWSER_CDP_URL="http://$GW:9222"
+fi
 
 # Accès complet, comme demandé : aucun domaine exclu par défaut. Le mécanisme
 # existe si l'avis change un jour — il suffit de remplir la variable :

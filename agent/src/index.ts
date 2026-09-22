@@ -20,7 +20,8 @@ import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
 import { startRuntime, stopRuntime } from "./agents/runtime.js";
 import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
-import { consumeVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
+import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
+import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -72,6 +73,42 @@ function vaultCookieOk(req: IncomingMessage): boolean {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
+/**
+ * L'écran du navigateur du serveur.
+ *
+ * Même porte que le coffre : un billet à usage unique, échangé contre un
+ * cookie. Le billet arrive par WhatsApp quand l'agent demande un coup de
+ * main, ou se génère à la main avec `deploy/vault-link.sh`.
+ */
+async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const token = config().ORCHESTRATOR_TOKEN;
+  const ticket = url.searchParams.get("t");
+  if (ticket) {
+    if (!token) return void json(res, 503, { error: "ORCHESTRATOR_TOKEN absent" });
+    if (!(await consumeVaultTicket(ticket).catch(() => false))) {
+      logger.warn({ ip: req.socket.remoteAddress }, "billet d'écran invalide ou déjà utilisé");
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+      return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Demande-en un autre au bot, ou lance <code>bash deploy/vault-link.sh</code>.");
+    }
+    const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
+    res.writeHead(302, {
+      location: SCREEN_ENTRY,
+      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
+    });
+    return void res.end();
+  }
+  if (!vaultCookieOk(req)) {
+    logger.warn({ ip: req.socket.remoteAddress, path: url.pathname }, "accès refusé à l'écran");
+    res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Ouvre le lien que le bot t'a envoyé, ou génère-en un : <code>bash deploy/vault-link.sh</code>.");
+  }
+  if (url.pathname === "/screen") {
+    res.writeHead(302, { location: SCREEN_ENTRY });
+    return void res.end();
+  }
+  return proxyScreen(req, res, url);
+}
+
 async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const token = config().ORCHESTRATOR_TOKEN;
   const html = (body: string, code = 200): void => {
@@ -95,7 +132,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
     res.writeHead(302, {
       location: "/vault",
-      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/vault; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
+      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
     });
     return void res.end();
   }
@@ -209,6 +246,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // un formulaire. Le jeton passe UNE fois en ?k=, est échangé contre un
   // cookie, et la redirection le retire immédiatement de la barre d'adresse.
   if (url.pathname === "/vault") return vaultRoute(req, res, url);
+  if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return screenRoute(req, res, url);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     const spent = await spentToday().catch(() => -1);
@@ -363,6 +401,16 @@ async function main(): Promise<void> {
       logger.error({ err: String(err) }, "http");
       if (!res.headersSent) json(res, 500, { error: "erreur interne" });
     });
+  });
+  // Le flux d'image de noVNC est une WebSocket : elle ne passe pas par le
+  // gestionnaire HTTP. Sans ce branchement, la page s'affiche, reste noire,
+  // et n'explique rien.
+  server.on("upgrade", (req, socket, head) => {
+    if (!req.url?.startsWith("/screen") || !vaultCookieOk(req)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      return void socket.destroy();
+    }
+    proxyScreenSocket(req, socket, head);
   });
   server.listen(cfg.HEALTH_PORT, "0.0.0.0", () => logger.info({ port: cfg.HEALTH_PORT }, "api"));
 

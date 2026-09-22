@@ -1,0 +1,26 @@
+# Navigateur du serveur, avec écran.
+#
+# Un Chromium qui tourne 24/7 sur le VPS, visible depuis n'importe quel
+# navigateur par une page web, et pilotable par l'agent au même instant.
+#
+# Pourquoi cette image de base : celle de Playwright porte déjà un Chromium
+# complet et toutes ses dépendances graphiques, qui sont la moitié pénible
+# d'une installation pareille. On n'ajoute que de quoi lui donner un écran
+# (Xvfb), le partager (x11vnc) et le servir en HTTP (noVNC).
+FROM mcr.microsoft.com/playwright:v1.55.0-noble
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISPLAY=:99 \
+    PROFILE=/profile \
+    SCREEN=1440x900x24
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb x11vnc novnc websockify fonts-liberation fonts-noto-color-emoji \
+      dbus-x11 x11-utils curl \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY docker/desktop/start.sh /opt/start.sh
+RUN chmod +x /opt/start.sh && mkdir -p /profile
+
+EXPOSE 6080 9222
+CMD ["/opt/start.sh"]

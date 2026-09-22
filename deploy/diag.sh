@@ -67,10 +67,28 @@ else
   printf '  WHATSAPP_APP_ID ou WHATSAPP_APP_SECRET absent — vérification impossible\n'
 fi
 
-t "Pont vers ton Chrome (CDP)"
+t "Navigateur du serveur (conteneur desktop)"
+if "${COMPOSE[@]}" ps --format '{{.Service}}' 2>/dev/null | grep -qx desktop; then
+  VER=$("${COMPOSE[@]}" exec -T desktop curl -fsS --max-time 3 http://127.0.0.1:9222/json/version 2>/dev/null | tr -d '\n' | head -c 150)
+  [ -n "$VER" ] && printf '  navigateur       \033[1;32men marche\033[0m : %s\n' "$VER" \
+                || printf '  navigateur       \033[1;31mne répond pas\033[0m (il met ~40 s à démarrer)\n'
+  ECR=$("${COMPOSE[@]}" exec -T desktop curl -fsS --max-time 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/ 2>/dev/null)
+  [ "$ECR" = 200 ] && printf '  écran (noVNC)    \033[1;32mservi\033[0m\n' || printf '  écran (noVNC)    \033[1;31mHTTP %s\033[0m\n' "${ECR:-aucune réponse}"
+  JOINT=$("${COMPOSE[@]}" exec -T orchestrator curl -fsS --max-time 3 -o /dev/null -w '%{http_code}' http://desktop:6080/ 2>/dev/null)
+  [ "$JOINT" = 200 ] && printf '  vu par /screen   \033[1;32moui\033[0m\n' || printf '  vu par /screen   \033[1;31mnon (HTTP %s)\033[0m\n' "${JOINT:-aucune}"
+else
+  printf '  conteneur desktop absent — lance : bash deploy/desktop-up.sh\n'
+fi
+
+t "Pont vers le Chrome de ton poste (facultatif)"
 CDP=$(val BROWSER_CDP_URL)
 if [ -z "$CDP" ]; then
   printf '  BROWSER_CDP_URL vide — le bot utilise son propre Chromium (normal si le pont n est pas voulu)\n'
+elif [ "$CDP" = "http://desktop:9222" ]; then
+  # Le pont SSH n'est plus en jeu : l'agent pilote le navigateur du serveur.
+  # Diagnostiquer une passerelle Docker ici enverrait chercher une panne qui
+  # n'existe pas.
+  printf '  pont inutilisé — l agent pilote le navigateur du serveur (section ci-dessus)\n'
 else
   printf '  BROWSER_CDP_URL          %s\n' "$CDP"
   HOSTP=${CDP#http://}; GWIP=${HOSTP%%:*}; GWPORT=${HOSTP##*:}
