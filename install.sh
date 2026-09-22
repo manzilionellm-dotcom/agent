@@ -156,8 +156,15 @@ for _ in $(seq 1 20); do "${COMPOSE[@]}" exec -T db pg_isready -U manzi -q >/dev
 # manque, si le socket refuse, ou si la base n'est simplement pas prête.
 # L'affectation DOIT rester dans la condition du `if` : sous `set -e`, un
 # `VAR=$(commande qui échoue)` en instruction isolée sort du script.
-if PG_ERR=$("${COMPOSE[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 -U manzi -d manzi \
-     -v pw="$(val POSTGRES_PASSWORD)" -c "ALTER USER manzi WITH PASSWORD :'pw';" 2>&1); then
+# La commande arrive par l'entrée standard, PAS par `-c` : psql n'interpole
+# pas ses variables dans `-c`, et envoyait donc `:'pw'` tel quel au serveur,
+# qui répondait « syntax error at or near ":" ». L'alignement n'a donc jamais
+# eu lieu depuis qu'il existe — l'erreur partait dans /dev/null.
+# `:'pw'` (et non `'$pw'`) laisse psql poser les guillemets : un mot de passe
+# contenant une apostrophe casserait la requête, ou pire, la détournerait.
+if PG_ERR=$(printf "ALTER USER manzi WITH PASSWORD :'pw';\n" \
+     | "${COMPOSE[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 -U manzi -d manzi \
+       -v pw="$(val POSTGRES_PASSWORD)" 2>&1); then
   say "Mot de passe Postgres aligné sur le .env"
   "${COMPOSE[@]}" restart orchestrator >/dev/null 2>&1 || true
 else
