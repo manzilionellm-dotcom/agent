@@ -73,7 +73,7 @@ function authorized(req: IncomingMessage): boolean {
  * Un formulaire HTML ne peut pas porter d'en-tête `Authorization` : le
  * contrôle Bearer du reste de l'API ne s'applique donc pas ici. On entre
  * avec un billet à usage unique (`?t=`), échangé contre un cookie
- * HttpOnly + SameSite=Strict, et la redirection nettoie la barre d'adresse.
+ * HttpOnly + SameSite=Lax, et la redirection nettoie la barre d'adresse.
  * Le jeton de l'API, lui, ne circule jamais dans une URL : une adresse qui
  * contient un secret finit recopiée quelque part.
  */
@@ -109,6 +109,21 @@ async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: UR
 /**
  * Pose le cookie de session et redirige.
  *
+ * `SameSite=Lax`, pas `Strict`. Avec `Strict`, un lien à billet ouvert
+ * DEPUIS WHATSAPP ne marchait pas : la navigation vient d'une autre
+ * application, le billet pose le cookie, puis la redirection vers /panel
+ * fait partie de cette même navigation « venue d'ailleurs » — et Chrome
+ * refuse d'y joindre un cookie Strict. Le panneau ne reconnaissait pas la
+ * session et renvoyait vers /login. Sur PC, ouvrir.ps1 ouvre Chrome
+ * directement, sans site d'origine : la panne ne s'y voyait pas.
+ * Reproduit avec un vrai Chromium avant correction.
+ *
+ * `Lax` est le réglage standard d'une session : le cookie accompagne une
+ * ARRIVÉE depuis un autre site (clic sur un lien), mais pas un formulaire
+ * POST ni une requête de fond venus d'un autre site. Or tout ce qui modifie
+ * quelque chose ici est un POST, et le flux de l'écran est un WebSocket —
+ * une requête de fond. La protection qui compte reste entière.
+ *
  * `Secure` seulement derrière HTTPS : posé toujours, le cookie serait
  * rejeté lors d'un test local sur 127.0.0.1, et la page redemanderait un
  * billet en boucle sans jamais dire pourquoi.
@@ -118,7 +133,7 @@ function poserCookie(req: IncomingMessage, res: ServerResponse, destination: str
   const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
   res.writeHead(302, {
     location: destination,
-    "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${https ? "; Secure" : ""}`,
+    "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${https ? "; Secure" : ""}`,
   });
   res.end();
 }
@@ -443,15 +458,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
       logger.warn({ ip: req.socket.remoteAddress }, "billet de coffre invalide ou déjà utilisé");
       return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Génère-en un autre :<br><code>ssh manzi@… 'cd manzi-junior &amp;&amp; bash deploy/vault-link.sh'</code>", 401);
     }
-    // `Secure` seulement derrière HTTPS : en le posant toujours, le cookie
-    // serait rejeté lors d'un test en local sur 127.0.0.1 et la page
-    // demanderait le billet en boucle sans jamais dire pourquoi.
-    const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
-    res.writeHead(302, {
-      location: "/vault",
-      "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
-    });
-    return void res.end();
+    return poserCookie(req, res, "/vault", 3600);
   }
 
   if (!vaultCookieOk(req)) {
@@ -564,7 +571,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // cookie, et la redirection le retire immédiatement de la barre d'adresse.
   if (url.pathname === "/login") return loginRoute(req, res, url);
   if (url.pathname === "/logout") {
-    res.writeHead(302, { location: "/login", "set-cookie": "manzi_vault=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" });
+    res.writeHead(302, { location: "/login", "set-cookie": "manzi_vault=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" });
     return void res.end();
   }
   if (url.pathname === "/vault") return vaultRoute(req, res, url);
