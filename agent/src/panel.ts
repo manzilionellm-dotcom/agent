@@ -2,11 +2,14 @@ import { config } from "./config.js";
 import { dailyBudget, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
 import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
-import { vaultEnabled } from "./vault.js";
 import { approbationsActives } from "./channels/approvals.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
 import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
 import { MDP_MIN, motDePasseDefini } from "./login.js";
+import { screenAlive } from "./screen.js";
+import { ecranBranche } from "./navigator.js";
+import { SITES } from "./browsing/sites.js";
+import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
 
 /**
  * Le panneau : ajouter, retirer, mettre en pause, prioriser.
@@ -47,6 +50,7 @@ export type PanelState = {
   perso: Personnalite;
   voix: VoixReglages & { service: boolean };
   mdp: boolean;
+  navigateur: { vivant: boolean; branche: boolean; comptes: PublicCredential[] };
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
   /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
@@ -57,7 +61,7 @@ export type PanelState = {
 
 export async function panelState(): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -69,6 +73,8 @@ export async function panelState(): Promise<PanelState> {
     personnalite(),
     voixReglages(),
     motDePasseDefini().catch(() => false),
+    screenAlive().catch(() => false),
+    listCredentials().catch(() => [] as PublicCredential[]),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
@@ -79,6 +85,7 @@ export async function panelState(): Promise<PanelState> {
     perso,
     voix: { ...voix, service: tous.some((x) => x.id === "voix" && x.enabled && x.has_key) },
     mdp,
+    navigateur: { vivant, branche: ecranBranche(), comptes },
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
     missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
@@ -243,6 +250,51 @@ ${manque}
 <form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="testvoix"><button${v.service ? "" : " disabled"}>Tester la voix sur mon WhatsApp</button></form>`;
 }
 
+/**
+ * Son navigateur. Ouvrir un site dans le Chromium du serveur, s'y connecter
+ * à la main, et le bot garde la session. Deux chemins pour « ajouter un
+ * site » : la session (on se connecte soi-même, rien n'est stocké hors du
+ * navigateur) ou le coffre (identifiant + mot de passe chiffrés, que le bot
+ * tape seul le jour où la session expire). La page dit lequel sert à quoi.
+ */
+function sectionNavigateur(st: PanelState): string {
+  const n = st.navigateur;
+  const etat = !n.branche
+    ? `<p class="notice warn">Le navigateur du bot n'est pas relié à l'écran (BROWSER_CDP_URL vide sur le serveur) : un site ouvert d'ici serait invisible. Lance <code>bash deploy/desktop-up.sh</code> sur le serveur.</p>`
+    : !n.vivant
+      ? `<p class="notice warn">L'écran ne répond pas. Le conteneur « desktop » est peut-être arrêté : <code>bash deploy/desktop-up.sh</code> sur le serveur.</p>`
+      : "";
+  const connus = SITES.filter((x) => x.loginUrl)
+    .map((x) => `<option value="${esc(x.loginUrl!)}">${esc(x.name)} — ${esc(x.host)}</option>`)
+    .join("");
+  const coffre = n.comptes.length
+    ? `<table><tr><th>Site</th><th>Compte</th><th class="n">Connexions</th></tr>${n.comptes
+        .map((c) => `<tr><td>${esc(c.site)}${c.has_totp ? ` <span class="p ok">2FA</span>` : ""}</td><td class="det">${esc(c.login)}</td><td class="n">${c.uses}</td></tr>`)
+        .join("")}</table>`
+    : `<p class="vide">Aucun identifiant au coffre pour l'instant.</p>`;
+  return `<h2 id="navigateur">Son navigateur</h2>
+<p class="aide">Le Chromium du serveur, celui dans lequel il travaille. Ouvre un site ici, connecte-toi à la main sur l'écran, ferme : la session reste sur le serveur et il s'en sert ensuite. Aucun mot de passe ne passe par cette page.</p>
+${etat}
+<div class="act" style="margin-bottom:.6rem"><a class="b" href="/screen" target="_blank" rel="noopener">Ouvrir son écran</a></div>
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="ouvrir_site">
+  <div class="grille">
+    <label>Ouvrir un site dans son navigateur<input name="url" placeholder="vinted.se, linkedin.com/login, …" required${n.branche ? "" : " disabled"}></label>
+  </div>
+  <button class="principal"${n.branche ? "" : " disabled"}>Ouvrir et aller à l'écran</button>
+</form>
+${connus ? `<form class="ajout" method="post">
+  <input type="hidden" name="op" value="ouvrir_site">
+  <div class="grille"><label>Ou la page de connexion d'un site qu'il connaît<select name="url"${n.branche ? "" : " disabled"}>${connus}</select></label></div>
+  <button${n.branche ? "" : " disabled"}>Ouvrir la connexion</button>
+</form>` : ""}
+<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="sites_connectes"><button${n.branche ? "" : " disabled"}>Voir les sites où il a une session</button></form>
+
+<p class="aide" style="margin-top:1.2rem"><b>Qu'il se connecte seul, même quand la session expire :</b> mets l'identifiant et le mot de passe au <a href="/vault">coffre</a>. Ils y sont chiffrés, il les tape lui-même dans la page, et ne les voit jamais.</p>
+${coffre}
+<div class="act" style="margin-top:.5rem"><a class="b" href="/vault">Ajouter un site au coffre</a></div>`;
+}
+
 /** Accès : le mot de passe qui permet d'ouvrir le panneau depuis n'importe où. */
 function sectionAcces(st: PanelState): string {
   return `<h2 id="acces">Accès depuis n'importe où</h2>
@@ -308,7 +360,7 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 <title>Manzi Junior — panneau</title><meta name="robots" content="noindex">
 <style>${CSS}</style></head><body><main>
 <header><h1>${esc(st.perso.nom)} — panneau</h1><span class="maj">à jour · ${esc(st.heure)} · <a href="/logout" style="color:inherit">se déconnecter</a></span></header>
-<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
+<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#navigateur">Navigateur</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
@@ -327,6 +379,8 @@ ${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé au
 ${sectionPersonnalite(st)}
 
 ${sectionVoix(st)}
+
+${sectionNavigateur(st)}
 
 <div id="services"></div>
 ${cats}

@@ -28,6 +28,7 @@ import { livrerReponse } from "./voice.js";
 import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
 import { VOIX_MODES, synthese } from "./voice.js";
+import { ouvrirSurEcran, sitesConnectes } from "./navigator.js";
 import { bumpProviderPriority, deleteProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
@@ -212,6 +213,23 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "ouvrir_site": {
+          // Succès : on file directement sur l'écran, où le site vient de
+          // s'ouvrir. Revenir au panneau avec un bandeau « ouvert » obligerait
+          // à trouver le lien de l'écran pour faire la seule chose utile.
+          const o = await ouvrirSurEcran(g("url"));
+          logger.info({ url: o.url }, "site ouvert dans le navigateur du bot depuis le panneau");
+          res.writeHead(303, { location: SCREEN_ENTRY, "cache-control": "no-store" });
+          return void res.end();
+        }
+        case "sites_connectes": {
+          const sites = await sitesConnectes();
+          notice = sites.length
+            ? `Il a une session sur ${sites.length} site(s) : ${sites.slice(0, 80).join(", ")}${sites.length > 80 ? "…" : ""}`
+            : "Aucune session ouverte dans son navigateur pour l'instant.";
+          ton = "bon";
+          break;
+        }
         case "personnalite": {
           const nom = g("nom").replace(/[\u0000-\u001f]/g, "").slice(0, NOM_MAX);
           const choix = (cle: string, table: Record<string, unknown>): string => {
