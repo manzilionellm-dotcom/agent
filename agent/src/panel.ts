@@ -4,6 +4,9 @@ import { spentToday } from "./memory/store.js";
 import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { vaultEnabled } from "./vault.js";
 import { approbationsActives } from "./channels/approvals.js";
+import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
+import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
+import { MDP_MIN, motDePasseDefini } from "./login.js";
 
 /**
  * Le panneau : ajouter, retirer, mettre en pause, prioriser.
@@ -41,6 +44,9 @@ export type PanelState = {
   depense: { jour: number; plafond: number };
   vercel: string;
   approbations: boolean;
+  perso: Personnalite;
+  voix: VoixReglages & { service: boolean };
+  mdp: boolean;
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
   /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
@@ -51,7 +57,7 @@ export type PanelState = {
 
 export async function panelState(): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel, approbations] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -60,6 +66,9 @@ export async function panelState(): Promise<PanelState> {
     dailyBudget().catch(() => cfg.DAILY_BUDGET_USD),
     vercelProject().catch(() => cfg.VERCEL_PROJECT),
     approbationsActives().catch(() => true),
+    personnalite(),
+    voixReglages(),
+    motDePasseDefini().catch(() => false),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
@@ -67,6 +76,9 @@ export async function panelState(): Promise<PanelState> {
     depense: { jour, plafond },
     vercel: vercel ?? "",
     approbations,
+    perso,
+    voix: { ...voix, service: tous.some((x) => x.id === "voix" && x.enabled && x.has_key) },
+    mdp,
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
     missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
@@ -123,6 +135,14 @@ label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:.5rem}
 input,select{display:block;width:100%;margin-top:.25rem;padding:.5rem .6rem;font-size:.95rem;color:var(--fg);
              background:var(--bg);border:1px solid var(--line);border-radius:6px}
 input:focus,select:focus{outline:2px solid var(--go);outline-offset:1px;border-color:transparent}
+textarea{display:block;width:100%;margin-top:.25rem;padding:.5rem .6rem;font:.95rem/1.45 inherit;color:var(--fg);
+         background:var(--bg);border:1px solid var(--line);border-radius:6px;min-height:6.5rem;resize:vertical}
+textarea:focus{outline:2px solid var(--go);outline-offset:1px;border-color:transparent}
+.apercu{white-space:pre-wrap;font:.8rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);background:var(--bg);
+        border:1px solid var(--line);border-radius:6px;padding:.6rem .7rem;margin-top:.6rem;max-height:14rem;overflow:auto}
+details summary{cursor:pointer;color:var(--muted);font-size:.85rem;margin-top:.6rem}
+.sommaire{display:flex;flex-wrap:wrap;gap:.35rem .9rem;font-size:.85rem;margin:.2rem 0 .5rem}
+.sommaire a{color:var(--go);text-decoration:none}
 .roles{display:flex;flex-wrap:wrap;gap:.7rem;margin-top:.3rem}
 .roles label{display:flex;align-items:center;gap:.3rem;color:var(--fg);font-size:.88rem;margin:0}
 .roles input{width:auto;margin:0}
@@ -164,6 +184,80 @@ function service(s: PublicProvider, enEdition: boolean): string {
     ${bouton("down", s.id, "▼ reculer")}
     ${bouton("delete", s.id, "Supprimer", "danger")}
   </div></div>`;
+}
+
+function options<T extends Record<string, { titre: string }>>(table: T, courant: string): string {
+  return Object.entries(table).map(([k, v]) => `<option value="${k}"${k === courant ? " selected" : ""}>${esc(v.titre)}</option>`).join("");
+}
+
+/**
+ * Personnalité. L'aperçu montre le texte EXACT ajouté au prompt : sans lui,
+ * on règle des menus déroulants en devinant leur effet. Avec, on lit ce que
+ * le modèle lira.
+ */
+function sectionPersonnalite(st: PanelState): string {
+  const p = st.perso;
+  const carac = Object.entries(CARACTERES)
+    .map(([k, v]) => `<label style="display:flex;gap:.5rem;align-items:flex-start;color:var(--fg);margin:.35rem 0"><input type="radio" name="caractere" value="${k}"${k === p.caractere ? " checked" : ""} style="width:auto;margin-top:.3rem"> <span><b>${esc(v.titre)}</b> <span class="det">— ${esc(v.resume)}</span></span></label>`)
+    .join("");
+  return `<h2 id="personnalite">Personnalité</h2>
+<p class="aide">Comment il te parle, comment il réfléchit, comment il exécute. Effet au message suivant, sans redémarrage. Aucun réglage ne lui permet de refuser un ordre : ils changent la façon de faire, jamais le fait de faire.</p>
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="personnalite">
+  <div class="grille">
+    <label>Son nom<input name="nom" maxlength="${NOM_MAX}" value="${esc(p.nom)}"></label>
+    <label>Son raisonnement<select name="reflexion">${options(REFLEXIONS, p.reflexion)}</select></label>
+    <label>Longueur des réponses<select name="longueur">${options(LONGUEURS, p.longueur)}</select></label>
+    <label>Emojis<select name="emojis">${options(EMOJIS, p.emojis)}</select></label>
+    <label>Langue<select name="langue">${options(LANGUES, p.langue)}</select></label>
+  </div>
+  <label>Caractère</label>
+  ${carac}
+  <label style="margin-top:.7rem">Tes consignes à toi <span class="det">(facultatif, ${LIBRE_MAX} caractères max — ce que tu veux qu'il sache ou fasse toujours)</span>
+    <textarea name="libre" maxlength="${LIBRE_MAX}" placeholder="Ex. : Appelle-moi « patron ». Mes priorités : le site IPTV, puis DHgate. Quand tu trouves un produit, donne toujours le prix en couronnes suédoises.">${esc(p.libre)}</textarea></label>
+  <button class="principal">Enregistrer la personnalité</button>
+  <details><summary>Voir exactement ce qu'il reçoit</summary><div class="apercu">${esc(blocPersonnalite(p))}</div></details>
+</form>`;
+}
+
+/** Voix. Le service est une clé comme une autre ; ici on règle quand et comment il parle. */
+function sectionVoix(st: PanelState): string {
+  const v = st.voix;
+  const manque = !v.service
+    ? `<p class="notice warn">Aucun service « voix » actif. Ajoute-le dans le formulaire plus bas : identifiant <code>voix</code>, type « Compatible OpenAI », adresse <code>https://api.openai.com/v1</code>, modèle <code>gpt-4o-mini-tts</code>, et ta clé OpenAI. Il se range tout seul dans « Autres services ».</p>`
+    : "";
+  return `<h2 id="voix">Voix</h2>
+<p class="aide">Il te répond en note vocale sur WhatsApp. Si la voix échoue, le texte part quand même — tu ne perds jamais une réponse. Un lien part toujours aussi par écrit : un lien lu à voix haute ne se clique pas. Le coût de la synthèse n'est pas compté dans les tableaux de cette page : il se lit chez le fournisseur.</p>
+${manque}
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="voix">
+  <div class="grille">
+    <label>Quand parler<select name="mode">${Object.entries(VOIX_MODES).map(([k, t]) => `<option value="${k}"${k === v.mode ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+    <label>Voix <span class="det">(OpenAI : alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse)</span><input name="nom" value="${esc(v.nom)}" maxlength="30"></label>
+    <label style="display:flex;gap:.5rem;align-items:center;color:var(--fg);margin-top:1.4rem"><input type="checkbox" name="texte" value="on"${v.texteAussi ? " checked" : ""} style="width:auto;margin:0"> Envoyer aussi le texte</label>
+  </div>
+  <label>Comment il parle <span class="det">(ton, débit, accent — pris en compte par les modèles gpt-4o-mini-tts)</span>
+    <textarea name="consignes" maxlength="600" placeholder="Ex. : Voix posée et assurée, débit un peu rapide, ton complice. Français avec un léger accent d'Afrique centrale.">${esc(v.consignes)}</textarea></label>
+  <button class="principal">Enregistrer la voix</button>
+</form>
+<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="testvoix"><button${v.service ? "" : " disabled"}>Tester la voix sur mon WhatsApp</button></form>`;
+}
+
+/** Accès : le mot de passe qui permet d'ouvrir le panneau depuis n'importe où. */
+function sectionAcces(st: PanelState): string {
+  return `<h2 id="acces">Accès depuis n'importe où</h2>
+<p class="aide">${st.mdp
+    ? "Un mot de passe est défini : ouvre l'adresse du panneau depuis n'importe quel navigateur, tape-le, tu es dedans pour douze heures. Cinq erreurs bloquent l'adresse quinze minutes."
+    : "Aucun mot de passe : pour l'instant, on n'entre qu'avec un lien envoyé par le bot. Définis-en un pour ouvrir ce panneau comme n'importe quel site, depuis ton téléphone ou ton PC."}</p>
+<form class="ajout" method="post" autocomplete="off">
+  <input type="hidden" name="op" value="motdepasse">
+  <div class="grille">
+    <label>${st.mdp ? "Nouveau mot de passe" : "Mot de passe"} <span class="det">(${MDP_MIN} caractères minimum)</span><input name="mdp" type="password" minlength="${MDP_MIN}" autocomplete="new-password" required></label>
+    <label>Encore une fois<input name="mdp2" type="password" minlength="${MDP_MIN}" autocomplete="new-password" required></label>
+  </div>
+  <button class="principal">${st.mdp ? "Changer le mot de passe" : "Définir le mot de passe"}</button>
+</form>
+${st.mdp ? `<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="retirermdp"><button class="danger" onclick="return confirm('Retirer le mot de passe ? On ne pourra plus entrer qu\\'avec un lien du bot.')">Retirer le mot de passe</button></form>` : ""}`;
 }
 
 /**
@@ -213,7 +307,8 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Manzi Junior — panneau</title><meta name="robots" content="noindex">
 <style>${CSS}</style></head><body><main>
-<header><h1>Panneau</h1><span class="maj">à jour · ${esc(st.heure)}</span></header>
+<header><h1>${esc(st.perso.nom)} — panneau</h1><span class="maj">à jour · ${esc(st.heure)} · <a href="/logout" style="color:inherit">se déconnecter</a></span></header>
+<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
@@ -229,6 +324,11 @@ ${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé au
     <div class="barres">${st.jours.map((j) => `<div style="height:${Math.max(2, (j.usd / max) * 100)}%" title="${esc(j.jour)} · ${j.usd.toFixed(2)} $"></div>`).join("")}</div></div>
 </div>
 
+${sectionPersonnalite(st)}
+
+${sectionVoix(st)}
+
+<div id="services"></div>
 ${cats}
 
 <h2 id="formulaire">${e ? `Modifier « ${esc(e.label || e.id)} »` : "Ajouter un service"}</h2>
@@ -259,7 +359,7 @@ ${cats}
   ${e ? `<a class="b" href="/panel" style="margin-left:.6rem">Annuler</a>` : ""}
 </form>
 
-<h2>Qui a coûté, 24 dernières heures</h2>
+<h2 id="depense">Qui a coûté, 24 dernières heures</h2>
 <p class="aide">Par travail, et par modèle visé au départ. C'est la question qu'on se pose devant une facture : changer de modèle ne sert à rien si c'est une mission qui boucle. « Visé » et pas « facturé » : si la cascade est montée d'un cran sur un échec, c'est le suivant qui a encaissé — le tableau du dessous tranche, à partir d'aujourd'hui.</p>
 ${parMission}
 
@@ -275,7 +375,9 @@ ${conso}
   <button class="principal">Enregistrer le projet</button>
 </form>
 
-<h2>Approbations avant une action irréversible</h2>
+${sectionAcces(st)}
+
+<h2 id="approbations">Approbations avant une action irréversible</h2>
 <p class="aide">Quand c'est actif, un envoi d'e-mail ou un outil irréversible te demande « OUI-XXXX » sur WhatsApp avant de partir. Coupé, il part directement. ${st.approbations ? "Actif." : "<b>Coupé — tout s'exécute sans te demander.</b>"}</p>
 <form class="ajout" method="post">
   <input type="hidden" name="op" value="approbations">
@@ -283,7 +385,7 @@ ${conso}
   <button class="principal">${st.approbations ? "Couper les approbations" : "Réactiver les approbations"}</button>
 </form>
 
-<h2>Plafond journalier</h2>
+<h2 id="plafond">Plafond journalier</h2>
 <p class="aide">Global, tous services confondus. Au-delà, l'agent refuse de lancer une mission — c'est le garde-fou qui empêche une boucle de coûter une nuit entière.</p>
 <form class="ajout" method="post">
   <input type="hidden" name="op" value="budget">

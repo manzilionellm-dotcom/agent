@@ -50,6 +50,11 @@ export type Role = (typeof ROLES)[number];
 
 const ID_RE = /^[a-z][a-z0-9_-]{1,31}$/;
 
+/** Identifiants dont la catégorie ne se choisit pas : c'est leur nom qui la dit. */
+const SERVICES_RESERVES: Record<string, Category> = {
+  github: "dev", vercel: "dev", tavily: "recherche", serpapi: "recherche", voix: "autre",
+};
+
 function norm(r: ProviderRow): ProviderRow {
   return { ...r, priority: Number(r.priority), daily_cap_usd: Number(r.daily_cap_usd), enabled: Boolean(r.enabled) };
 }
@@ -102,7 +107,12 @@ export type NewProvider = {
 export async function putProvider(p: NewProvider): Promise<PublicProvider> {
   const id = p.id.trim().toLowerCase();
   if (!ID_RE.test(id)) throw new Error(`identifiant invalide : « ${p.id} » (minuscules, chiffres, - et _, 2 à 32 caractères)`);
-  const category: Category = p.category ?? "modele";
+  // Certains identifiants désignent un service précis. Enregistrés par
+  // mégarde en « modèle » (la catégorie par défaut du formulaire), ils
+  // entreraient dans le routage du chat : la clé de synthèse vocale se ferait
+  // interroger comme un cerveau. On les range d'office.
+  const reserve = SERVICES_RESERVES[id];
+  const category: Category = reserve ?? p.category ?? "modele";
   if (!CATEGORIES.includes(category)) throw new Error(`catégorie inconnue : ${category} (${CATEGORIES.join(", ")})`);
   const kind = p.kind ?? "openai_compat";
   if (category === "modele" && kind === "openai_compat" && p.apiKey && !p.baseUrl) {

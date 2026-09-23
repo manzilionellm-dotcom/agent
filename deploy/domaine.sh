@@ -104,8 +104,8 @@ Elle ne changera plus, même après un redémarrage. Mets-la en signet.
   $PUBLIC/vault     coffre d'identifiants
   $PUBLIC/screen    écran du navigateur du serveur
 
-Ces pages restent protégées : ouvrir l'adresse ne suffit pas, il faut un
-billet à usage unique. Demande-le au bot, ou :
-  bash deploy/panel-link.sh
+Pour entrer : $PUBLIC/login et ton mot de passe. Pas encore de mot de
+passe ? Entre une première fois avec un lien du bot (« envoie-moi le lien
+du panneau »), puis définis-le dans la section « Accès depuis n'importe où ».
 ────────────────────────────────────────────────────────────────
 EOF

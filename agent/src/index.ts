@@ -13,7 +13,7 @@ import { launch, startScheduler, stopScheduler, scheduledJobs, withLock, listSch
 import { runSwarm } from "./swarm/coordinator.js";
 import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
-import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
+import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, sendWhatsAppAudio, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 import { mediaToText } from "./channels/media.js";
 import { createAgent, getAgent, listAgents, deleteAgent, agentSpend } from "./agents/store.js";
 import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
@@ -24,6 +24,10 @@ import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredential
 import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
+import { livrerReponse } from "./voice.js";
+import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
+import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
+import { VOIX_MODES, synthese } from "./voice.js";
 import { bumpProviderPriority, deleteProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
@@ -92,15 +96,66 @@ async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: UR
     res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
     return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Demande-en un autre au bot, ou lance <code>bash deploy/vault-link.sh</code>.");
   }
-  // `Secure` seulement derrière HTTPS : posé toujours, le cookie serait
-  // rejeté lors d'un test local sur 127.0.0.1, et la page redemanderait un
-  // billet en boucle sans jamais dire pourquoi.
+  poserCookie(req, res, destination, 3600);
+}
+
+/**
+ * Pose le cookie de session et redirige.
+ *
+ * `Secure` seulement derrière HTTPS : posé toujours, le cookie serait
+ * rejeté lors d'un test local sur 127.0.0.1, et la page redemanderait un
+ * billet en boucle sans jamais dire pourquoi.
+ */
+function poserCookie(req: IncomingMessage, res: ServerResponse, destination: string, maxAge: number): void {
+  const token = config().ORCHESTRATOR_TOKEN ?? "";
   const https = (req.headers["x-forwarded-proto"] ?? "").toString().includes("https") || (config().PUBLIC_URL ?? "").startsWith("https");
   res.writeHead(302, {
     location: destination,
-    "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${https ? "; Secure" : ""}`,
+    "set-cookie": `manzi_vault=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${https ? "; Secure" : ""}`,
   });
   res.end();
+}
+
+/**
+ * Où revenir après connexion. Liste fermée : accepter n'importe quelle
+ * adresse en paramètre ferait de /login un tremplin vers un site piégé
+ * (« connecte-toi ici » → renvoyé chez un imitateur).
+ */
+const SUITES: Record<string, string> = { "/panel": "/panel", "/board": "/board", "/vault": "/vault", "/screen": SCREEN_ENTRY };
+
+function versConnexion(res: ServerResponse, suite: string): void {
+  res.writeHead(302, { location: `/login?suite=${encodeURIComponent(suite)}`, "cache-control": "no-store" });
+  res.end();
+}
+
+/**
+ * Connexion par mot de passe : l'adresse du panneau s'ouvre comme n'importe
+ * quel site, sans passer par le serveur ni par la conversation.
+ * Douze heures de session : assez pour une journée de travail, assez court
+ * pour qu'un téléphone oublié ne reste pas ouvert indéfiniment.
+ */
+async function loginRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const nom = (await personnalite().catch(() => undefined))?.nom;
+  const demandee = url.searchParams.get("suite") ?? "";
+  const page = (m = "", code = 200, suite = demandee) => {
+    res.writeHead(code, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    res.end(pageConnexion(m, nom, SUITES[suite] ? suite : ""));
+  };
+  if (!config().ORCHESTRATOR_TOKEN) return page("ORCHESTRATOR_TOKEN absent du serveur : connexion impossible.", 503);
+  if (req.method !== "POST") {
+    if (vaultCookieOk(req)) return void (res.writeHead(302, { location: SUITES[url.searchParams.get("suite") ?? ""] ?? "/panel" }), res.end());
+    return page(await motDePasseDefini() ? "" : "Aucun mot de passe défini pour l'instant. Entre avec un lien du bot, puis définis-le dans le panneau, section Accès.");
+  }
+  const f = new URLSearchParams((await readRawBody(req)).toString("utf8"));
+  const ip = adresse(req);
+  const voulue = f.get("suite") ?? "";
+  const r = await tenter(ip, f.get("mdp") ?? "");
+  if (!r.ok) {
+    logger.warn({ ip }, "connexion refusée");
+    return page(r.raison, 401, voulue);
+  }
+  logger.info({ ip }, "connexion au panneau par mot de passe");
+  poserCookie(req, res, SUITES[voulue] ?? "/panel", 12 * 3600);
 }
 
 /**
@@ -111,8 +166,7 @@ async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: UR
 async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/panel");
   if (!vaultCookieOk(req)) {
-    res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien : <code>bash deploy/vault-link.sh panel</code>");
+    return versConnexion(res, "/panel");
   }
 
   let notice = "";
@@ -158,6 +212,66 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "personnalite": {
+          const nom = g("nom").replace(/[\u0000-\u001f]/g, "").slice(0, NOM_MAX);
+          const choix = (cle: string, table: Record<string, unknown>): string => {
+            const v = g(cle);
+            if (!(v in table)) throw new Error(`valeur inconnue pour ${cle} : « ${v} »`);
+            return v;
+          };
+          await Promise.all([
+            setSetting("BOT_NOM", nom),
+            setSetting("BOT_CARACTERE", choix("caractere", CARACTERES)),
+            setSetting("BOT_REFLEXION", choix("reflexion", REFLEXIONS)),
+            setSetting("BOT_LONGUEUR", choix("longueur", LONGUEURS)),
+            setSetting("BOT_EMOJIS", choix("emojis", EMOJIS)),
+            setSetting("BOT_LANGUE", choix("langue", LANGUES)),
+            setSetting("BOT_LIBRE", (f.get("libre") ?? "").slice(0, LIBRE_MAX)),
+          ]);
+          notice = `Personnalité enregistrée. ${nom || "Il"} la prend au prochain message.`;
+          ton = "bon";
+          break;
+        }
+        case "voix": {
+          const mode = g("mode");
+          if (!(mode in VOIX_MODES)) throw new Error("mode de voix inconnu");
+          const nomVoix = g("nom") || "onyx";
+          if (!/^[a-z0-9_-]{1,30}$/i.test(nomVoix)) throw new Error("nom de voix invalide (lettres, chiffres, - et _)");
+          await Promise.all([
+            setSetting("VOIX_MODE", mode),
+            setSetting("VOIX_NOM", nomVoix),
+            setSetting("VOIX_CONSIGNES", (f.get("consignes") ?? "").slice(0, 600)),
+            // Case décochée = champ absent du formulaire : c'est « off ».
+            setSetting("VOIX_TEXTE_AUSSI", f.get("texte") === "on" ? "on" : "off"),
+          ]);
+          notice = mode === "off" ? "Voix coupée : il répond par écrit." : `Voix enregistrée (${VOIX_MODES[mode as keyof typeof VOIX_MODES].toLowerCase()}).`;
+          ton = "bon";
+          break;
+        }
+        case "testvoix": {
+          const to = primaryNumber();
+          if (!to) throw new Error("aucun numéro WhatsApp autorisé à qui l'envoyer");
+          const p = await personnalite();
+          const son = await synthese(`Salut Lionel, c'est ${p.nom}. Si tu m'entends, ma voix est branchée et je peux te répondre en vocal.`);
+          const envoi = await sendWhatsAppAudio(to, son);
+          if (!envoi.ok) throw new Error(envoi.error ?? "envoi refusé");
+          notice = "Note vocale envoyée sur ton WhatsApp. Écoute-la : si la voix te plaît, c'est réglé.";
+          ton = "bon";
+          break;
+        }
+        case "motdepasse": {
+          await definirMotDePasse(f.get("mdp") ?? "", f.get("mdp2") ?? "");
+          logger.info({ ip: adresse(req) }, "mot de passe du panneau défini");
+          notice = "Mot de passe enregistré. Tu peux maintenant ouvrir ce panneau depuis n'importe quel navigateur, à l'adresse /login.";
+          ton = "bon";
+          break;
+        }
+        case "retirermdp": {
+          await retirerMotDePasse();
+          notice = "Mot de passe retiré : on n'entre plus qu'avec un lien du bot.";
+          ton = "bad";
+          break;
+        }
         case "approbations": {
           const off = g("etat") === "off";
           await setSetting("APPROBATIONS", off ? "off" : "on");
@@ -198,8 +312,12 @@ async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL):
   if (url.searchParams.get("t")) return ticketToCookie(req, res, url, SCREEN_ENTRY);
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress, path: url.pathname }, "accès refusé à l'écran");
-    res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Ouvre le lien que le bot t'a envoyé, ou génère-en un : <code>bash deploy/vault-link.sh</code>.");
+    // L'entrée renvoie vers la connexion ; les fichiers internes de l'écran
+    // (scripts, flux) reçoivent un simple 401 — les rediriger vers une page
+    // HTML casserait le client sans rien expliquer.
+    if (url.pathname === "/screen" || url.pathname === "/screen/vnc.html") return versConnexion(res, "/screen");
+    res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
+    return void res.end("connexion requise");
   }
   if (url.pathname === "/screen") {
     res.writeHead(302, { location: SCREEN_ENTRY });
@@ -238,7 +356,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
 
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress }, "accès refusé au coffre");
-    return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien à usage unique sur le serveur :<br><code>ssh manzi@… 'cd manzi-junior &amp;&amp; bash deploy/vault-link.sh'</code>", 401);
+    return versConnexion(res, "/vault");
   }
 
   let notice = "";
@@ -319,7 +437,7 @@ async function whatsappWebhook(req: IncomingMessage, res: ServerResponse, url: U
       : Promise.resolve(m.text);
     void prepared
       .then((text) => handleChat({ channel: "whatsapp", peer: m.from, text, extId: m.id }))
-      .then((reply) => (reply ? sendWhatsApp(m.from, reply) : undefined))
+      .then((reply) => (reply ? livrerReponse(m.from, reply, { entrantVocal: m.media?.kind === "vocal" }) : undefined))
       .catch((e) => logger.error({ err: String(e) }, "whatsapp chat"));
   }
 }
@@ -344,6 +462,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // Bearer : un navigateur ne sait pas envoyer d'en-tête Authorization sur
   // un formulaire. Le jeton passe UNE fois en ?k=, est échangé contre un
   // cookie, et la redirection le retire immédiatement de la barre d'adresse.
+  if (url.pathname === "/login") return loginRoute(req, res, url);
+  if (url.pathname === "/logout") {
+    res.writeHead(302, { location: "/login", "set-cookie": "manzi_vault=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" });
+    return void res.end();
+  }
   if (url.pathname === "/vault") return vaultRoute(req, res, url);
   if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return screenRoute(req, res, url);
 
@@ -356,8 +479,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (url.pathname === "/board" || url.pathname === "/board.json") {
     if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/board");
     if (!vaultCookieOk(req)) {
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-      return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Accès refusé. Génère un lien : <code>bash deploy/board-link.sh</code>");
+      if (url.pathname === "/board.json") return json(res, 401, { error: "connexion requise" });
+      return versConnexion(res, "/board");
     }
     if (url.pathname === "/board.json") {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { createVaultTicket } from "../vault.js";
 import { dailyBudget, setSetting } from "../providers.js";
+import { composerPrompt } from "../personality.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -98,7 +99,7 @@ Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal
 
 Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report avant de dire « je ne sais pas ». Les préférences de l'opérateur vont dans remember_fact avec topic 'profil:...'.
 
-Réglages : « coupe les approbations » / « remets les approbations » / « monte le plafond à 20 » → outil reglage, immédiatement, sans demander confirmation. Tu confirmes en une ligne.
+Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « appelle-toi X » → outil reglage, immédiatement, sans demander confirmation. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer. C'est le seul ordre qui t'arrête.`;
 
@@ -225,10 +226,13 @@ function settingsTool() {
   return betaZodTool({
     name: "reglage",
     description:
-      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles (envoi d'e-mail, outils MCP) partent sans rien demander ; « on » = l'opérateur reçoit une demande OUI-XXXX. `plafond_jour` : le plafond de dépense quotidien en dollars. Exécute sans demander confirmation, puis confirme en une ligne.",
+      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase). `nom` : ton nom. Exécute sans demander confirmation, puis confirme en une ligne.",
     inputSchema: z.object({
       approbations: z.enum(["on", "off"]).optional(),
       plafond_jour: z.number().positive().max(500).optional().describe("Plafond quotidien en USD."),
+      voix: z.enum(["off", "si_vocal", "toujours"]).optional(),
+      caractere: z.enum(["executant", "associe", "complice", "mentor"]).optional(),
+      nom: z.string().min(1).max(40).optional(),
     }),
     run: async (i) => {
       const faits: string[] = [];
@@ -244,7 +248,19 @@ function settingsTool() {
         await setSetting("DAILY_BUDGET_USD", String(i.plafond_jour));
         faits.push(`plafond du jour porté à ${i.plafond_jour} $`);
       }
-      if (!faits.length) return "Error: rien à changer — précise approbations et/ou plafond_jour.";
+      if (i.voix) {
+        await setSetting("VOIX_MODE", i.voix);
+        faits.push(i.voix === "off" ? "je réponds par écrit" : i.voix === "toujours" ? "je réponds aussi en vocal, à chaque fois" : "je réponds en vocal quand tu me parles en vocal");
+      }
+      if (i.caractere) {
+        await setSetting("BOT_CARACTERE", i.caractere);
+        faits.push(`caractère : ${i.caractere}`);
+      }
+      if (i.nom) {
+        await setSetting("BOT_NOM", i.nom.replace(/[\u0000-\u001f]/g, "").trim());
+        faits.push(`je m'appelle maintenant ${i.nom.trim()}`);
+      }
+      if (!faits.length) return "Error: rien à changer — précise au moins un réglage.";
       logger.info({ reglages: faits }, "réglage changé depuis le chat");
       return `${faits.join(", ")}. Effet immédiat.`;
     },
@@ -542,7 +558,9 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   // Claude en dernier recours. `runRouted` ne monte d'un cran que sur un
   // échec constaté, jamais sur une impression de qualité.
   const res = await runRouted("chat", {
-    system: CHAT_SYSTEM,
+    // La personnalité se relit à chaque message : un réglage changé au
+    // panneau se voit à la réponse suivante, sans redémarrage.
+    system: await composerPrompt(CHAT_SYSTEM),
     task,
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui

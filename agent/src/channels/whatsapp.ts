@@ -197,6 +197,43 @@ export async function sendWhatsAppImage(to: string, sandboxPath: string, caption
   return { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
 }
 
+/**
+ * Envoie une note vocale (Ogg/Opus) fabriquée par l'orchestrateur lui-même.
+ *
+ * Contrairement aux captures, le son naît ICI (réponse de l'API de synthèse),
+ * pas dans le sandbox : on téléverse donc directement, sans détour par
+ * `curl`. Le jeton ne passe par aucune ligne de commande — il reste dans
+ * l'en-tête d'une requête faite par ce processus.
+ *
+ * `audio/ogg` + Opus est le seul format que WhatsApp affiche comme une note
+ * vocale (la bulle avec l'onde) ; un MP3 arrive comme un fichier joint.
+ */
+export async function sendWhatsAppAudio(to: string, audio: Buffer): Promise<{ ok: boolean; error?: string }> {
+  const cfg = config();
+  if (cfg.WHATSAPP_PROVIDER !== "meta") return { ok: false, error: "note vocale disponible uniquement avec le fournisseur meta" };
+  if (!audio.length) return { ok: false, error: "son vide" };
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", "audio/ogg");
+  form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/ogg" }), "voix.ogg");
+  const up = await fetch(`${META_API}/${cfg.WHATSAPP_PHONE_NUMBER_ID}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${cfg.WHATSAPP_ACCESS_TOKEN}` },
+    body: form,
+  }).catch((e: unknown) => ({ ok: false, status: 0, json: async () => ({ error: { message: String(e) } }) }) as unknown as Response);
+  const j = (await up.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
+  if (!up.ok || !j.id) {
+    logger.error({ status: up.status, error: j.error }, "téléversement audio whatsapp échoué");
+    return { ok: false, error: `téléversement refusé par Meta (${j.error?.message ?? up.status})` };
+  }
+  const sent = await sendMeta(to, { type: "audio", audio: { id: j.id } });
+  if (sent) return { ok: true };
+  if (lastMetaError?.code === 131047 || lastMetaError?.code === 131026) {
+    return { ok: false, error: "note vocale refusée : plus de 24 h depuis le dernier message de l'opérateur" };
+  }
+  return { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
+}
+
 /** Message hors fenêtre 24 h (Meta) : passe par le modèle approuvé `WHATSAPP_TEMPLATE_NAME` avec un paramètre texte. */
 export async function sendWhatsAppTemplate(to: string, bodyParam: string): Promise<boolean> {
   const cfg = config();
