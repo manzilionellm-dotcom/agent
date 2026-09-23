@@ -186,6 +186,38 @@ export function vaultPage(entries: { site: string; login: string; url: string; h
 ${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
 ${enabled ? "" : `<p class="notice warn">VAULT_KEY n'est pas définie dans le .env : le coffre est en lecture seule. Génère-la avec <code>openssl rand -base64 32</code>, puis <code>bash deploy/set-env.sh --stdin</code>.</p>`}
 
+<h2>Importer tous mes mots de passe</h2>
+<p class="sub">Le bot pourra se connecter à chacun de ces sites tout seul. Il ne voit jamais les mots de passe : c'est le coffre qui les tape, et uniquement sur leur propre site.</p>
+<details><summary>Comment obtenir le fichier (2 minutes)</summary>
+<ul>
+<li><b>Téléphone Android (Chrome)</b> : Chrome → ⋮ → Paramètres → Gestionnaire de mots de passe Google → ⚙ Paramètres → <i>Exporter les mots de passe</i>. Le fichier va dans Téléchargements.</li>
+<li><b>Ordinateur (Chrome)</b> : ouvre <code>chrome://password-manager/settings</code> → <i>Exporter les mots de passe</i>.</li>
+<li><b>iPhone</b> : app Mots de passe → Fichier / ⋯ → <i>Exporter les mots de passe</i>.</li>
+<li><b>Firefox, Bitwarden, 1Password</b> : leur export CSV marche aussi.</li>
+</ul>
+</details>
+<form method="post" id="import" autocomplete="off">
+<input type="hidden" name="op" value="importer">
+<textarea name="csv" id="csv" hidden></textarea>
+<label>Fichier exporté (.csv)<input type="file" id="fichier" accept=".csv,text/csv,text/plain" ${enabled ? "" : "disabled"}></label>
+<button ${enabled ? "" : "disabled"}>Importer</button>
+<p class="muted" id="etat-import">Après l'import, supprime le fichier de ton appareil : il contient tous tes mots de passe en clair.</p>
+</form>
+<script>
+(() => {
+  const f = document.getElementById("import");
+  f.addEventListener("submit", async (e) => {
+    const fichier = document.getElementById("fichier").files[0];
+    if (!fichier) { e.preventDefault(); document.getElementById("etat-import").textContent = "Choisis d'abord le fichier."; return; }
+    if (document.getElementById("csv").value) return;
+    e.preventDefault();
+    document.getElementById("csv").value = await fichier.text();
+    document.getElementById("etat-import").textContent = "Import en cours…";
+    f.submit();
+  });
+})();
+</script>
+
 <h2>Ajouter ou remplacer</h2>
 <form method="post" autocomplete="off">
 <input type="hidden" name="op" value="put">

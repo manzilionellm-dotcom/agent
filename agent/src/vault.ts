@@ -268,3 +268,117 @@ export function totpCode(secret: string, at: number = Date.now()): string {
 export function totpRemaining(at: number = Date.now()): number {
   return 30 - Math.floor(at / 1000) % 30;
 }
+
+/* --- Import d'un gestionnaire de mots de passe ------------------------------- */
+
+/**
+ * Lit un CSV (RFC 4180) : guillemets, virgules et retours à la ligne dans les
+ * champs. Un mot de passe peut contenir tout ça ; un découpage naïf sur les
+ * virgules en aurait coupé et mélangé.
+ */
+export function lireCsv(texte: string): string[][] {
+  const lignes: string[][] = [];
+  let ligne: string[] = [], champ = "", guillemets = false;
+  const t = texte.replace(/^﻿/, "");
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]!;
+    if (guillemets) {
+      if (c === '"') {
+        if (t[i + 1] === '"') { champ += '"'; i++; } else guillemets = false;
+      } else champ += c;
+    } else if (c === '"') guillemets = true;
+    else if (c === ",") { ligne.push(champ); champ = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && t[i + 1] === "\n") i++;
+      ligne.push(champ); champ = "";
+      if (ligne.some((x) => x !== "")) lignes.push(ligne);
+      ligne = [];
+    } else champ += c;
+  }
+  ligne.push(champ);
+  if (ligne.some((x) => x !== "")) lignes.push(ligne);
+  return lignes;
+}
+
+/** Les noms de colonnes des exports courants : Chrome/Google, Firefox, Bitwarden, iCloud/Safari, 1Password. */
+const COLONNES = {
+  url: ["url", "login_uri", "website", "web site", "urls"],
+  login: ["username", "login_username", "login", "user name", "email"],
+  secret: ["password", "login_password"],
+  totp: ["login_totp", "otpauth", "totp", "one-time password", "otp"],
+  nom: ["name", "title"],
+};
+
+function secretTotp(v: string): string | undefined {
+  const s = v.trim();
+  if (!s) return undefined;
+  if (s.startsWith("otpauth://")) {
+    try {
+      return new URL(s).searchParams.get("secret") ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return s;
+}
+
+export type BilanImport = { importes: number; remplaces: number; ignores: Array<{ ligne: string; raison: string }> };
+
+/**
+ * Importe l'export d'un gestionnaire de mots de passe dans le coffre.
+ *
+ * Un site = un compte (c'est la clé du coffre) : plusieurs comptes pour un
+ * même site, on garde le premier et on le dit. Les entrées d'applications
+ * Android (android://…) n'ont pas de page web où se connecter : ignorées.
+ * Rien de ce fichier n'est journalisé ni gardé en clair : chaque mot de
+ * passe est chiffré ligne par ligne, et le texte du fichier n'est tenu qu'en
+ * mémoire le temps de la requête.
+ */
+export async function importerMotsDePasse(csv: string): Promise<BilanImport> {
+  if (!vaultEnabled()) throw new Error("VAULT_KEY absente du .env : impossible de chiffrer, donc d'importer");
+  const lignes = lireCsv(csv);
+  if (lignes.length < 2) throw new Error("fichier vide ou illisible : attendu l'export CSV de ton gestionnaire de mots de passe");
+  const entetes = lignes[0]!.map((h) => h.trim().toLowerCase());
+  const col = (noms: string[]): number => entetes.findIndex((h) => noms.includes(h));
+  const iUrl = col(COLONNES.url), iLogin = col(COLONNES.login), iSecret = col(COLONNES.secret), iTotp = col(COLONNES.totp), iNom = col(COLONNES.nom);
+  if (iUrl < 0 || iSecret < 0) throw new Error(`colonnes introuvables (reçu : ${entetes.slice(0, 8).join(", ")}) — attendu au moins une adresse et un mot de passe`);
+
+  const existants = new Set((await db().query<{ site: string }>(`SELECT site FROM credentials`)).rows.map((r) => r.site));
+  const vus = new Set<string>();
+  const bilan: BilanImport = { importes: 0, remplaces: 0, ignores: [] };
+  for (const l of lignes.slice(1)) {
+    const url = (l[iUrl] ?? "").split(/[\s,]+/)[0]!.trim();
+    const login = iLogin >= 0 ? (l[iLogin] ?? "").trim() : "";
+    const secret = l[iSecret] ?? "";
+    const nomLigne = (iNom >= 0 && l[iNom]) || url || "(sans nom)";
+    if (!url || /^android:\/\//i.test(url)) { bilan.ignores.push({ ligne: nomLigne, raison: "application mobile, pas de site web" }); continue; }
+    if (!secret) { bilan.ignores.push({ ligne: nomLigne, raison: "mot de passe vide" }); continue; }
+    if (!login) { bilan.ignores.push({ ligne: nomLigne, raison: "identifiant vide" }); continue; }
+    let site: string;
+    try {
+      site = normalizeSite(url.includes("://") ? url : `https://${url}`);
+      if (!site.includes(".")) throw new Error("pas un nom de site");
+    } catch {
+      bilan.ignores.push({ ligne: nomLigne, raison: "adresse illisible" });
+      continue;
+    }
+    if (vus.has(site)) { bilan.ignores.push({ ligne: `${site} (${login})`, raison: "deuxième compte pour ce site — le coffre en garde un par site" }); continue; }
+    vus.add(site);
+    const totp = iTotp >= 0 ? secretTotp(l[iTotp] ?? "") : undefined;
+    const pageConnexion = /^https?:\/\//i.test(url) ? url : `https://${site}/`;
+    try {
+      await putCredential({ site, login, secret, totp, url: pageConnexion, note: "importé" });
+    } catch {
+      // Clé 2FA d'un format inattendu : le compte vaut mieux sans elle que pas du tout.
+      try {
+        await putCredential({ site, login, secret, url: pageConnexion, note: "importé (sans 2FA : clé illisible)" });
+      } catch (e) {
+        bilan.ignores.push({ ligne: site, raison: e instanceof Error ? e.message.slice(0, 80) : "refusé" });
+        continue;
+      }
+    }
+    if (existants.has(site)) bilan.remplaces++;
+    else bilan.importes++;
+  }
+  return bilan;
+}

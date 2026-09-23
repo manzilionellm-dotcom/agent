@@ -20,7 +20,7 @@ import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
 import { startRuntime, stopRuntime } from "./agents/runtime.js";
 import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
-import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
+import { consumeVaultTicket, createVaultTicket, forgetCredential, importerMotsDePasse, listCredentials, putCredential, vaultEnabled } from "./vault.js";
 import { pageEcran, proxyScreen, proxyScreenSocket } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
@@ -547,6 +547,15 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     try {
       if (get("op") === "delete") {
         notice = (await forgetCredential(get("site"))) ? `${get("site")} supprimé.` : `${get("site")} n'était pas enregistré.`;
+      } else if (get("op") === "importer") {
+        // Le contenu du fichier n'est JAMAIS journalisé : il contient tous les
+        // mots de passe en clair. Seul le bilan (des noms de sites) sort d'ici.
+        const b = await importerMotsDePasse(form.get("csv") ?? "");
+        logger.info({ importes: b.importes, remplaces: b.remplaces, ignores: b.ignores.length }, "mots de passe importés dans le coffre");
+        const ign = b.ignores.length
+          ? ` ${b.ignores.length} ignoré(s) : ${b.ignores.slice(0, 12).map((x) => `${x.ligne} (${x.raison})`).join(" ; ")}${b.ignores.length > 12 ? "…" : ""}.`
+          : "";
+        notice = `${b.importes} site(s) ajouté(s), ${b.remplaces} mis à jour.${ign} Supprime maintenant le fichier CSV de ton appareil : il contient tous tes mots de passe en clair.`;
       } else {
         const saved = await putCredential({ site: get("site"), login: get("login"), secret: form.get("secret") ?? "", totp: get("totp") || undefined, url: get("url") || undefined, note: get("note") });
         notice = `${saved.site} enregistré pour ${saved.login}${saved.has_totp ? " (double authentification incluse)" : ""}.`;

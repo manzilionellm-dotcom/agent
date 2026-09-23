@@ -303,7 +303,7 @@ ${connus ? `<form class="ajout" method="post">
 
 <p class="aide" style="margin-top:1.2rem"><b>Qu'il se connecte seul, même quand la session expire :</b> mets l'identifiant et le mot de passe au <a href="/vault">coffre</a>. Ils y sont chiffrés, il les tape lui-même dans la page, et ne les voit jamais.</p>
 ${coffre}
-<div class="act" style="margin-top:.5rem"><a class="b" href="/vault">Ajouter un site au coffre</a></div>`;
+<div class="act" style="margin-top:.5rem"><a class="b encours" href="/vault#import">Importer tous mes mots de passe</a><a class="b" href="/vault">Ajouter un site au coffre</a></div>`;
 }
 
 /** Accès : le mot de passe qui permet d'ouvrir le panneau depuis n'importe où. */
