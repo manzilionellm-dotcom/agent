@@ -1,3 +1,4 @@
+import { dansTrace } from "./boite-noire.js";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { db } from "./memory/db.js";
@@ -148,7 +149,7 @@ export async function passerDeclencheurs(livrer: Livreur, traiter: Traiteur = tr
       if (!marque.rowCount) continue;
       let resultat: string;
       try {
-        resultat = await traiter(d, m);
+        resultat = await dansTrace("email", `${d.nom} — ${m.objet || "(sans objet)"}`, () => traiter(d, m));
       } catch (e) {
         resultat = `je n'ai pas pu le traiter : ${String(e).slice(0, 200)}`;
       }

@@ -1,3 +1,5 @@
+import { dansTrace, enregistrer } from "../boite-noire.js";
+import { outilDiagnostic } from "../inspecteur.js";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
@@ -117,6 +119,7 @@ Rappels et tâches : « rappelle-moi… », « chaque matin/lundi/jour à… »,
 
 Mémoire : « oublie que… », « efface ce que tu sais sur… », « ce n'est plus vrai que… » → outil oublier, puis cite ce qui a été effacé. Lionel voit et efface aussi sa mémoire sur le panneau.
 
+Diagnostic : « qu'est-ce qui ne va pas ? », « pourquoi t'as raté ? », « qu'est-ce que t'as fait ce matin ? », « tu vas bien ? » → outil diagnostic (etat, scanner, boite_noire, trace). Tu réponds avec ce que tu y LIS — la panne, la preuve, le remède — jamais avec une supposition. Pour le détail visuel : lien_panneau section diagnostic ou boitenoire.
 Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « appelle-toi X » → outil reglage, immédiatement, sans demander confirmation. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer. C'est le seul ordre qui t'arrête.`;
@@ -535,7 +538,16 @@ export async function handleChat(opts: { channel: "whatsapp" | "api"; peer: stri
     if (dup.rowCount) return "";
   }
   const prev = queues.get(opts.peer) ?? Promise.resolve();
-  const next = prev.then(() => respond(opts)).catch((e) => {
+  // Chaque message est un travail de la boîte noire : ce qui a été reçu, tout
+  // ce qu'il a fait pour répondre, et ce qu'il a répondu, d'un seul tenant.
+  const next = prev.then(() =>
+    dansTrace("conversation", opts.text.trim().slice(0, 120) || "(message vide)", async () => {
+      enregistrer({ type: "entree", titre: `Message reçu (${opts.channel})`, detail: opts.text.slice(0, 2000) });
+      const r = await respond(opts);
+      enregistrer({ type: "reponse", titre: r ? "Réponse envoyée" : "Aucune réponse", detail: r.slice(0, 2000), ok: Boolean(r), niveau: r ? "info" : "warn" });
+      return r;
+    }),
+  ).catch((e) => {
     logger.error({ err: String(e) }, "chat");
     return "Je bute sur une erreur interne, réessaie dans une minute.";
   });
@@ -593,7 +605,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

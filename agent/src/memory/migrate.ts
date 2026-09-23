@@ -318,6 +318,82 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (declencheur_id, message_id)
    )`,
 
+  // Boîte noire : chaque travail (conversation, mission, rappel, e-mail) est
+  // une trace ; chaque chose faite pendant ce travail — message reçu, appel
+  // de modèle, outil, envoi WhatsApp, erreur — en est une étape, horodatée,
+  // chronométrée, chiffrée. `interrompue` marque ce qu'un arrêt a coupé net :
+  // un crash ne laisse aucune ligne d'erreur, seulement un travail sans fin.
+  `CREATE TABLE IF NOT EXISTS traces (
+     id          TEXT PRIMARY KEY,
+     type        TEXT NOT NULL,
+     titre       TEXT NOT NULL DEFAULT '',
+     debut       TIMESTAMPTZ NOT NULL DEFAULT now(),
+     fin         TIMESTAMPTZ,
+     ok          BOOLEAN,
+     interrompue BOOLEAN NOT NULL DEFAULT false,
+     etapes      INTEGER NOT NULL DEFAULT 0,
+     erreurs     INTEGER NOT NULL DEFAULT 0,
+     usd         NUMERIC(10,4) NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS traces_debut ON traces (debut DESC)`,
+  `CREATE TABLE IF NOT EXISTS boite_noire (
+     id        BIGSERIAL PRIMARY KEY,
+     trace_id  TEXT,
+     ts        TIMESTAMPTZ NOT NULL DEFAULT now(),
+     type      TEXT NOT NULL,
+     niveau    TEXT NOT NULL DEFAULT 'info',
+     titre     TEXT NOT NULL DEFAULT '',
+     detail    TEXT NOT NULL DEFAULT '',
+     ok        BOOLEAN NOT NULL DEFAULT true,
+     duree_ms  INTEGER,
+     usd       NUMERIC(10,4) NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS boite_noire_trace ON boite_noire (trace_id, id)`,
+  `CREATE INDEX IF NOT EXISTS boite_noire_ts ON boite_noire (ts DESC)`,
+  `CREATE INDEX IF NOT EXISTS boite_noire_type_ts ON boite_noire (type, ts DESC)`,
+
+  // Inspecteur : un passage par jour sur la boîte noire et le reste de la
+  // base. `problemes` est la mémoire des défauts d'un jour à l'autre — sans
+  // elle, on ne saurait dire ni « nouveau », ni « aggravé », ni « revenu ».
+  `CREATE TABLE IF NOT EXISTS inspections (
+     id            BIGSERIAL PRIMARY KEY,
+     at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+     declencheur   TEXT NOT NULL DEFAULT 'auto',
+     sante         INTEGER NOT NULL,
+     ouverts       INTEGER NOT NULL DEFAULT 0,
+     critiques     INTEGER NOT NULL DEFAULT 0,
+     hautes        INTEGER NOT NULL DEFAULT 0,
+     duree_ms      INTEGER NOT NULL DEFAULT 0,
+     analyse_etat  TEXT NOT NULL DEFAULT 'aucune',
+     priorite      TEXT NOT NULL DEFAULT '',
+     ecartes       INTEGER NOT NULL DEFAULT 0,
+     analyse_usd   NUMERIC(10,4) NOT NULL DEFAULT 0
+   )`,
+  `CREATE TABLE IF NOT EXISTS problemes (
+     signature   TEXT PRIMARY KEY,
+     source      TEXT NOT NULL,
+     gravite     TEXT NOT NULL,
+     titre       TEXT NOT NULL,
+     detail      TEXT NOT NULL DEFAULT '',
+     correction  TEXT NOT NULL DEFAULT '',
+     section     TEXT NOT NULL DEFAULT '',
+     exemples    JSONB NOT NULL DEFAULT '[]'::jsonb,
+     traces      JSONB NOT NULL DEFAULT '[]'::jsonb,
+     occurrences INTEGER NOT NULL DEFAULT 0,
+     usd         NUMERIC(10,4) NOT NULL DEFAULT 0,
+     vu_fois     INTEGER NOT NULL DEFAULT 0,
+     premiere    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     derniere    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     statut      TEXT NOT NULL DEFAULT 'ouvert',
+     tendance    TEXT NOT NULL DEFAULT 'nouveau',
+     cause       TEXT NOT NULL DEFAULT '',
+     remede      TEXT NOT NULL DEFAULT '',
+     qui         TEXT NOT NULL DEFAULT '',
+     confiance   TEXT NOT NULL DEFAULT '',
+     ticket      TEXT NOT NULL DEFAULT '',
+     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

@@ -1,3 +1,4 @@
+import { dansTrace, enregistrer } from "../boite-noire.js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
@@ -278,6 +279,19 @@ Cette consigne est l'ordre du jour. Là où elle contredit les étapes ci-dessus
 }
 
 export async function runMission(m: Mission, opts: { signal?: AbortSignal; brief?: string } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
+  return dansTrace("mission", m.name, async () => {
+    const r = await runMissionBrut(m, opts);
+    enregistrer({
+      type: "mission",
+      titre: `Mission ${m.name} : ${r.status === "ok" ? "réussie" : r.status === "budget" ? "budget épuisé" : "échec"}`,
+      detail: r.text.slice(-1500),
+      ok: r.status === "ok",
+    });
+    return r;
+  });
+}
+
+async function runMissionBrut(m: Mission, opts: { signal?: AbortSignal; brief?: string }): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
   const cfg = config();
   const target = resolveModel(m.model);
   const episodeId = await openEpisode(m.name, { model: target.model, provider: target.provider, effort: m.effort });

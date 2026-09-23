@@ -1,3 +1,4 @@
+import { dansTrace } from "../boite-noire.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { emitEvent } from "../events.js";
@@ -75,6 +76,10 @@ async function outilsIndisponibles(toolset: string): Promise<string | undefined>
  * un humain se bloque au lieu de consommer des tentatives pour rien.
  */
 async function execute(task: TaskRow): Promise<void> {
+  return dansTrace("tache", task.title, () => executeBrut(task));
+}
+
+async function executeBrut(task: TaskRow): Promise<void> {
   const agent = await getAgent(task.agent_id);
   if (!agent) {
     await failTask(task.id, `agent ${task.agent_id} introuvable`, { permanent: true });

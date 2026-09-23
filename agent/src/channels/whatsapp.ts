@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { sandboxExec, shellQuote } from "../tools/sandbox.js";
+import { enregistrer } from "../boite-noire.js";
 
 /**
  * WhatsApp Business : deux fournisseurs interchangeables.
@@ -283,18 +284,38 @@ let lastMetaError: { code?: number; message?: string } | undefined;
 
 async function sendMeta(to: string, payload: Record<string, unknown>): Promise<boolean> {
   const cfg = config();
+  const debut = Date.now();
+  const quoi = String(payload.type ?? "message");
+  const apercu = quoi === "text" ? (payload.text as { body?: string })?.body?.slice(0, 200) : quoi === "template" ? "(modèle approuvé)" : `(${quoi})`;
   const res = await fetch(`${META_API}/${cfg.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${cfg.WHATSAPP_ACCESS_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, ...payload }),
+  }).catch((e: unknown) => {
+    enregistrer({ type: "livraison", titre: `WhatsApp ${quoi} : réseau injoignable`, detail: String(e), ok: false, dureeMs: Date.now() - debut });
+    throw e;
   });
   if (res.ok) {
     lastMetaError = undefined;
+    enregistrer({ type: "livraison", titre: `WhatsApp ${quoi} envoyé`, detail: apercu, dureeMs: Date.now() - debut });
     return true;
   }
   const body = (await res.json().catch(() => ({}))) as { error?: { code?: number; message?: string } };
   lastMetaError = body.error;
-  logger.error({ status: res.status, error: body.error }, "whatsapp meta échec");
+  // Hors fenêtre de 24 h, le refus est ATTENDU et rattrapé par le modèle
+  // approuvé : c'est un avertissement, pas une panne. Le classer en erreur
+  // noyait les vraies dans le diagnostic.
+  const horsFenetre = body.error?.code === 131047 || body.error?.code === 131026;
+  if (horsFenetre) logger.warn({ status: res.status, code: body.error?.code }, "whatsapp hors fenêtre 24 h");
+  else logger.error({ status: res.status, error: body.error }, "whatsapp meta échec");
+  enregistrer({
+    type: "livraison",
+    titre: horsFenetre ? `WhatsApp ${quoi} hors fenêtre 24 h` : `WhatsApp ${quoi} refusé`,
+    detail: { apercu, statut: res.status, erreur: body.error },
+    ok: false,
+    niveau: horsFenetre ? "warn" : "error",
+    dureeMs: Date.now() - debut,
+  });
   return false;
 }
 
@@ -308,5 +329,6 @@ async function sendTwilio(to: string, body: string): Promise<boolean> {
     body: form,
   });
   if (!res.ok) logger.error({ status: res.status, body: (await res.text()).slice(0, 300) }, "whatsapp twilio échec");
+  enregistrer({ type: "livraison", titre: res.ok ? "WhatsApp (Twilio) envoyé" : "WhatsApp (Twilio) refusé", detail: body.slice(0, 200), ok: res.ok });
   return res.ok;
 }

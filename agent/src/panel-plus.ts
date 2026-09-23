@@ -63,7 +63,7 @@ const esc = (s: unknown): string =>
  * part SANS rien demander — « Tout oublier » effaçait tout d'un clic. Et un
  * nom de compétence choisi pour ça aurait exécuté du code dans la page.
  */
-function action(op: string, champs: Record<string, string | number>, texte: string, classe = "", confirmer = ""): string {
+export function action(op: string, champs: Record<string, string | number>, texte: string, classe = "", confirmer = ""): string {
   const caches = Object.entries(champs).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("");
   const conf = confirmer ? ` onclick="return confirm(${esc(JSON.stringify(confirmer))})"` : "";
   return `<form method="post" style="display:inline"><input type="hidden" name="op" value="${op}">${caches}<button class="${classe}"${conf}>${texte}</button></form>`;

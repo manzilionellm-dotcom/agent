@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { enregistrer, instrumenter } from "./boite-noire.js";
 
 /**
  * Cœur LLM : une seule fonction `runAgent()` qui encapsule la boucle
@@ -113,7 +114,42 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * Tout appel de modèle passe par ici, et donc par la boîte noire : quel
+ * modèle, combien de tours, combien de jetons, combien de temps, combien
+ * d'argent, pourquoi il s'est arrêté. Les outils qu'on lui confie sont
+ * enveloppés au passage, pour que chacun de leurs appels s'y inscrive aussi.
+ */
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
+  const debut = Date.now();
+  const hote = (() => {
+    try {
+      return opts.baseUrl ? new URL(opts.baseUrl).host : (opts.provider ?? config().LLM_PROVIDER);
+    } catch {
+      return String(opts.provider ?? "");
+    }
+  })();
+  const titre = `${opts.model} · ${hote}`;
+  try {
+    const r = await runAgentBrut({ ...opts, tools: instrumenter(opts.tools) });
+    const rate = ["refusal", "loop_detected", "timeout", "budget_exceeded"].includes(String(r.stopReason));
+    enregistrer({
+      type: "modele",
+      titre,
+      detail: { tours: r.usage.iterations, jetons_entree: r.usage.inputTokens, jetons_sortie: r.usage.outputTokens, arret: r.stopReason, texte: r.finalText.slice(0, 400) },
+      ok: !rate,
+      niveau: rate ? "warn" : "info",
+      dureeMs: Date.now() - debut,
+      usd: r.usage.usd,
+    });
+    return r;
+  } catch (e) {
+    enregistrer({ type: "modele", titre, detail: { erreur: String(e).slice(0, 1500) }, ok: false, dureeMs: Date.now() - debut });
+    throw e;
+  }
+}
+
+async function runAgentBrut(opts: AgentRunOptions): Promise<AgentRunResult> {
   const cfg = config();
   if ((opts.provider ?? cfg.LLM_PROVIDER) === "openai_compat") {
     const { runOpenAICompat } = await import("./llm/openaiCompat.js");

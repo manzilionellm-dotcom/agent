@@ -20,7 +20,7 @@ import { sendWhatsAppImage } from "./channels/whatsapp.js";
  */
 const [name, ...rest] = process.argv.slice(2);
 if (!name) {
-  console.log("usage: mission <nom> | report | swarm \"<objectif>\" | vault-link [page] | test-capture [numéro]");
+  console.log("usage: mission <nom> | report | swarm \"<objectif>\" | vault-link [page] | test-capture [numéro] | inspecter [sans-ia]");
   console.log("missions:", MISSIONS.map((m) => `${m.name} (${m.cron})`).join(", "));
   process.exit(1);
 }
@@ -32,7 +32,7 @@ if (!name) {
   // l'adresse — sous des pages de JSON, au point qu'on la recopiait de
   // travers. Une commande dont la sortie est illisible est une commande
   // qu'on utilise mal.
-  const leger = name === "vault-link" || name === "test-capture";
+  const leger = name === "vault-link" || name === "test-capture" || name === "inspecter";
   if (!leger) await connectMcpServers();
   try {
     if (name === "vault-link") {
@@ -75,6 +75,13 @@ if (!name) {
       console.log("     ok");
 
       console.log("4/4  regarde ton WhatsApp : l'image doit y être.\n");
+    } else if (name === "inspecter") {
+      // Diagnostic immédiat, lisible dans le terminal : les constats tout de
+      // suite, l'analyse IA attendue avant de rendre la main.
+      const { inspecter, rapportDeveloppeur } = await import("./inspecteur.js");
+      const r = await inspecter({ declencheur: "manuel", analyse: rest[0] !== "sans-ia", attendreAnalyse: true });
+      console.log(`santé ${r.inspection.sante}/100 — ${r.inspection.ouverts} problème(s)\n`);
+      console.log(await rapportDeveloppeur());
     } else if (name === "report") {
       console.log(await buildAndDeliverReport());
     } else if (name === "swarm") {

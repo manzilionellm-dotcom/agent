@@ -25,6 +25,9 @@ import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
 import { estSection } from "./panel-sections.js";
+import { lireVue } from "./panel-diagnostic.js";
+import { dansTrace, ouvrirBoiteNoire, viderBoiteNoire } from "./boite-noire.js";
+import { creerTicket, demarrerInspecteur, inspecter, marquerProbleme, reglerInspecteur, type Reglages } from "./inspecteur.js";
 import { livrerReponse } from "./voice.js";
 import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
@@ -404,6 +407,45 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           ton = "bon";
           break;
         }
+        case "inspecter": {
+          const r = await inspecter({ declencheur: "manuel", analyse: g("ia") !== "off" });
+          notice = `Inspection faite : santé ${r.inspection.sante}/100, ${r.inspection.ouverts} problème(s).${r.analyse ? " L'analyse IA tourne : recharge la page dans une minute." : ""}`;
+          ton = r.inspection.sante >= 85 ? "bon" : "";
+          break;
+        }
+        case "probleme": {
+          const statut = g("statut");
+          if (statut !== "ouvert" && statut !== "resolu" && statut !== "ignore") throw new Error("statut inconnu");
+          if (!(await marquerProbleme(g("sig"), statut))) throw new Error("problème introuvable");
+          notice = statut === "resolu" ? "Noté comme réglé. S'il revient, il sera signalé « revenu après réparation »." : statut === "ignore" ? "Ignoré : il ne compte plus dans la santé." : "Rouvert.";
+          ton = "bon";
+          break;
+        }
+        case "probleme_ticket": {
+          const url = await creerTicket(g("sig"));
+          notice = `Ticket GitHub créé : ${url}`;
+          ton = "bon";
+          break;
+        }
+        case "inspecteur_reglages": {
+          const ret = Number(g("retention"));
+          await reglerInspecteur({
+            heure: g("heure"),
+            ia: g("ia") !== "off",
+            whatsapp: g("whatsapp") as Reglages["whatsapp"],
+            retention: ret,
+          });
+          notice = `Inspecteur réglé : passage chaque jour à ${g("heure")}.`;
+          ton = "bon";
+          break;
+        }
+        case "boite_noire_vider": {
+          await viderBoiteNoire();
+          logger.info("boîte noire vidée depuis le panneau");
+          notice = "Boîte noire vidée.";
+          ton = "bad";
+          break;
+        }
         case "budget": {
           const v = Number(g("daily"));
           if (!Number.isFinite(v) || v <= 0) throw new Error("plafond invalide");
@@ -420,7 +462,7 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
   }
 
   res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
-  res.end(panelPage(await panelState(), notice, edit, ton));
+  res.end(panelPage(await panelState(lireVue(url.searchParams)), notice, edit, ton));
 }
 
 async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -731,6 +773,7 @@ async function main(): Promise<void> {
   );
 
   await migrate();
+  await ouvrirBoiteNoire().catch((e) => logger.warn({ err: String(e) }, "boîte noire non ouverte"));
   await connectMcpServers();
 
   const probe = await sandboxExec("node -v && git --version", { timeoutMs: 20_000 });
@@ -748,7 +791,7 @@ async function main(): Promise<void> {
   // outils, et son résultat part par `deliverWhatsApp` — qui bascule sur le
   // modèle approuvé hors de la fenêtre de 24 h : un rappel de 9 h ne doit pas
   // se perdre parce que Lionel n'a rien écrit depuis la veille.
-  await demarrerRappels(async (r) => {
+  await demarrerRappels((r) => dansTrace("rappel", `${r.type === "tache" ? "Tâche" : "Rappel"} n°${r.id} : ${r.quoi.slice(0, 100)}`, async () => {
     if (!whatsappEnabled()) return "WhatsApp non configuré : rien envoyé";
     if (r.type === "rappel") {
       const ok = await deliverWhatsApp(r.peer, `⏰ ${r.quoi}`);
@@ -761,12 +804,26 @@ async function main(): Promise<void> {
     });
     if (reponse) await deliverWhatsApp(r.peer, reponse);
     return reponse || "(réponse vide)";
-  }).catch((e) => logger.error({ err: String(e) }, "rappels non démarrés"));
+  })).catch((e) => logger.error({ err: String(e) }, "rappels non démarrés"));
   // Déclencheurs e-mail : le résultat part au numéro principal.
   demarrerDeclencheurs(async (texte) => {
     const to = primaryNumber();
     if (to && whatsappEnabled()) await deliverWhatsApp(to, texte);
   });
+  // L'inspecteur : un passage par jour sur la boîte noire, résumé sur
+  // WhatsApp seulement si quelque chose de grave est nouveau.
+  await demarrerInspecteur(
+    async (texte) => {
+      const to = primaryNumber();
+      if (to && whatsappEnabled()) await deliverWhatsApp(to, texte);
+    },
+    async () => {
+      const base = config().PUBLIC_URL;
+      if (!base) return undefined;
+      const t = await createVaultTicket(120);
+      return `${base}/panel?t=${t.id}&s=diagnostic`;
+    },
+  ).catch((e) => logger.error({ err: String(e) }, "inspecteur non démarré"));
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) { startHeartbeat(); startKeyWatch(); }
 

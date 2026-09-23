@@ -11,6 +11,7 @@ import { ecranBranche } from "./navigator.js";
 import { menuPanneau } from "./panel-sections.js";
 import { SITES } from "./browsing/sites.js";
 import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
+import { CSS_DIAG, diagState, lireVue, sectionBoiteNoire, sectionDiagnostic, type DiagState, type VueBN } from "./panel-diagnostic.js";
 import { plusState, sectionCompetences, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, type PlusState } from "./panel-plus.js";
 
 /**
@@ -54,6 +55,7 @@ export type PanelState = {
   mdp: boolean;
   navigateur: { vivant: boolean; branche: boolean; comptes: PublicCredential[] };
   plus: PlusState;
+  diag: DiagState;
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
   /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
@@ -62,9 +64,9 @@ export type PanelState = {
   roles: readonly string[];
 };
 
-export async function panelState(): Promise<PanelState> {
+export async function panelState(vue: VueBN = lireVue(new URLSearchParams())): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes, plus] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes, plus, diag] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -79,6 +81,7 @@ export async function panelState(): Promise<PanelState> {
     screenAlive().catch(() => false),
     listCredentials().catch(() => [] as PublicCredential[]),
     plusState(),
+    diagState(vue),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
@@ -91,6 +94,7 @@ export async function panelState(): Promise<PanelState> {
     mdp,
     navigateur: { vivant, branche: ecranBranche(), comptes },
     plus,
+    diag,
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
     missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
@@ -164,6 +168,8 @@ th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut
 td.n{text-align:right;font-variant-numeric:tabular-nums}
 .barres{display:flex;align-items:flex-end;gap:3px;height:56px;margin:.4rem 0 .2rem}
 .barres div{flex:1;background:var(--go);border-radius:2px 2px 0 0;min-height:2px;opacity:.85}
+.defile{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:9px}
+.defile table{min-width:100%}
 .vide{color:var(--muted);font-size:.88rem;padding:.7rem 0}
 .liens{margin-top:2.5rem;font-size:.85rem}
 .liens a{color:var(--muted);margin-right:1.1rem}
@@ -345,25 +351,25 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
     .join("");
 
   const parMission = st.missions.length
-    ? `<table><tr><th>Travail</th><th>Modèle visé</th><th class="n">Lancements</th><th class="n">Coût</th><th>Dernier</th></tr>` +
+    ? `<div class="defile"><table><tr><th>Travail</th><th>Modèle visé</th><th class="n">Lancements</th><th class="n">Coût</th><th>Dernier</th></tr>` +
       st.missions
         .map((m) => `<tr><td>${esc(m.mission)}</td><td class="det">${esc(m.modele)}</td><td class="n">${m.lancements}</td><td class="n">${m.usd.toFixed(3)} $</td>` +
                     `<td class="det">${esc(m.quand)}</td></tr>`)
-        .join("") + `</table>`
+        .join("") + `</table></div>`
     : `<p class="vide">Aucune mission facturée dans les 24 dernières heures.</p>`;
 
   const conso = st.consommation.length
-    ? `<table><tr><th>Service</th><th>Modèle</th><th class="n">Appels</th><th class="n">Jetons</th><th class="n">Coût</th></tr>` +
+    ? `<div class="defile"><table><tr><th>Service</th><th>Modèle</th><th class="n">Appels</th><th class="n">Jetons</th><th class="n">Coût</th></tr>` +
       st.consommation
         .map((x) => `<tr><td>${esc(x.provider)}</td><td class="det">${esc(x.model)}</td><td class="n">${x.appels}</td>` +
                     `<td class="n">${x.tokens.toLocaleString("fr-FR")}</td><td class="n">${x.usd.toFixed(3)} $</td></tr>`)
-        .join("") + `</table>`
+        .join("") + `</table></div>`
     : `<p class="vide">Aucun appel dans les 24 dernières heures.</p>`;
 
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Manzi Junior — panneau</title><meta name="robots" content="noindex">
-<style>${CSS}</style></head><body><main>
+<style>${CSS}${CSS_DIAG}</style></head><body><main>
 <header><h1>${esc(st.perso.nom)} — panneau</h1><span class="maj">à jour · ${esc(st.heure)} · <a href="/logout" style="color:inherit">se déconnecter</a></span></header>
 <nav class="sommaire">${menuPanneau()}</nav>
 
@@ -380,6 +386,10 @@ ${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé au
   <div class="t"><b>${st.jours.reduce((a, j) => a + j.usd, 0).toFixed(2)} $</b><span>sur 14 jours</span>
     <div class="barres">${st.jours.map((j) => `<div style="height:${Math.max(2, (j.usd / max) * 100)}%" title="${esc(j.jour)} · ${j.usd.toFixed(2)} $"></div>`).join("")}</div></div>
 </div>
+
+${sectionDiagnostic(st.diag)}
+
+${sectionBoiteNoire(st.diag)}
 
 ${sectionPersonnalite(st)}
 
