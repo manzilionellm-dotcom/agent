@@ -262,6 +262,50 @@ const handlers = {
     return { tabs: context.pages().map((p, i) => ({ index: i, url: p.url(), active: p === page })) };
   },
   async back() { await page.goBack({ waitUntil: "domcontentloaded" }); return { url: page.url(), title: await page.title() }; },
+
+  /**
+   * Télécommande de l'écran : agit sur l'onglet que l'HUMAIN voit, pas sur
+   * celui que le bot pilote — ce ne sont pas forcément les mêmes s'il a
+   * changé d'onglet à la main. Au doigt, à travers noVNC, défiler, zoomer ou
+   * taper dans une case est pénible ou impossible ; ici chaque geste est un
+   * bouton.
+   */
+  async ecran(a) {
+    const cible = await ongletVisible();
+    const zoomActuel = async () => Number(await cible.evaluate(() => document.documentElement.style.zoom || 1)) || 1;
+    const zoomer = async (z) => {
+      const v = Math.min(1.5, Math.max(0.5, Math.round(z * 10) / 10));
+      await cible.evaluate((x) => { document.documentElement.style.zoom = x === 1 ? "" : String(x); }, v);
+      return v;
+    };
+    const vue = cible.viewportSize() || { width: 1280, height: 900 };
+    switch (a.op) {
+      case "haut":
+      case "bas":
+        await cible.mouse.move(vue.width / 2, vue.height / 2);
+        await cible.mouse.wheel(0, a.op === "bas" ? 600 : -600);
+        break;
+      case "zoom_moins": await zoomer((await zoomActuel()) - 0.1); break;
+      case "zoom_plus": await zoomer((await zoomActuel()) + 0.1); break;
+      case "zoom_normal": await zoomer(1); break;
+      case "recharger": await cible.reload({ waitUntil: "domcontentloaded", timeout: 45_000 }); break;
+      case "retour": await cible.goBack({ waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => null); break;
+      case "tab": await cible.keyboard.press("Tab"); break;
+      case "maj_tab": await cible.keyboard.press("Shift+Tab"); break;
+      case "entree": await cible.keyboard.press("Enter"); break;
+      case "effacer": await cible.keyboard.press("Backspace"); break;
+      case "echap": await cible.keyboard.press("Escape"); break;
+      case "ecrire":
+        if (typeof a.texte !== "string" || !a.texte) throw new Error("rien à écrire");
+        // insertText et non type : pas d'événement par touche, donc pas de
+        // raccourci déclenché par une lettre, et les accents passent tels quels.
+        await cible.keyboard.insertText(a.texte.slice(0, 500));
+        break;
+      default: throw new Error(`commande inconnue : ${a.op}`);
+    }
+    await cible.waitForTimeout(300);
+    return { ok: true, url: cible.url(), title: await cible.title().catch(() => ""), zoom: await zoomActuel().catch(() => 1) };
+  },
   async cookies(a) { const c = await context.cookies(a.url ? [a.url] : undefined); return { count: c.length, domains: [...new Set(c.map((x) => x.domain))] }; },
   // `status` disait le mode VOULU (la variable d'environnement), pas le mode
   // obtenu. Quand le tunnel est fermé il annonçait donc "cdp" en servant le
@@ -501,6 +545,21 @@ const OTP_SEL = [
   'input[name*="code" i]:visible',
   'input[maxlength="6"]:visible',
 ];
+
+/**
+ * L'onglet affiché à l'écran. `visibilityState` le dit sans ambiguïté : un
+ * onglet en arrière-plan est « hidden ». Plusieurs visibles (fenêtres
+ * séparées) : celui que le bot pilote s'il en fait partie, sinon le dernier.
+ */
+async function ongletVisible() {
+  const visibles = [];
+  for (const p of context.pages()) {
+    const etat = await p.evaluate(() => document.visibilityState).catch(() => "hidden");
+    if (etat === "visible") visibles.push(p);
+  }
+  if (!visibles.length) return page;
+  return visibles.includes(page) ? page : visibles[visibles.length - 1];
+}
 
 async function firstVisible(selectors) {
   for (const s of selectors) {

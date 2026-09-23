@@ -29,7 +29,12 @@ services:
     cpus: 1
     shm_size: 512m
     environment:
-      SCREEN: 1280x800x24
+      # 1024 de haut et non 800 : à 800, une fois la barre d'onglets et
+      # d'adresse retirée, il restait ~710 px de page — le formulaire de
+      # connexion d'un site courant (8K, 1 005 px) finissait sous le bord,
+      # bouton compris. 1024 laisse ~930 px, assez pour la plupart ; le reste
+      # se rattrape au bouton « Zoom − » de la télécommande (/screen).
+      SCREEN: 1280x1024x24
 
   backup:
     mem_limit: 128m

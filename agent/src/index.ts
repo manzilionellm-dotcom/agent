@@ -21,7 +21,7 @@ import { startRuntime, stopRuntime } from "./agents/runtime.js";
 import { timeline } from "./events.js";
 import { homePage, privacyPage, termsPage, vaultPage } from "./pages.js";
 import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredentials, putCredential, vaultEnabled } from "./vault.js";
-import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
+import { pageEcran, proxyScreen, proxyScreenSocket } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
 import { estSection } from "./panel-sections.js";
@@ -32,7 +32,7 @@ import { livrerReponse } from "./voice.js";
 import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
 import { VOIX_MODES, synthese } from "./voice.js";
-import { ouvrirSurEcran, sitesConnectes } from "./navigator.js";
+import { estCommandeEcran, ouvrirSurEcran, sitesConnectes, telecommande } from "./navigator.js";
 import { annulerRappel, demarrerRappels, heureLocale, planifier, supprimerRappel } from "./rappels.js";
 import { oublierFait, oublierFichierProfil, oublierTout } from "./souvenirs.js";
 import { apprendre, basculerCompetence, oublierCompetence } from "./competences.js";
@@ -146,7 +146,7 @@ function poserCookie(req: IncomingMessage, res: ServerResponse, destination: str
  * adresse en paramètre ferait de /login un tremplin vers un site piégé
  * (« connecte-toi ici » → renvoyé chez un imitateur).
  */
-const SUITES: Record<string, string> = { "/panel": "/panel", "/board": "/board", "/vault": "/vault", "/screen": SCREEN_ENTRY };
+const SUITES: Record<string, string> = { "/panel": "/panel", "/board": "/board", "/vault": "/vault", "/screen": "/screen" };
 
 function versConnexion(res: ServerResponse, suite: string): void {
   res.writeHead(302, { location: `/login?suite=${encodeURIComponent(suite)}`, "cache-control": "no-store" });
@@ -319,7 +319,7 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           // à trouver le lien de l'écran pour faire la seule chose utile.
           const o = await ouvrirSurEcran(g("url"));
           logger.info({ url: o.url }, "site ouvert dans le navigateur du bot depuis le panneau");
-          res.writeHead(303, { location: SCREEN_ENTRY, "cache-control": "no-store" });
+          res.writeHead(303, { location: "/screen", "cache-control": "no-store" });
           return void res.end();
         }
         case "sites_connectes": {
@@ -466,7 +466,7 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
 }
 
 async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-  if (url.searchParams.get("t")) return ticketToCookie(req, res, url, SCREEN_ENTRY);
+  if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/screen");
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress, path: url.pathname }, "accès refusé à l'écran");
     // L'entrée renvoie vers la connexion ; les fichiers internes de l'écran
@@ -476,11 +476,43 @@ async function screenRoute(req: IncomingMessage, res: ServerResponse, url: URL):
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
     return void res.end("connexion requise");
   }
+  // La page humaine : l'écran ET sa télécommande. noVNC nu reste servi
+  // (c'est lui qui tourne dans le cadre), mais on n'y envoie plus personne.
   if (url.pathname === "/screen") {
-    res.writeHead(302, { location: SCREEN_ENTRY });
-    return void res.end();
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-frame-options": "DENY" });
+    return void res.end(pageEcran((await personnalite().catch(() => undefined))?.nom ?? "Manzi"));
   }
+  if (url.pathname === "/screen/action") return actionEcran(req, res);
   return proxyScreen(req, res, url);
+}
+
+/**
+ * Un geste de la télécommande. JSON seulement : un formulaire posté depuis
+ * un autre site ne peut pas envoyer ce type de contenu sans autorisation
+ * préalable du navigateur, et le cookie de session (SameSite=Lax) ne part
+ * de toute façon pas avec un POST venu d'ailleurs. L'origine, quand le
+ * navigateur la donne, doit être la nôtre.
+ */
+async function actionEcran(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== "POST") return json(res, 405, { ok: false, error: "POST attendu" });
+  if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { ok: false, error: "JSON attendu" });
+  const origine = req.headers.origin;
+  const hote = (req.headers["x-forwarded-host"] ?? req.headers.host ?? "").toString();
+  if (origine && origine !== "null" && new URL(origine).host !== hote) return json(res, 403, { ok: false, error: "origine refusée" });
+  let corps: { op?: unknown; texte?: unknown };
+  try {
+    corps = JSON.parse((await readRawBody(req)).toString("utf8") || "{}");
+  } catch {
+    return json(res, 400, { ok: false, error: "JSON illisible" });
+  }
+  if (!estCommandeEcran(corps.op)) return json(res, 400, { ok: false, error: "commande inconnue" });
+  try {
+    const r = await telecommande(corps.op, typeof corps.texte === "string" ? corps.texte : undefined);
+    // Le texte écrit n'est JAMAIS journalisé : ce peut être un mot de passe.
+    return json(res, 200, { ok: true, ...r });
+  } catch (e) {
+    return json(res, 200, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {

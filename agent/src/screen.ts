@@ -45,7 +45,9 @@ export function proxyScreen(req: IncomingMessage, res: ServerResponse, url: URL)
   const up = httpRequest(
     { host: host(), port: port(), method: req.method, path: path || "/", headers: { ...req.headers, host: `${host()}:${port()}` } },
     (r) => {
-      res.writeHead(r.statusCode ?? 502, r.headers);
+      // SAMEORIGIN : noVNC s'affiche dans NOTRE page de télécommande, jamais
+      // dans le cadre d'un autre site (qui pourrait faire cliquer à l'aveugle).
+      res.writeHead(r.statusCode ?? 502, { ...r.headers, "x-frame-options": "SAMEORIGIN" });
       r.pipe(res);
     },
   );
@@ -108,4 +110,137 @@ export async function screenAlive(): Promise<boolean> {
     });
     r.end();
   });
+}
+
+const escHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/**
+ * La page de l'écran : l'image du navigateur du bot en haut, une
+ * télécommande en bas, à portée de pouce.
+ *
+ * Pourquoi pas noVNC seul : au doigt, noVNC transforme un glissement en
+ * sélection de texte au lieu de faire défiler, et le clavier du téléphone
+ * s'ouvre mal. Résultat constaté le 23 septembre : le formulaire de
+ * connexion d'un site dépassait sous le bas de l'écran, et rien ne
+ * permettait d'y descendre — « le site n'est pas cliquable ». Chaque geste
+ * difficile devient ici un bouton, exécuté directement dans l'onglet visible.
+ *
+ * Les boutons appellent /screen/action en JSON, sans recharger la page :
+ * l'image reste connectée pendant qu'on s'en sert.
+ */
+export function pageEcran(nom: string): string {
+  const b = (op: string, icone: string, texte: string, titre: string): string =>
+    `<button type="button" data-op="${op}" title="${escHtml(titre)}"><span aria-hidden="true">${icone}</span>${texte}</button>`;
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex"><title>${escHtml(nom)} — écran</title>
+<style>
+:root{color-scheme:dark;--bg:#0f1115;--barre:#171a21;--bouton:#232833;--bord:#323846;--texte:#e8eaef;--doux:#9aa3b2;--go:#6ea8ff;--bad:#ff7a6e;--ok:#4fd18b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--texte);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column;height:100dvh}
+/* Debout : l'écran en haut à sa vraie proportion (5:4), sans bandes noires ;
+   tous les boutons visibles en grille dessous, sans défilement de côté. */
+.ecran{position:relative;flex:none;width:100%;aspect-ratio:5/4;max-height:62dvh;background:#000}
+iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+.barre{flex:1;min-height:0;overflow-y:auto;background:var(--barre);border-top:1px solid var(--bord);padding:.5rem .5rem calc(.5rem + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:.45rem}
+.gestes{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem}
+.sep{display:none}
+button{min-height:46px;padding:.3rem .4rem;border-radius:10px;border:1px solid var(--bord);background:var(--bouton);color:var(--texte);font:inherit;font-size:.8rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;cursor:pointer;touch-action:manipulation;line-height:1.1}
+button:active{transform:scale(.96);background:var(--bord)}
+button span{font-size:1.1rem;line-height:1}
+button.principal{background:var(--go);border-color:transparent;color:#0b1020;font-weight:600;flex-direction:row;padding:.3rem 1rem;font-size:.9rem}
+form{display:grid;grid-template-columns:1fr auto;gap:.35rem .5rem;align-items:center}
+input[type=text],input[type=password]{grid-column:1/-1;width:100%;min-height:46px;padding:.5rem .7rem;border-radius:10px;border:1px solid var(--bord);background:var(--bg);color:var(--texte);font:inherit;font-size:16px}
+input:focus{outline:2px solid var(--go);outline-offset:0;border-color:transparent}
+.options{display:flex;gap:.9rem}
+label.cache{display:flex;align-items:center;gap:.3rem;color:var(--doux);font-size:.82rem;white-space:nowrap}
+label.cache input{width:1.1rem;height:1.1rem;margin:0}
+.etat{display:flex;justify-content:space-between;gap:.6rem;color:var(--doux);font-size:.78rem;min-height:1.1em}
+.etat b{color:var(--texte);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.etat .bad{color:var(--bad)}.etat .ok{color:var(--ok)}
+.etat a{color:var(--go);text-decoration:none;white-space:nowrap}
+/* Couché (téléphone de côté, ordinateur) : l'écran prend toute la place,
+   la télécommande devient une colonne à droite. */
+@media (min-aspect-ratio:1/1){
+  body{flex-direction:row}
+  .ecran{flex:1;height:100%;max-height:none;aspect-ratio:auto;width:auto}
+  .barre{flex:none;width:14.5rem;border-top:0;border-left:1px solid var(--bord)}
+  .gestes{grid-template-columns:repeat(2,1fr)}
+  form{grid-template-columns:1fr}
+  .options{justify-content:space-between}
+  button.principal{width:100%}
+}
+/* Téléphone couché : peu de hauteur, des boutons en ligne et compacts pour
+   que toute la télécommande tienne sans défiler. */
+@media (min-aspect-ratio:1/1) and (max-height:500px){
+  .barre{width:15.5rem;gap:.3rem;padding:.35rem}
+  .gestes{gap:.25rem}
+  button{flex-direction:row;min-height:36px;font-size:.74rem;gap:.3rem;justify-content:flex-start;padding:.2rem .45rem}
+  button span{font-size:.95rem}
+  input[type=text],input[type=password]{min-height:38px;padding:.35rem .6rem}
+  button.principal{min-height:38px;justify-content:center}
+  .etat{display:none}
+}
+</style></head><body>
+<div class="ecran"><iframe src="${SCREEN_ENTRY}" title="Écran du navigateur de ${escHtml(nom)}" allow="clipboard-read; clipboard-write"></iframe></div>
+<div class="barre">
+  <div class="gestes" role="toolbar" aria-label="Télécommande">
+    ${b("haut", "⬆", "Monter", "Faire défiler la page vers le haut")}
+    ${b("bas", "⬇", "Descendre", "Faire défiler la page vers le bas")}
+    <i class="sep"></i>
+    ${b("zoom_moins", "－", "Réduire", "Rapetisser la page pour tout voir")}
+    ${b("zoom_normal", "◻", "100 %", "Taille normale")}
+    ${b("zoom_plus", "＋", "Agrandir", "Agrandir la page")}
+    <i class="sep"></i>
+    ${b("tab", "⇥", "Suivante", "Aller à la case suivante (Tab)")}
+    ${b("maj_tab", "⇤", "Précédente", "Revenir à la case précédente (Maj+Tab)")}
+    ${b("entree", "⏎", "Entrée", "Valider (touche Entrée)")}
+    ${b("effacer", "⌫", "Effacer", "Effacer un caractère")}
+    ${b("echap", "✕", "Échap", "Fermer une fenêtre (touche Échap)")}
+    <i class="sep"></i>
+    ${b("retour", "←", "Retour", "Page précédente")}
+    ${b("recharger", "↻", "Recharger", "Recharger la page")}
+  </div>
+  <form id="ecrire" autocomplete="off">
+    <input id="texte" type="text" maxlength="500" placeholder="Écrire dans la case sélectionnée" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+    <div class="options"><label class="cache"><input type="checkbox" id="masquer"> caché</label>
+    <label class="cache"><input type="checkbox" id="valider"> + Entrée</label></div>
+    <button class="principal" type="submit">Écrire</button>
+  </form>
+  <div class="etat"><b id="etat">Touche d'abord la case sur l'écran, puis écris ici.</b><a href="/panel">Panneau</a></div>
+</div>
+<script>
+(() => {
+  const etat = document.getElementById("etat");
+  const texte = document.getElementById("texte");
+  let occupe = false;
+  const dire = (t, classe) => { etat.textContent = t; etat.className = classe || ""; };
+  async function envoyer(op, charge) {
+    if (occupe) return;
+    occupe = true;
+    try {
+      const r = await fetch("/screen/action", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(Object.assign({ op }, charge || {})) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { location.href = "/login?suite=%2Fscreen"; return; }
+      if (!r.ok || !j.ok) throw new Error(j.error || ("erreur " + r.status));
+      dire((j.titre || j.url || "fait") + (j.zoom && j.zoom !== 1 ? " · zoom " + Math.round(j.zoom * 100) + " %" : ""), "ok");
+    } catch (e) {
+      dire(String(e.message || e), "bad");
+    } finally {
+      occupe = false;
+    }
+  }
+  document.querySelectorAll("[data-op]").forEach((el) => el.addEventListener("click", () => envoyer(el.dataset.op)));
+  document.getElementById("masquer").addEventListener("change", (e) => { texte.type = e.target.checked ? "password" : "text"; });
+  document.getElementById("ecrire").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!texte.value) return dire("Rien à écrire.", "bad");
+    await envoyer("ecrire", { texte: texte.value });
+    if (document.getElementById("valider").checked) await envoyer("entree");
+    texte.value = "";
+  });
+})();
+</script>
+</body></html>`;
 }

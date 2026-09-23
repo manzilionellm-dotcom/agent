@@ -77,3 +77,26 @@ export async function sitesConnectes(): Promise<string[]> {
   const bruts = ((r as { domains?: string[] }).domains ?? []).map((d) => d.replace(/^\./, "").replace(/^www\./, "").toLowerCase());
   return [...new Set(bruts)].filter(Boolean).sort();
 }
+
+/**
+ * Télécommande de l'écran : les gestes impossibles au doigt à travers noVNC
+ * (défiler, zoomer, taper dans une case, Tab, Entrée), en boutons.
+ *
+ * Le texte à écrire part par l'entrée standard, jamais en argument : ce peut
+ * être un mot de passe, et un argument se lit dans `ps` depuis le sandbox.
+ */
+export const COMMANDES_ECRAN = ["haut", "bas", "zoom_moins", "zoom_plus", "zoom_normal", "recharger", "retour", "tab", "maj_tab", "entree", "effacer", "echap", "ecrire"] as const;
+export type CommandeEcran = (typeof COMMANDES_ECRAN)[number];
+
+export function estCommandeEcran(op: unknown): op is CommandeEcran {
+  return typeof op === "string" && (COMMANDES_ECRAN as readonly string[]).includes(op);
+}
+
+export async function telecommande(op: CommandeEcran, texte?: string): Promise<{ url: string; titre: string; zoom: number }> {
+  if (!ecranBranche()) throw new Error("le navigateur du bot n'est pas relié à l'écran (BROWSER_CDP_URL vide)");
+  if (op === "ecrire" && (!texte || texte.length > 500)) throw new Error("texte vide ou trop long (500 caractères au plus)");
+  const r = await runBctl("ecran", JSON.stringify({ op, texte: op === "ecrire" ? texte : undefined }), undefined, config().BROWSER_CDP_URL, true);
+  if (typeof r === "string" || !r.ok) throw new Error(typeof r === "string" ? "navigateur injoignable" : String(r.error ?? "échec"));
+  const o = r as { url?: string; title?: string; zoom?: number };
+  return { url: String(o.url ?? ""), titre: String(o.title ?? ""), zoom: Number(o.zoom ?? 1) };
+}
