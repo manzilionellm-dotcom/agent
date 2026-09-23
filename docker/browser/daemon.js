@@ -299,8 +299,31 @@ const handlers = {
         if (typeof a.texte !== "string" || !a.texte) throw new Error("rien à écrire");
         // insertText et non type : pas d'événement par touche, donc pas de
         // raccourci déclenché par une lettre, et les accents passent tels quels.
-        await cible.keyboard.insertText(a.texte.slice(0, 500));
+        await cible.keyboard.insertText(a.texte.slice(0, 5000));
         break;
+      case "copier": {
+        // Le texte sélectionné — dans la page ou dans un de ses cadres (un
+        // éditeur de message vit souvent dans un iframe). Jamais le contenu
+        // d'un champ mot de passe : le copier le ferait sortir en clair.
+        let texte = "";
+        for (const f of cible.frames()) {
+          texte = await f.evaluate(() => {
+            // D'abord la sélection DANS la case active ; sinon, la sélection de
+            // la page — sélectionner du texte ne retire pas le curseur d'une case.
+            const el = document.activeElement;
+            if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && typeof el.selectionStart === "number" && el.type !== "password") {
+              const dedans = el.value.substring(el.selectionStart, el.selectionEnd);
+              if (dedans) return dedans;
+            }
+            // Un champ mot de passe sélectionné donne « •••••• » : pas le
+            // secret, mais rien d'utile à copier non plus.
+            const sel = String(window.getSelection() || "");
+            return /^[\u2022\u25CF*]+$/.test(sel) ? "" : sel;
+          }).catch(() => "");
+          if (texte) break;
+        }
+        return { ok: true, url: cible.url(), title: await cible.title().catch(() => ""), texte: texte.slice(0, 20_000) };
+      }
       default: throw new Error(`commande inconnue : ${a.op}`);
     }
     await cible.waitForTimeout(300);

@@ -146,6 +146,7 @@ iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000
 .barre{flex:1;min-height:0;overflow-y:auto;background:var(--barre);border-top:1px solid var(--bord);padding:.5rem .5rem calc(.5rem + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:.45rem}
 .gestes{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem}
 .sep{display:none}
+#copier,#coller{grid-column:span 2}
 button{min-height:46px;padding:.3rem .4rem;border-radius:10px;border:1px solid var(--bord);background:var(--bouton);color:var(--texte);font:inherit;font-size:.8rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;cursor:pointer;touch-action:manipulation;line-height:1.1}
 button:active{transform:scale(.96);background:var(--bord)}
 button span{font-size:1.1rem;line-height:1}
@@ -167,6 +168,7 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
   .ecran{flex:1;height:100%;max-height:none;aspect-ratio:auto;width:auto}
   .barre{flex:none;width:14.5rem;border-top:0;border-left:1px solid var(--bord)}
   .gestes{grid-template-columns:repeat(2,1fr)}
+  #copier,#coller{grid-column:auto}
   form{grid-template-columns:1fr}
   .options{justify-content:space-between}
   button.principal{width:100%}
@@ -201,9 +203,11 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
     <i class="sep"></i>
     ${b("retour", "←", "Retour", "Page précédente")}
     ${b("recharger", "↻", "Recharger", "Recharger la page")}
+    <button type="button" id="copier" title="Copier le texte sélectionné sur l'écran (Ctrl+C sur ordinateur)"><span aria-hidden="true">⧉</span>Copier</button>
+    <button type="button" id="coller" title="Coller ton presse-papiers dans la case sélectionnée (Ctrl+V sur ordinateur)"><span aria-hidden="true">📋</span>Coller</button>
   </div>
   <form id="ecrire" autocomplete="off">
-    <input id="texte" type="text" maxlength="500" placeholder="Écrire dans la case sélectionnée" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+    <input id="texte" type="text" maxlength="5000" placeholder="Écrire dans la case sélectionnée" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
     <div class="options"><label class="cache"><input type="checkbox" id="masquer"> caché</label>
     <label class="cache"><input type="checkbox" id="valider"> + Entrée</label></div>
     <button class="principal" type="submit">Écrire</button>
@@ -232,6 +236,72 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
     }
   }
   document.querySelectorAll("[data-op]").forEach((el) => el.addEventListener("click", () => envoyer(el.dataset.op)));
+
+  // --- Presse-papiers -------------------------------------------------------
+  // UN seul presse-papiers : celui de l'appareil de Lionel. « Copier » y met
+  // le texte sélectionné sur l'écran du bot ; « Coller » l'écrit dans la case
+  // sélectionnée. noVNC seul ne le fait pas : il faut passer par son panneau
+  // latéral, et sur téléphone ça ne marche pas du tout.
+  async function action(op, charge) {
+    const r = await fetch("/screen/action", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(Object.assign({ op }, charge || {})) });
+    if (r.status === 401) { location.href = "/login?suite=%2Fscreen"; throw new Error("connexion requise"); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || ("erreur " + r.status));
+    return j;
+  }
+  async function copier() {
+    try {
+      const j = await action("copier");
+      if (!j.texte) return dire("Sélectionne d'abord du texte sur l'écran, puis Copier.", "bad");
+      try {
+        await navigator.clipboard.writeText(j.texte);
+        dire("Copié : « " + j.texte.slice(0, 40) + (j.texte.length > 40 ? "… »" : " »"), "ok");
+      } catch {
+        // Presse-papiers refusé (navigateur ancien, page non sécurisée) : on
+        // met le texte dans la case, sélectionné, pour le copier à la main.
+        texte.type = "text"; texte.value = j.texte; texte.focus(); texte.select();
+        dire("Copie-le à la main : il est sélectionné dans la case du bas.", "bad");
+      }
+    } catch (e) { dire(String(e.message || e), "bad"); }
+  }
+  async function coller(contenu) {
+    try {
+      const t = typeof contenu === "string" ? contenu : await navigator.clipboard.readText();
+      if (!t) return dire("Ton presse-papiers est vide.", "bad");
+      await action("ecrire", { texte: t.slice(0, 5000) });
+      dire("Collé (" + t.length + " caractères).", "ok");
+    } catch (e) {
+      if (typeof contenu !== "string") { texte.focus(); return dire("Ton navigateur bloque la lecture du presse-papiers : colle dans la case du bas, puis Écrire.", "bad"); }
+      dire(String(e.message || e), "bad");
+    }
+  }
+  document.getElementById("copier").addEventListener("click", () => copier());
+  document.getElementById("coller").addEventListener("click", () => coller());
+
+  // Sur ordinateur : Ctrl+C / Ctrl+V directement sur l'écran, comme dans un
+  // navigateur normal. noVNC tourne dans un cadre de la même origine : on
+  // intercepte les deux raccourcis AVANT lui (phase de capture), sinon il
+  // les enverrait au bot, qui collerait son propre presse-papiers — vide.
+  const cadre = document.querySelector("iframe");
+  function brancher() {
+    let w;
+    try { w = cadre.contentWindow; w.document; } catch { return; }
+    w.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "c") { e.preventDefault(); e.stopImmediatePropagation(); copier(); }
+      // Ctrl+V : on arrête noVNC mais on laisse faire le navigateur, qui
+      // produit l'événement « paste » ci-dessous avec le contenu.
+      else if (k === "v") { e.stopImmediatePropagation(); }
+    }, true);
+    w.document.addEventListener("paste", (e) => {
+      const t = e.clipboardData && e.clipboardData.getData("text/plain");
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (t) coller(t);
+    }, true);
+  }
+  cadre.addEventListener("load", brancher);
+  brancher();
   document.getElementById("masquer").addEventListener("change", (e) => { texte.type = e.target.checked ? "password" : "text"; });
   document.getElementById("ecrire").addEventListener("submit", async (e) => {
     e.preventDefault();

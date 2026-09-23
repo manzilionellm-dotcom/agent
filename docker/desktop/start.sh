@@ -87,8 +87,19 @@ mkdir -p "$PROFILE"
 # par Chromium. Ce qu'on met à la place : le conteneur lui-même, sans
 # privilèges, et un utilisateur non root. Une faille de rendu tombe donc sur
 # un compte sans droits dans un conteneur isolé, au lieu de root.
+# « Restaurer les pages ? Chromium ne s'est pas arrêté correctement » :
+# c'est ce qu'affichait l'écran après chaque mise à jour. Le profil garde
+# `exit_type: Crashed` quand le conteneur est coupé net ; on le remet à
+# « Normal » avant de démarrer. Le vrai remède est l'arrêt propre plus bas
+# (trap TERM) ; ceci couvre les coupures qu'aucun signal ne précède.
+PREFS="$PROFILE/Default/Preferences"
+if [ -f "$PREFS" ]; then
+  sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREFS" 2>/dev/null || true
+fi
+
 "$CHROME" \
   --no-sandbox \
+  --hide-crash-restore-bubble \
   --disable-gpu \
   --disable-dev-shm-usage \
   --remote-debugging-port=9222 \
@@ -134,16 +145,32 @@ fi
 # unique. Deux mots de passe pour une porte n'ajoutent pas de sécurité, ils
 # ajoutent un mot de passe de plus à perdre.
 x11vnc -display :99 -forever -shared -nopw -listen 127.0.0.1 -rfbport 5900 -noxdamage -quiet >/tmp/x11vnc.log 2>&1 &
+X11VNC_PID=$!
 sleep 1
 
 websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &
+WEBSOCKIFY_PID=$!
 log "écran partagé sur 6080 (noVNC)"
 
 # --- Surveillance ------------------------------------------------------------
 # Si Chromium meurt — onglet qui fait tomber le rendu, mémoire épuisée — on
 # sort, et Docker relance le conteneur avec son profil intact. Rester en vie
 # sans navigateur donnerait un conteneur « en bonne santé » qui ne sert à rien.
-while kill -0 "$CHROME_PID" 2>/dev/null && kill -0 "$XVFB" 2>/dev/null; do sleep 5; done
+# Arrêt propre : `docker compose up --force-recreate` envoie TERM au
+# script ; sans ce piège, Chromium était tué dix secondes plus tard sans
+# avoir pu fermer son profil — d'où la bulle « Restaurer les pages ? ».
+arreter() {
+  log "arrêt demandé — fermeture propre du navigateur"
+  kill -TERM "$CHROME_PID" 2>/dev/null
+  for _ in $(seq 1 16); do kill -0 "$CHROME_PID" 2>/dev/null || break; sleep 0.5; done
+  kill "$X11VNC_PID" "$WEBSOCKIFY_PID" "$XVFB" 2>/dev/null
+  exit 0
+}
+trap arreter TERM INT
+
+# `sleep & wait` et non `sleep` : bash ne traite un signal qu'entre deux
+# commandes ; un `sleep 5` au premier plan retarderait l'arrêt de 5 s.
+while kill -0 "$CHROME_PID" 2>/dev/null && kill -0 "$XVFB" 2>/dev/null; do sleep 5 & wait $!; done
 log "un composant s'est arrêté — sortie pour relance"
 tail -20 /tmp/chrome.log 2>/dev/null
 exit 1
