@@ -3,6 +3,7 @@ import { config } from "../config.js";
 import { client, priceOf } from "../llm.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
+import { transcrire, type Ecoute } from "../ecoute.js";
 
 /**
  * Pièces jointes WhatsApp : photo, capture d'écran, PDF, document.
@@ -120,46 +121,25 @@ export async function describeMedia(ref: MediaRef): Promise<string | undefined> 
 }
 
 /**
- * Message vocal → texte, par une API compatible OpenAI `/audio/transcriptions`
- * (OpenAI, Groq, ou un serveur Whisper local). Optionnel : sans
- * TRANSCRIBE_API_KEY, le vocal reste annoncé mais non transcrit.
- *
- * Pourquoi pas Whisper dans le conteneur : le modèle pèse plus que la RAM
- * laissée libre sur un 4 Go, et le sandbox sert déjà Chromium.
+ * Message vocal → texte. La source (clé, modèle) se trouve dans ecoute.ts :
+ * panneau d'abord, .env ensuite, puis une clé Groq/OpenAI déjà présente.
  */
-export async function transcribeAudio(ref: MediaRef): Promise<string | undefined> {
-  const cfg = config();
-  if (!cfg.TRANSCRIBE_API_KEY || !cfg.TRANSCRIBE_BASE_URL) return undefined;
+export async function transcribeAudio(ref: MediaRef): Promise<Ecoute> {
   const got = await fetchMetaMedia(ref.id);
-  if (!got) return undefined;
-
-  const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(got.bytes)], { type: got.mime }), "audio.ogg");
-  form.append("model", cfg.TRANSCRIBE_MODEL);
-  if (cfg.JARVIS_LANGUAGE) form.append("language", cfg.JARVIS_LANGUAGE);
-  try {
-    const res = await fetch(`${cfg.TRANSCRIBE_BASE_URL.replace(/\/$/, "")}/audio/transcriptions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cfg.TRANSCRIBE_API_KEY}` },
-      body: form,
-    });
-    if (!res.ok) {
-      logger.error({ status: res.status, body: (await res.text()).slice(0, 300) }, "transcription refusée");
-      return undefined;
-    }
-    const out = (await res.json()) as { text?: string };
-    return out.text?.trim() || undefined;
-  } catch (e) {
-    logger.error({ err: String(e) }, "transcription en échec");
-    return undefined;
-  }
+  if (!got) return { ok: false, configure: true, raison: "impossible de télécharger le vocal depuis WhatsApp" };
+  return transcrire(got.bytes, got.mime);
 }
 
 /** Texte à donner au chat : la description de la pièce jointe, plus la légende s'il y en a une. */
 export async function mediaToText(ref: MediaRef): Promise<string> {
   if (ref.kind === "vocal") {
-    const said = await transcribeAudio(ref);
-    return said ? `[message vocal, transcrit]\n${said}` : "[message vocal reçu — transcription non configurée (TRANSCRIBE_API_KEY) ; écris-le-moi]";
+    const e = await transcribeAudio(ref);
+    if (e.ok) return `[message vocal de Lionel, transcrit — réponds-y comme à un message écrit]\n${e.texte}`;
+    // Le chat doit DIRE qu'il n'a pas entendu, et pourquoi : un « d'accord »
+    // en réponse à un vocal qu'il n'a pas compris, c'est pire qu'un silence.
+    return e.configure
+      ? `[message vocal reçu mais je n'ai pas pu l'écouter : ${e.raison}. Dis-le à Lionel en une ligne et demande-lui de le renvoyer ou de l'écrire.]`
+      : `[message vocal reçu mais l'écoute n'est pas branchée (${e.raison}). Dis-le à Lionel en une ligne et envoie-lui lien_panneau section voix.]`;
   }
   const described = await describeMedia(ref);
   const label = ref.filename ? `${ref.kind} « ${ref.filename} »` : ref.kind;

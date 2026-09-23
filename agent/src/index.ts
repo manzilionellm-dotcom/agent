@@ -25,6 +25,7 @@ import { pageEcran, proxyScreen, proxyScreenSocket } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
 import { estSection } from "./panel-sections.js";
+import { LANGUES_ECOUTE, sourceEcoute, transcrire } from "./ecoute.js";
 import { lireVue } from "./panel-diagnostic.js";
 import { dansTrace, ouvrirBoiteNoire, viderBoiteNoire } from "./boite-noire.js";
 import { creerTicket, demarrerInspecteur, inspecter, marquerProbleme, reglerInspecteur, type Reglages } from "./inspecteur.js";
@@ -38,7 +39,7 @@ import { oublierFait, oublierFichierProfil, oublierTout } from "./souvenirs.js";
 import { apprendre, basculerCompetence, oublierCompetence } from "./competences.js";
 import { genererImage, typeImage } from "./images.js";
 import { basculerDeclencheur, creerDeclencheur, decrire, demarrerDeclencheurs, supprimerDeclencheur } from "./declencheurs.js";
-import { bumpProviderPriority, deleteProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
+import { bumpProviderPriority, deleteProvider, getProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -374,6 +375,56 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           const envoi = await sendWhatsAppAudio(to, son);
           if (!envoi.ok) throw new Error(envoi.error ?? "envoi refusé");
           notice = "Note vocale envoyée sur ton WhatsApp. Écoute-la : si la voix te plaît, c'est réglé.";
+          ton = "bon";
+          break;
+        }
+        case "ecoute": {
+          const four = g("fournisseur") === "openai" ? "openai" : "groq";
+          const cle = (f.get("cle") ?? "").trim();
+          const langue = g("langue");
+          if (!(langue in LANGUES_ECOUTE)) throw new Error("langue inconnue");
+          const existe = await getProvider("ecoute");
+          if (!cle && !existe) throw new Error("colle d'abord une clé Groq ou OpenAI");
+          if (cle && /\s/.test(cle)) throw new Error("la clé contient un espace : recopie-la sans espace");
+          if (cle || existe) {
+            await putProvider({
+              id: "ecoute",
+              category: "autre",
+              label: four === "openai" ? "OpenAI (écoute)" : "Groq (écoute)",
+              kind: "openai_compat",
+              baseUrl: four === "openai" ? "https://api.openai.com/v1" : "https://api.groq.com/openai/v1",
+              model: "",
+              apiKey: cle || undefined,
+              note: "transcription des vocaux WhatsApp",
+            });
+          }
+          await setSetting("ECOUTE_LANGUE", langue);
+          notice = `Écoute enregistrée (${four === "openai" ? "OpenAI" : "Groq"}). Appuie sur « Tester l'écoute » pour vérifier.`;
+          ton = "bon";
+          break;
+        }
+        case "testecoute": {
+          const src = await sourceEcoute();
+          if (!src) throw new Error("aucune clé d'écoute : colle-en une au-dessus");
+          // Le vrai test : on lui fait ENTENDRE une phrase. Si la voix est
+          // branchée, on la fabrique ; sinon on vérifie au moins que la clé
+          // est acceptée et que le modèle existe.
+          const voix = await getProvider("voix");
+          if (voix?.enabled && voix.api_key) {
+            const phrase = "Bonjour Lionel, ceci est un test d'écoute de Manzi Junior.";
+            const son = await synthese(phrase);
+            const r = await transcrire(son, "audio/ogg", src);
+            if (!r.ok) throw new Error(r.raison);
+            notice = `Écoute OK (${src.nom}, ${src.modele}). Il a entendu : « ${r.texte} »`;
+          } else {
+            const res = await fetch(`${src.base}/models`, { headers: { authorization: `Bearer ${src.cle}` }, signal: AbortSignal.timeout(20_000) });
+            if (res.status === 401 || res.status === 403) throw new Error(`clé refusée par ${src.nom} (HTTP ${res.status}) : recolle-la`);
+            if (!res.ok) throw new Error(`${src.nom} a répondu HTTP ${res.status}`);
+            const ids = (((await res.json().catch(() => ({}))) as { data?: Array<{ id?: string }> }).data ?? []).map((m) => m.id);
+            notice = ids.includes(src.modele)
+              ? `Clé acceptée par ${src.nom}, modèle ${src.modele} disponible. Envoie-lui un vocal sur WhatsApp pour l'entendre répondre.`
+              : `Clé acceptée par ${src.nom}, mais le modèle ${src.modele} n'apparaît pas dans sa liste. Envoie un vocal pour vérifier.`;
+          }
           ton = "bon";
           break;
         }

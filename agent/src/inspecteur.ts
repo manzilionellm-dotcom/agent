@@ -462,6 +462,22 @@ const conversation: Detecteur = {
       "Ouvre la trace de ces heures-là : souvent un modèle qui a atteint sa limite de tours.");
     if (repetes.length) c("conv:repetition", "moyenne", `Tu as dû répéter ${repetes.length} demande(s)`,
       "La même demande deux fois en moins de 15 minutes : la première réponse n'a pas suffi.", repetes, "");
+    const sourds = r.rows.filter((m) => m.role === "user" && m.content.startsWith("[message vocal reçu mais"));
+    if (sourds.length) {
+      const pasBranche = sourds.some((m) => /pas branchée/.test(m.content));
+      out.push({
+        signature: "conv:vocaux", source: "conversation", gravite: "haute",
+        titre: `${sourds.length} message(s) vocal(aux) que je n'ai pas pu écouter`,
+        detail: "Tu m'as parlé, je n'ai rien entendu : la réponse a dû tomber à côté ou te demander de répéter.",
+        occurrences: sourds.length, usd: 0,
+        exemples: sourds.slice(-3).map((m) => court(m.content.replace(/^\[message vocal reçu mais /, "").replace(/\]$/, ""), 200)),
+        traces: [],
+        correction: pasBranche
+          ? "Panneau → Voix → « Écoute de tes vocaux » : colle une clé Groq (offre gratuite) ou OpenAI, puis « Tester l'écoute »."
+          : "La clé d'écoute a échoué : panneau → Voix → « Tester l'écoute » dit pourquoi. Recolle la clé si elle est refusée.",
+        section: "voix",
+      });
+    }
     const blocages = await db().query<{ plafond: string; debit: string }>(
       `SELECT count(*) FILTER (WHERE detail LIKE 'Plafond journalier atteint%') AS plafond, count(*) FILTER (WHERE detail LIKE 'Trop de messages%') AS debit
        FROM boite_noire WHERE type='reponse' AND ts > now() - interval '${FENETRE}'`,

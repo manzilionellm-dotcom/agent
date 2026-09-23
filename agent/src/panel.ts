@@ -5,6 +5,7 @@ import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByPr
 import { approbationsActives } from "./channels/approvals.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
 import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
+import { LANGUES_ECOUTE, langueEcoute, sourceEcoute } from "./ecoute.js";
 import { MDP_MIN, motDePasseDefini } from "./login.js";
 import { screenAlive } from "./screen.js";
 import { ecranBranche } from "./navigator.js";
@@ -52,6 +53,7 @@ export type PanelState = {
   approbations: boolean;
   perso: Personnalite;
   voix: VoixReglages & { service: boolean };
+  ecoute: { source?: string; fournisseur: string; langue: string };
   mdp: boolean;
   navigateur: { vivant: boolean; branche: boolean; comptes: PublicCredential[] };
   plus: PlusState;
@@ -66,7 +68,7 @@ export type PanelState = {
 
 export async function panelState(vue: VueBN = lireVue(new URLSearchParams())): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes, plus, diag] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes, plus, diag, ecoute, langue] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -82,6 +84,8 @@ export async function panelState(vue: VueBN = lireVue(new URLSearchParams())): P
     listCredentials().catch(() => [] as PublicCredential[]),
     plusState(),
     diagState(vue),
+    sourceEcoute().catch(() => undefined),
+    langueEcoute().catch(() => "fr"),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
@@ -91,6 +95,8 @@ export async function panelState(vue: VueBN = lireVue(new URLSearchParams())): P
     approbations,
     perso,
     voix: { ...voix, service: tous.some((x) => x.id === "voix" && x.enabled && x.has_key) },
+    // Le nom de la source seulement : la clé ne quitte jamais le serveur.
+    ecoute: { source: ecoute?.nom, fournisseur: ecoute && /openai/i.test(ecoute.base) ? "openai" : "groq", langue },
     mdp,
     navigateur: { vivant, branche: ecranBranche(), comptes },
     plus,
@@ -258,7 +264,34 @@ ${manque}
     <textarea name="consignes" maxlength="600" placeholder="Ex. : Voix posée et assurée, débit un peu rapide, ton complice. Français avec un léger accent d'Afrique centrale.">${esc(v.consignes)}</textarea></label>
   <button class="principal">Enregistrer la voix</button>
 </form>
-<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="testvoix"><button${v.service ? "" : " disabled"}>Tester la voix sur mon WhatsApp</button></form>`;
+<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="testvoix"><button${v.service ? "" : " disabled"}>Tester la voix sur mon WhatsApp</button></form>
+${sectionEcoute(st)}`;
+}
+
+/**
+ * L'écoute des vocaux : ce qu'il faut pour qu'il ENTENDE, pas seulement qu'il
+ * parle. Une clé Groq ou OpenAI suffit ; s'il en trouve déjà une au panneau,
+ * il s'en sert sans qu'on la recolle.
+ */
+function sectionEcoute(st: PanelState): string {
+  const e = st.ecoute;
+  const etat = e.source
+    ? `<p class="notice bon">Il écoute tes vocaux (clé : ${esc(e.source)}). Parle-lui normalement sur WhatsApp : il transcrit et répond.</p>`
+    : `<p class="notice warn"><b>Il n'entend pas encore tes vocaux.</b> Colle une clé ci-dessous. Groq a une offre gratuite : sur <b>console.groq.com</b> → <i>API Keys</i> → <i>Create API Key</i>, copie la clé (elle commence par <code>gsk_</code>) et colle-la ici.</p>`;
+  const sel = (a: string, b: string): string => (a === b ? " selected" : "");
+  return `<h2 id="ecoute" style="margin-top:1.8rem">Écoute de tes vocaux</h2>
+<p class="aide">Pour qu'il comprenne les messages vocaux que tu lui envoies sur WhatsApp. La clé se colle ici, jamais dans une conversation.</p>
+${etat}
+<form class="ajout" method="post" autocomplete="off">
+  <input type="hidden" name="op" value="ecoute">
+  <div class="grille">
+    <label>Fournisseur<select name="fournisseur"><option value="groq"${sel(e.fournisseur, "groq")}>Groq (rapide, offre gratuite)</option><option value="openai"${sel(e.fournisseur, "openai")}>OpenAI</option></select></label>
+    <label>Clé d'API<input name="cle" type="password" placeholder="${e.source ? "(en place — laisse vide pour la garder)" : "gsk_… ou sk-…"}"></label>
+    <label>Langue que tu parles<select name="langue">${Object.entries(LANGUES_ECOUTE).map(([k, t]) => `<option value="${k}"${sel(e.langue, k)}>${esc(t)}</option>`).join("")}</select></label>
+  </div>
+  <button class="principal">Enregistrer l'écoute</button>
+</form>
+<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="testecoute"><button${e.source ? "" : " disabled"}>Tester l'écoute</button></form>`;
 }
 
 /**
