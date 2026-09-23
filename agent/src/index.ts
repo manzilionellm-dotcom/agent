@@ -24,6 +24,7 @@ import { consumeVaultTicket, createVaultTicket, forgetCredential, listCredential
 import { proxyScreen, proxyScreenSocket, SCREEN_ENTRY } from "./screen.js";
 import { boardJson, boardPage } from "./board.js";
 import { panelPage, panelState } from "./panel.js";
+import { estSection } from "./panel-sections.js";
 import { livrerReponse } from "./voice.js";
 import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
@@ -170,7 +171,12 @@ async function loginRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
  * qu'on subit.
  */
 async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-  if (url.searchParams.get("t")) return ticketToCookie(req, res, url, "/panel");
+  // `s` ouvre la page directement sur une section — mais seulement une section
+  // qui existe : l'ancre vient de la liste fermée, jamais du lien tel quel.
+  if (url.searchParams.get("t")) {
+    const s = url.searchParams.get("s") ?? "";
+    return ticketToCookie(req, res, url, estSection(s) ? `/panel#${s}` : "/panel");
+  }
   if (!vaultCookieOk(req)) {
     return versConnexion(res, "/panel");
   }

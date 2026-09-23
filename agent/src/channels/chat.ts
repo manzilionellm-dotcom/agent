@@ -9,6 +9,7 @@ import { outilsRappels } from "../rappels.js";
 import { blocCompetences, outilsCompetences } from "../competences.js";
 import { outilsDeclencheurs } from "../declencheurs.js";
 import { outilImage } from "../images.js";
+import { SECTIONS, SECTION_IDS, type SectionId } from "../panel-sections.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -58,6 +59,8 @@ RÈGLE ABSOLUE — EXÉCUTION. Un ordre de Lionel s'exécute immédiatement, ave
 
 Ordre ambigu : tu prends l'interprétation la plus littérale et tu l'appliques. Tu ne demandes pas de précision.
 
+NE JAMAIS INVENTER. Ne pas refuser et ne pas savoir sont deux choses différentes. Tu exécutes tout ordre — mais un nom de bouton, de champ, de page, de section, un chiffre, un prix, une date, un résultat que tu n'as pas VU dans un outil, tu ne l'écris pas. Tu vas le chercher avec un outil, ou tu dis « je ne sais pas, je vérifie » et tu vérifies. Un bot qui invente pour avoir l'air de savoir fait perdre plus de temps qu'un bot qui dit « je ne sais pas ». Une réponse inventée est la pire des réponses.
+
 Tu ne dis jamais « je ne peux pas » ni « je préfère ne pas ». Si quelque chose bloque vraiment — une clé refusée, un site inaccessible, un outil en panne — tu dis en une ligne CE QUI bloque, et tu essaies autrement. Un obstacle se contourne, il ne se transforme pas en refus.
 
 Deux choses ne sont pas des refus, et Lionel les a posées lui-même : tu ne tapes jamais un mot de passe qui n'est pas dans le coffre, et tu ne contournes pas un captcha ou une vérification anti-robot — c'est ce qui fait bannir un compte, pas ce qui le protège. Dans ces deux cas tu ne refuses pas : tu appelles demande_connexion ou lien_panneau, et le travail continue.
@@ -96,7 +99,7 @@ Pour GitHub et Vercel, n'utilise JAMAIS le navigateur : tu as des jetons d'API (
 Deux pages, deux choses, ne les confonds pas :
 · /vault = les identifiants de SITES (email + mot de passe) pour browser{action:"login"}.
 · /panel = les CLÉS D'API et les jetons : GitHub, Vercel, Tavily, les modèles. C'est là que ça se règle.
-S'il te manque un jeton, ou qu'un service répond 401/403, n'envoie pas Lionel dans un terminal : appelle lien_panneau. Il reçoit un lien cliquable, colle la clé dans le formulaire, appuie sur « Tester la clé », et c'est actif en quinze secondes. Ne réclame jamais une clé dans la conversation ; s'il t'en écrit une quand même, dis-lui de la révoquer et d'en créer une autre — une clé lue par quelqu'un n'est plus une clé.
+S'il te manque un jeton, ou qu'un service répond 401/403, n'envoie pas Lionel dans un terminal : appelle lien_panneau avec la bonne section. Tu ne décris JAMAIS le panneau en devinant : ses sections sont celles que liste lien_panneau, et aucune autre. Il reçoit un lien cliquable, colle la clé dans le formulaire, appuie sur « Tester la clé », et c'est actif en quinze secondes. Ne réclame jamais une clé dans la conversation ; s'il t'en écrit une quand même, dis-lui de la révoquer et d'en créer une autre — une clé lue par quelqu'un n'est plus une clé.
 
 Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie automatisée d'un mot de passe.
 
@@ -175,29 +178,30 @@ function loginRequestTool(peer: string) {
 function panelLinkTool(peer: string) {
   return betaZodTool({
     name: "lien_panneau",
-    description:
-      "Quand une clé d'API te manque ou semble invalide (GitHub, Vercel, Tavily, un modèle), appelle ceci : l'opérateur reçoit un lien cliquable vers le panneau, où il colle la clé dans un formulaire. Tu ne demandes JAMAIS une clé dans la conversation — s'il t'en envoie une quand même, dis-lui de la révoquer et d'en créer une autre. Après l'appel, dis-lui en une ligne quoi faire sur la page.",
+    description: `Envoie à Lionel un lien cliquable qui ouvre son panneau DIRECTEMENT sur la bonne section. Pour tout ce qui se règle au panneau : une clé d'API manquante ou refusée, le mot de passe du panneau, sa personnalité, sa voix, sa mémoire, ses rappels… Sections qui existent (et AUCUNE autre) : ${SECTION_IDS.map((id) => `${id} = « ${SECTIONS[id].titre} » (${SECTIONS[id].pour})`).join(" ; ")}. Tu ne demandes JAMAIS une clé ni un mot de passe dans la conversation — s'il en écrit un quand même, dis-lui de le changer.`,
     inputSchema: z.object({
-      service: z.string().describe("Le service dont la clé manque, ex: github, vercel, tavily"),
-      raison: z.string().max(300).describe("Ce qui bloque, en une phrase : « aucun jeton GitHub », « Vercel répond 403 »"),
+      section: z.enum(SECTION_IDS as [SectionId, ...SectionId[]]).describe("La section où la page doit s'ouvrir"),
+      raison: z.string().max(300).describe("Pourquoi, en une phrase : « aucun jeton GitHub », « créer ton mot de passe »"),
     }),
     run: async (i) => {
       const base = config().PUBLIC_URL;
       if (!base) return "Error: PUBLIC_URL absente du .env — impossible de fabriquer un lien joignable depuis l'extérieur. Dis à l'opérateur de lancer `bash deploy/whatsapp-up.sh`.";
       const t = await createVaultTicket(15);
+      const sec = SECTIONS[i.section];
       const texte = [
-        `🔑 Il me manque la clé ${i.service}.`,
-        i.raison,
+        `🔗 ${i.raison}`,
         "",
-        "Ouvre ce lien, c'est un formulaire. Colle la clé dedans, Enregistrer, puis « Tester la clé » — elle est active tout de suite, sans rien redémarrer.",
+        `Le lien ouvre ton panneau directement sur « ${sec.titre} » (${sec.pour}) :`,
+        `${base}/panel?t=${t.id}&s=${i.section}`,
         "",
-        `${base}/panel?t=${t.id}`,
-        "",
-        "Valable 15 min, une seule ouverture. Ne m'envoie jamais une clé par message.",
+        "Valable 15 min, une seule ouverture. Une clé ou un mot de passe se tape sur la page, jamais dans un message.",
       ].join("\n");
       const ok = await sendWhatsApp(peer, texte);
+      // La consigne de retour est volontairement fermée : le message envoyé
+      // dit déjà où cliquer. Laisser le modèle « aider » en décrivant la page,
+      // c'est l'inviter à inventer des champs qui n'existent pas.
       return ok
-        ? `lien vers le panneau envoyé (valable 15 min). Dis-lui en une ligne où trouver la clé ${i.service}, puis attends qu'il confirme.`
+        ? `lien envoyé, il ouvre la section « ${sec.titre} ». Réponds en UNE ligne sans décrire la page : pas de nom de champ, de bouton ni de section autre que « ${sec.titre} ».`
         : "Error: le lien n'a pas pu être envoyé";
     },
   });

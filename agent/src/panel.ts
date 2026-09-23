@@ -8,6 +8,7 @@ import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
 import { MDP_MIN, motDePasseDefini } from "./login.js";
 import { screenAlive } from "./screen.js";
 import { ecranBranche } from "./navigator.js";
+import { menuPanneau } from "./panel-sections.js";
 import { SITES } from "./browsing/sites.js";
 import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
 import { plusState, sectionCompetences, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, type PlusState } from "./panel-plus.js";
@@ -364,7 +365,7 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 <title>Manzi Junior — panneau</title><meta name="robots" content="noindex">
 <style>${CSS}</style></head><body><main>
 <header><h1>${esc(st.perso.nom)} — panneau</h1><span class="maj">à jour · ${esc(st.heure)} · <a href="/logout" style="color:inherit">se déconnecter</a></span></header>
-<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#navigateur">Navigateur</a><a href="#memoire">Mémoire</a><a href="#competences">Compétences</a><a href="#rappels">Rappels</a><a href="#declencheurs">E-mails</a><a href="#images">Images</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
+<nav class="sommaire">${menuPanneau()}</nav>
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
