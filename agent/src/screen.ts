@@ -25,7 +25,13 @@ const host = (): string => config().DESKTOP_HOST;
 const port = (): number => config().DESKTOP_PORT;
 
 /** Page d'entrée : noVNC en plein écran, connecté d'office, redimensionné au navigateur. */
-export const SCREEN_ENTRY = "/screen/vnc.html?path=screen/websockify&autoconnect=true&resize=remote&reconnect=true&show_dot=true";
+// `resize=scale` et non `remote` : `remote` demande au serveur de changer de
+// résolution, ce que cet écran ne sait pas faire (Xvfb à taille fixe, x11vnc
+// lancé sans -xrandr). La demande était ignorée en silence : sur un PC l'écran
+// tenait par chance, sur un téléphone il s'affichait en taille réelle et il
+// fallait le parcourir au doigt. `scale` réduit l'image à la taille de l'écran
+// qui regarde, quel qu'il soit.
+export const SCREEN_ENTRY = "/screen/vnc.html?path=screen/websockify&autoconnect=true&resize=scale&reconnect=true&show_dot=true";
 
 /**
  * Relaie une requête HTTP vers noVNC.
