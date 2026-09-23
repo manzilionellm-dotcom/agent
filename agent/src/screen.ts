@@ -212,7 +212,7 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
     <label class="cache"><input type="checkbox" id="valider"> + Entrée</label></div>
     <button class="principal" type="submit">Écrire</button>
   </form>
-  <div class="etat"><b id="etat">Touche d'abord la case sur l'écran, puis écris ici.</b><a href="/panel">Panneau</a></div>
+  <div class="etat"><b id="etat">1. Touche la case du site sur l'écran · 2. Écris en bas · 3. Écrire</b><a href="/panel">Panneau</a></div>
 </div>
 <script>
 (() => {
@@ -305,7 +305,7 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
   document.getElementById("masquer").addEventListener("change", (e) => { texte.type = e.target.checked ? "password" : "text"; });
   document.getElementById("ecrire").addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!texte.value) return dire("Rien à écrire.", "bad");
+    if (!texte.value) { texte.focus(); return dire("La case du bas est vide : écris ton texte dedans, puis Écrire.", "bad"); }
     await envoyer("ecrire", { texte: texte.value });
     if (document.getElementById("valider").checked) await envoyer("entree");
     texte.value = "";

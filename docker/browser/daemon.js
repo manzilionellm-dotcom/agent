@@ -297,6 +297,9 @@ const handlers = {
       case "echap": await cible.keyboard.press("Escape"); break;
       case "ecrire":
         if (typeof a.texte !== "string" || !a.texte) throw new Error("rien à écrire");
+        // Sans case sélectionnée, le texte partait dans le vide — et l'écran
+        // répondait « fait ». On le dit plutôt, avec le geste qui manque.
+        if (!(await caseActive(cible))) throw new Error("aucune case sélectionnée dans le site : touche d'abord la case sur l'écran (ou appuie sur « Suivante »), puis Écrire");
         // insertText et non type : pas d'événement par touche, donc pas de
         // raccourci déclenché par une lettre, et les accents passent tels quels.
         await cible.keyboard.insertText(a.texte.slice(0, 5000));
@@ -582,6 +585,21 @@ async function ongletVisible() {
   }
   if (!visibles.length) return page;
   return visibles.includes(page) ? page : visibles[visibles.length - 1];
+}
+
+/** Une case où l'on peut écrire a-t-elle le curseur, dans la page ou un de ses cadres ? */
+async function caseActive(p) {
+  for (const f of p.frames()) {
+    const oui = await f.evaluate(() => {
+      const e = document.activeElement;
+      if (!e) return false;
+      if (e.isContentEditable || e.tagName === "TEXTAREA") return true;
+      if (e.tagName === "INPUT") return !["button", "submit", "checkbox", "radio", "hidden", "image", "reset", "file", "range", "color"].includes(e.type);
+      return false;
+    }).catch(() => false);
+    if (oui) return true;
+  }
+  return false;
 }
 
 async function firstVisible(selectors) {
