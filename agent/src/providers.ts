@@ -52,7 +52,7 @@ const ID_RE = /^[a-z][a-z0-9_-]{1,31}$/;
 
 /** Identifiants dont la catégorie ne se choisit pas : c'est leur nom qui la dit. */
 const SERVICES_RESERVES: Record<string, Category> = {
-  github: "dev", vercel: "dev", tavily: "recherche", serpapi: "recherche", voix: "autre",
+  github: "dev", vercel: "dev", tavily: "recherche", serpapi: "recherche", voix: "autre", image: "autre",
 };
 
 function norm(r: ProviderRow): ProviderRow {

@@ -308,6 +308,28 @@ export const gmailTrashTool = betaZodTool({
   },
 });
 
+/* --- accès direct, pour les déclencheurs --------------------------------- */
+
+export type MessageBref = { id: string; threadId: string; de: string; objet: string; recu: number; extrait: string };
+
+/** Recherche Gmail sans passer par un modèle : c'est le code qui surveille, pas un agent. */
+export async function gmailRechercher(q: string, max = 20): Promise<MessageBref[]> {
+  const list = await api<{ messages?: Array<{ id: string }> }>(`${GMAIL}/messages?q=${encodeURIComponent(q)}&maxResults=${max}`);
+  const ids = (list.messages ?? []).map((m) => m.id);
+  const msgs = await Promise.all(
+    ids.map((id) => api<Message>(`${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`).catch(() => undefined)),
+  );
+  return msgs
+    .filter((m): m is Message => Boolean(m))
+    .map((m) => ({ id: m.id, threadId: m.threadId, de: header(m, "From"), objet: header(m, "Subject"), recu: Number(m.internalDate ?? 0), extrait: m.snippet ?? "" }));
+}
+
+/** Corps d'un message, en texte, borné. */
+export async function gmailCorps(id: string, max = 8_000): Promise<{ de: string; objet: string; date: string; messageId: string; corps: string }> {
+  const m = await api<Message>(`${GMAIL}/messages/${id}?format=full`);
+  return { de: header(m, "From"), objet: header(m, "Subject"), date: header(m, "Date"), messageId: header(m, "Message-ID"), corps: bodyText(m.payload).slice(0, max) };
+}
+
 /* --- agenda --------------------------------------------------------------- */
 
 export const calendarTool = betaZodTool({

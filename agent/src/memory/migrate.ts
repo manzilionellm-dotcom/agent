@@ -263,6 +263,61 @@ const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS usage_log_ts ON usage_log (ts DESC)`,
   `CREATE INDEX IF NOT EXISTS usage_log_provider_ts ON usage_log (provider, ts DESC)`,
 
+  // Rappels et tâches planifiées (Grok Tasks) : n'importe quelle demande,
+  // une fois ou sur un rythme. `en_cours` empêche deux exécutions du même
+  // rappel si deux processus tournent, ou si un passage déborde sur le suivant.
+  `CREATE TABLE IF NOT EXISTS rappels (
+     id               BIGSERIAL PRIMARY KEY,
+     peer             TEXT NOT NULL,
+     type             TEXT NOT NULL CHECK (type IN ('rappel','tache')),
+     quoi             TEXT NOT NULL,
+     cron             TEXT,
+     prochain         TIMESTAMPTZ,
+     actif            BOOLEAN NOT NULL DEFAULT true,
+     en_cours         BOOLEAN NOT NULL DEFAULT false,
+     executions       INTEGER NOT NULL DEFAULT 0,
+     derniere         TIMESTAMPTZ,
+     dernier_resultat TEXT,
+     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS rappels_dus ON rappels (prochain) WHERE actif`,
+
+  // Compétences (Grok Skills) : ce qu'on lui apprend une fois et qu'il
+  // applique ensuite de lui-même. Le nom est la clé : réapprendre une
+  // compétence du même nom la remplace, comme chez Grok où « la tienne
+  // prime toujours ».
+  `CREATE TABLE IF NOT EXISTS competences (
+     nom          TEXT PRIMARY KEY,
+     quand        TEXT NOT NULL,
+     instructions TEXT NOT NULL,
+     actif        BOOLEAN NOT NULL DEFAULT true,
+     source       TEXT NOT NULL DEFAULT 'chat',
+     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
+  // Déclencheurs e-mail (Grok Automations) : une condition sur les messages
+  // qui arrivent, une consigne à exécuter, le résultat sur WhatsApp.
+  `CREATE TABLE IF NOT EXISTS declencheurs_email (
+     id          BIGSERIAL PRIMARY KEY,
+     nom         TEXT NOT NULL,
+     expediteur  TEXT NOT NULL DEFAULT '',
+     sujet       TEXT NOT NULL DEFAULT '',
+     piece_jointe BOOLEAN NOT NULL DEFAULT false,
+     consigne    TEXT NOT NULL,
+     actif       BOOLEAN NOT NULL DEFAULT true,
+     declenches  INTEGER NOT NULL DEFAULT 0,
+     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  // Un message déjà traité ne se retraite jamais : sans cette table, chaque
+  // passage renverrait le résumé du même e-mail tant qu'il reste récent.
+  `CREATE TABLE IF NOT EXISTS declencheurs_vus (
+     declencheur_id BIGINT NOT NULL REFERENCES declencheurs_email(id) ON DELETE CASCADE,
+     message_id     TEXT NOT NULL,
+     vu_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+     PRIMARY KEY (declencheur_id, message_id)
+   )`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

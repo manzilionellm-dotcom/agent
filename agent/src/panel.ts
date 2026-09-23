@@ -10,6 +10,7 @@ import { screenAlive } from "./screen.js";
 import { ecranBranche } from "./navigator.js";
 import { SITES } from "./browsing/sites.js";
 import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
+import { plusState, sectionCompetences, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, type PlusState } from "./panel-plus.js";
 
 /**
  * Le panneau : ajouter, retirer, mettre en pause, prioriser.
@@ -51,6 +52,7 @@ export type PanelState = {
   voix: VoixReglages & { service: boolean };
   mdp: boolean;
   navigateur: { vivant: boolean; branche: boolean; comptes: PublicCredential[] };
+  plus: PlusState;
   categories: Array<{ id: Category; titre: string; aide: string; services: PublicProvider[] }>;
   consommation: Array<{ provider: string; model: string; appels: number; usd: number; tokens: number }>;
   /** `quand` est déjà formaté ici : le rendu ne doit pas dépendre du fuseau du serveur. */
@@ -61,7 +63,7 @@ export type PanelState = {
 
 export async function panelState(): Promise<PanelState> {
   const cfg = config();
-  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes] = await Promise.all([
+  const [tous, conso, missions, jours, jour, plafond, vercel, approbations, perso, voix, mdp, vivant, comptes, plus] = await Promise.all([
     listProviders().catch(() => [] as PublicProvider[]),
     usageByProvider(24).catch(() => []),
     spendByMission(24).catch(() => [] as MissionCost[]),
@@ -75,6 +77,7 @@ export async function panelState(): Promise<PanelState> {
     motDePasseDefini().catch(() => false),
     screenAlive().catch(() => false),
     listCredentials().catch(() => [] as PublicCredential[]),
+    plusState(),
   ]);
   return {
     heure: new Date().toLocaleString("fr-FR", { timeZone: cfg.TZ }),
@@ -86,6 +89,7 @@ export async function panelState(): Promise<PanelState> {
     voix: { ...voix, service: tous.some((x) => x.id === "voix" && x.enabled && x.has_key) },
     mdp,
     navigateur: { vivant, branche: ecranBranche(), comptes },
+    plus,
     categories: CATEGORIES.map((c) => ({ id: c, titre: LABELS[c], aide: AIDE[c], services: tous.filter((s) => s.category === c) })),
     consommation: conso,
     missions: missions.map((m) => ({ ...m, quand: new Date(m.dernier).toLocaleString("fr-FR", { timeZone: cfg.TZ }) })),
@@ -360,7 +364,7 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 <title>Manzi Junior — panneau</title><meta name="robots" content="noindex">
 <style>${CSS}</style></head><body><main>
 <header><h1>${esc(st.perso.nom)} — panneau</h1><span class="maj">à jour · ${esc(st.heure)} · <a href="/logout" style="color:inherit">se déconnecter</a></span></header>
-<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#navigateur">Navigateur</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
+<nav class="sommaire"><a href="#personnalite">Personnalité</a><a href="#voix">Voix</a><a href="#navigateur">Navigateur</a><a href="#memoire">Mémoire</a><a href="#competences">Compétences</a><a href="#rappels">Rappels</a><a href="#declencheurs">E-mails</a><a href="#images">Images</a><a href="#services">Services</a><a href="#formulaire">Ajouter</a><a href="#depense">Dépense</a><a href="#acces">Accès</a><a href="#approbations">Approbations</a><a href="#plafond">Plafond</a></nav>
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
@@ -381,6 +385,16 @@ ${sectionPersonnalite(st)}
 ${sectionVoix(st)}
 
 ${sectionNavigateur(st)}
+
+${sectionMemoire(st.plus)}
+
+${sectionCompetences(st.plus)}
+
+${sectionRappels(st.plus)}
+
+${sectionDeclencheurs(st.plus)}
+
+${sectionImages(st.plus)}
 
 <div id="services"></div>
 ${cats}

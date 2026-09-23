@@ -4,6 +4,11 @@ import { config } from "../config.js";
 import { createVaultTicket } from "../vault.js";
 import { dailyBudget, setSetting } from "../providers.js";
 import { composerPrompt } from "../personality.js";
+import { memoireActive, oublierTool } from "../souvenirs.js";
+import { outilsRappels } from "../rappels.js";
+import { blocCompetences, outilsCompetences } from "../competences.js";
+import { outilsDeclencheurs } from "../declencheurs.js";
+import { outilImage } from "../images.js";
 import { runRouted } from "../llm/router.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -98,6 +103,16 @@ Pour Gmail et l'Agenda, utilise les outils google : Google bloque la saisie auto
 Pièces jointes : quand Lionel envoie une photo, une capture, un PDF ou un vocal, tu reçois son contenu déjà lu, entre crochets. Tu t'en sers comme s'il te l'avait décrit — ne dis jamais que tu ne peux pas voir les images. Si le bloc dit que la lecture a échoué, dis-le simplement et demande ce qu'il y a dessus.
 
 Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report avant de dire « je ne sais pas ». Les préférences de l'opérateur vont dans remember_fact avec topic 'profil:...'.
+
+Images : « fais-moi une image / un logo / une bannière / un visuel de… » → generer_image, avec une description détaillée que tu rédiges toi-même. L'image arrive sur WhatsApp.
+
+Surveillance de la boîte mail : « quand je reçois un mail de X / avec « facture » dans l'objet / avec une pièce jointe, fais Y » → creer_declencheur_email. Ça tourne tout seul toutes les 5 minutes et le résultat arrive sur WhatsApp.
+
+Compétences : « à partir de maintenant, quand… fais… », « retiens cette méthode », « garde ça comme compétence » → apprendre_competence (nom court, QUAND, COMMENT). Un fait (« j'habite à… ») va dans remember_fact, une façon de faire dans une compétence.
+
+Rappels et tâches : « rappelle-moi… », « chaque matin/lundi/jour à… », « dans deux heures… » → outil planifier (rappel = message tel quel ; tache = demande que tu exécuteras à l'heure dite). Calcule l'heure depuis l'heure locale donnée en tête du message. « qu'est-ce que j'ai de prévu ? » → lister_planifications ; « annule le n°3 » → annuler_planification. Les MISSIONS, elles, restent sur schedule_mission.
+
+Mémoire : « oublie que… », « efface ce que tu sais sur… », « ce n'est plus vrai que… » → outil oublier, puis cite ce qui a été effacé. Lionel voit et efface aussi sa mémoire sur le panneau.
 
 Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « appelle-toi X » → outil reglage, immédiatement, sans demander confirmation. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
 
@@ -233,6 +248,7 @@ function settingsTool() {
       voix: z.enum(["off", "si_vocal", "toujours"]).optional(),
       caractere: z.enum(["executant", "associe", "complice", "mentor"]).optional(),
       nom: z.string().min(1).max(40).optional(),
+      memoire: z.enum(["on", "off"]).optional().describe("off = tu ne retiens plus rien et ne lis plus le profil"),
     }),
     run: async (i) => {
       const faits: string[] = [];
@@ -259,6 +275,10 @@ function settingsTool() {
       if (i.nom) {
         await setSetting("BOT_NOM", i.nom.replace(/[\u0000-\u001f]/g, "").trim());
         faits.push(`je m'appelle maintenant ${i.nom.trim()}`);
+      }
+      if (i.memoire) {
+        await setSetting("MEMOIRE", i.memoire);
+        faits.push(i.memoire === "off" ? "mémoire coupée — je ne retiens plus rien" : "mémoire réactivée");
       }
       if (!faits.length) return "Error: rien à changer — précise au moins un réglage.";
       logger.info({ reglages: faits }, "réglage changé depuis le chat");
@@ -545,9 +565,13 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   const history = hist.rows.reverse().slice(0, -1);
   const notify: Notify = opts.notify ?? (opts.channel === "whatsapp" ? async (t) => void (await sendWhatsApp(opts.peer, t)) : async () => undefined);
 
+  // Mémoire coupée (interrupteur du panneau, comme « personnaliser avec
+  // l'historique » chez Grok) : il ne s'appuie plus sur son profil et
+  // n'enregistre plus de faits. La conversation courante reste lisible.
+  const memoire = await memoireActive();
   const task = [
-    `Date: ${new Date().toISOString()}`,
-    `<profil>\n${await memoryDigest(2_000, "/memories/profil")}\n</profil>`,
+    `Date: ${new Date().toISOString()} — heure locale de Lionel : ${new Date().toLocaleString("fr-FR", { timeZone: config().TZ, dateStyle: "full", timeStyle: "short" })} (${config().TZ})`,
+    memoire ? `<profil>\n${await memoryDigest(2_000, "/memories/profil")}\n</profil>` : "",
     history.length ? `<historique>\n${history.map((h) => `${h.role === "user" ? "opérateur" : "toi"}: ${h.content}`).join("\n")}\n</historique>` : "",
     `Message de l'opérateur :\n${text}`,
   ]
@@ -560,12 +584,12 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   const res = await runRouted("chat", {
     // La personnalité se relit à chaque message : un réglage changé au
     // panneau se voit à la réponse suivante, sans redémarrage.
-    system: await composerPrompt(CHAT_SYSTEM),
+    system: [await composerPrompt(CHAT_SYSTEM), await blocCompetences()].filter(Boolean).join("\n\n"),
     task,
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

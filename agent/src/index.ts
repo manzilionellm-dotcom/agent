@@ -13,7 +13,7 @@ import { launch, startScheduler, stopScheduler, scheduledJobs, withLock, listSch
 import { runSwarm } from "./swarm/coordinator.js";
 import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
-import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, sendWhatsAppAudio, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
+import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, sendWhatsAppAudio, sendWhatsAppMedia, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 import { mediaToText } from "./channels/media.js";
 import { createAgent, getAgent, listAgents, deleteAgent, agentSpend } from "./agents/store.js";
 import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
@@ -29,6 +29,11 @@ import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMot
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
 import { VOIX_MODES, synthese } from "./voice.js";
 import { ouvrirSurEcran, sitesConnectes } from "./navigator.js";
+import { annulerRappel, demarrerRappels, heureLocale, planifier, supprimerRappel } from "./rappels.js";
+import { oublierFait, oublierFichierProfil, oublierTout } from "./souvenirs.js";
+import { apprendre, basculerCompetence, oublierCompetence } from "./competences.js";
+import { genererImage, typeImage } from "./images.js";
+import { basculerDeclencheur, creerDeclencheur, decrire, demarrerDeclencheurs, supprimerDeclencheur } from "./declencheurs.js";
 import { bumpProviderPriority, deleteProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
@@ -213,6 +218,77 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        case "memoire": {
+          const off = g("etat") === "off";
+          await setSetting("MEMOIRE", off ? "off" : "on");
+          notice = off ? "Mémoire coupée : il ne retient plus rien et ne lit plus ton profil." : "Mémoire réactivée.";
+          ton = off ? "bad" : "bon";
+          break;
+        }
+        case "oublier_fait": {
+          notice = (await oublierFait(Number(g("fid")))) ? "Oublié." : "Déjà oublié.";
+          ton = "bon";
+          break;
+        }
+        case "oublier_profil": {
+          notice = (await oublierFichierProfil(g("chemin"))) ? "Fichier de profil effacé." : "Introuvable (ou hors du profil).";
+          ton = "bon";
+          break;
+        }
+        case "oublier_tout": {
+          const r = await oublierTout();
+          notice = `Tout effacé : ${r.faits} fait(s), ${r.profil} fichier(s) de profil.`;
+          ton = "bad";
+          break;
+        }
+        case "rappel_creer": {
+          const to = primaryNumber();
+          if (!to) throw new Error("aucun numéro WhatsApp autorisé : à qui l'envoyer ?");
+          const type = g("type") === "tache" ? "tache" : "rappel";
+          const r = await planifier({ peer: to, type, quoi: f.get("quoi") ?? "", quand: g("quand") || undefined, cron: g("cron") || undefined });
+          notice = `Planifié n°${r.id} — ${r.cron ? "prochaine fois " : ""}${heureLocale(r.prochain)}.`;
+          ton = "bon";
+          break;
+        }
+        case "rappel_annuler": { notice = (await annulerRappel(Number(g("rid")))) ? "Annulé." : "Déjà terminé."; ton = "bon"; break; }
+        case "rappel_supprimer": { notice = (await supprimerRappel(Number(g("rid")))) ? "Retiré de la liste." : "Introuvable."; ton = "bon"; break; }
+        case "competence_enregistrer": {
+          const { competence, remplacee } = await apprendre({ nom: g("nom"), quand: g("quand"), instructions: f.get("instructions") ?? "", source: "panneau" });
+          notice = `Compétence « ${competence.nom} » ${remplacee ? "mise à jour" : "apprise"}. Elle s'applique dès le prochain message.`;
+          ton = "bon";
+          break;
+        }
+        case "competence_basculer": {
+          await basculerCompetence(g("nom"), g("etat") !== "off");
+          notice = g("etat") === "off" ? "Compétence en pause." : "Compétence réactivée.";
+          ton = "bon";
+          break;
+        }
+        case "competence_oublier": { notice = (await oublierCompetence(g("nom"))) ? "Compétence supprimée." : "Introuvable."; ton = "bon"; break; }
+        case "declencheur_creer": {
+          const d = await creerDeclencheur({ nom: g("nom"), expediteur: g("expediteur"), sujet: g("sujet"), piece_jointe: f.get("piece_jointe") === "on", consigne: f.get("consigne") ?? "" });
+          notice = `Déclencheur « ${d.nom} » actif : ${decrire(d)}.`;
+          ton = "bon";
+          break;
+        }
+        case "declencheur_basculer": {
+          await basculerDeclencheur(Number(g("did")), g("etat") !== "off");
+          notice = g("etat") === "off" ? "Déclencheur en pause." : "Déclencheur réactivé.";
+          ton = "bon";
+          break;
+        }
+        case "declencheur_supprimer": { notice = (await supprimerDeclencheur(Number(g("did")))) ? "Déclencheur supprimé." : "Introuvable."; ton = "bon"; break; }
+        case "testimage": {
+          const to = primaryNumber();
+          if (!to) throw new Error("aucun numéro WhatsApp autorisé à qui l'envoyer");
+          const img = await genererImage("Un petit robot sympathique qui fait un signe de la main, style illustration plate, couleurs vives, fond uni.");
+          const t = typeImage(img);
+          const envoi = await sendWhatsAppMedia(to, img, { mime: t.mime, type: "image", fichier: `test.${t.ext}`, legende: "Test d'image — si tu la vois, c'est branché." });
+          if (!envoi.ok) throw new Error(envoi.error ?? "envoi refusé");
+          notice = "Image de test envoyée sur ton WhatsApp.";
+          ton = "bon";
+          break;
+        }
         case "ouvrir_site": {
           // Succès : on file directement sur l'écran, où le site vient de
           // s'ouvrir. Revenir au panneau avec un bandeau « ouvert » obligerait
@@ -654,6 +730,30 @@ async function main(): Promise<void> {
   // tâche doit trouver une file déjà vidée de ses orphelines.
   await seedFromEnv().catch(() => 0);
   await startRuntime();
+  // Rappels et tâches planifiées. Un rappel est une alarme : texte envoyé
+  // tel quel, sans modèle. Une tâche passe par le chat, avec tous ses
+  // outils, et son résultat part par `deliverWhatsApp` — qui bascule sur le
+  // modèle approuvé hors de la fenêtre de 24 h : un rappel de 9 h ne doit pas
+  // se perdre parce que Lionel n'a rien écrit depuis la veille.
+  await demarrerRappels(async (r) => {
+    if (!whatsappEnabled()) return "WhatsApp non configuré : rien envoyé";
+    if (r.type === "rappel") {
+      const ok = await deliverWhatsApp(r.peer, `⏰ ${r.quoi}`);
+      return ok ? "envoyé" : "non livré";
+    }
+    const reponse = await handleChat({
+      channel: "whatsapp",
+      peer: r.peer,
+      text: `[Tâche planifiée n°${r.id}, que tu as enregistrée sur ordre de Lionel — exécute-la maintenant et donne le résultat] ${r.quoi}`,
+    });
+    if (reponse) await deliverWhatsApp(r.peer, reponse);
+    return reponse || "(réponse vide)";
+  }).catch((e) => logger.error({ err: String(e) }, "rappels non démarrés"));
+  // Déclencheurs e-mail : le résultat part au numéro principal.
+  demarrerDeclencheurs(async (texte) => {
+    const to = primaryNumber();
+    if (to && whatsappEnabled()) await deliverWhatsApp(to, texte);
+  });
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) { startHeartbeat(); startKeyWatch(); }
 

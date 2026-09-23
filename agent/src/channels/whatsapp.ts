@@ -209,13 +209,25 @@ export async function sendWhatsAppImage(to: string, sandboxPath: string, caption
  * vocale (la bulle avec l'onde) ; un MP3 arrive comme un fichier joint.
  */
 export async function sendWhatsAppAudio(to: string, audio: Buffer): Promise<{ ok: boolean; error?: string }> {
+  return sendWhatsAppMedia(to, audio, { mime: "audio/ogg", type: "audio", fichier: "voix.ogg" });
+}
+
+/**
+ * Téléverse un contenu fabriqué ICI (son de synthèse, image générée) et
+ * l'envoie. Même chemin pour les deux : seuls le type et la légende changent.
+ */
+export async function sendWhatsAppMedia(
+  to: string,
+  contenu: Buffer,
+  o: { mime: string; type: "audio" | "image"; fichier: string; legende?: string },
+): Promise<{ ok: boolean; error?: string }> {
   const cfg = config();
-  if (cfg.WHATSAPP_PROVIDER !== "meta") return { ok: false, error: "note vocale disponible uniquement avec le fournisseur meta" };
-  if (!audio.length) return { ok: false, error: "son vide" };
+  if (cfg.WHATSAPP_PROVIDER !== "meta") return { ok: false, error: "envoi de média disponible uniquement avec le fournisseur meta" };
+  if (!contenu.length) return { ok: false, error: "contenu vide" };
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
-  form.append("type", "audio/ogg");
-  form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/ogg" }), "voix.ogg");
+  form.append("type", o.mime);
+  form.append("file", new Blob([new Uint8Array(contenu)], { type: o.mime }), o.fichier);
   const up = await fetch(`${META_API}/${cfg.WHATSAPP_PHONE_NUMBER_ID}/media`, {
     method: "POST",
     headers: { Authorization: `Bearer ${cfg.WHATSAPP_ACCESS_TOKEN}` },
@@ -223,13 +235,14 @@ export async function sendWhatsAppAudio(to: string, audio: Buffer): Promise<{ ok
   }).catch((e: unknown) => ({ ok: false, status: 0, json: async () => ({ error: { message: String(e) } }) }) as unknown as Response);
   const j = (await up.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
   if (!up.ok || !j.id) {
-    logger.error({ status: up.status, error: j.error }, "téléversement audio whatsapp échoué");
+    logger.error({ status: up.status, error: j.error, type: o.type }, "téléversement de média whatsapp échoué");
     return { ok: false, error: `téléversement refusé par Meta (${j.error?.message ?? up.status})` };
   }
-  const sent = await sendMeta(to, { type: "audio", audio: { id: j.id } });
+  const corps = o.type === "image" ? { id: j.id, ...(o.legende ? { caption: o.legende.slice(0, 1024) } : {}) } : { id: j.id };
+  const sent = await sendMeta(to, { type: o.type, [o.type]: corps });
   if (sent) return { ok: true };
   if (lastMetaError?.code === 131047 || lastMetaError?.code === 131026) {
-    return { ok: false, error: "note vocale refusée : plus de 24 h depuis le dernier message de l'opérateur" };
+    return { ok: false, error: "refusé : plus de 24 h depuis le dernier message de l'opérateur" };
   }
   return { ok: false, error: lastMetaError?.message ?? "envoi refusé par Meta" };
 }
