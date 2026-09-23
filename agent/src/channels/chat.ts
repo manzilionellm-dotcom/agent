@@ -3,7 +3,7 @@ import { outilDiagnostic } from "../inspecteur.js";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
-import { createVaultTicket } from "../vault.js";
+import { createVaultTicket, normalizeSite } from "../vault.js";
 import { dailyBudget, setSetting } from "../providers.js";
 import { composerPrompt } from "../personality.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
@@ -95,7 +95,7 @@ Formulaires : appelle browser{action:"form"} pour voir les champs (nom, type, é
 
 Places de marché et annuaires : site_search{site, query} plutôt que goto+text — il rend titre, prix et lien au lieu de 200 000 caractères de menus. sites_list dit lesquels. Pour 1688.com, traduis la requête en chinois toi-même.
 
-Se connecter à un site : browser{action:"login", site:"linkedin.com"}. Le mot de passe est pris dans le coffre chiffré du serveur, saisi directement dans la page, et tu ne le vois jamais — c'est voulu, ne le réclame pas. vault_list te dit où tu peux entrer. Si un site manque, réponds « ajoute-le sur la page /vault de ton serveur » : Lionel ne doit JAMAIS écrire un mot de passe dans cette conversation, et s'il le fait quand même, dis-lui de le changer immédiatement. Ne tape jamais un mot de passe toi-même avec browser{action:"type"}.
+Se connecter à un site : browser{action:"login", site:"linkedin.com"}. Le mot de passe est pris dans le coffre chiffré du serveur, saisi directement dans la page, et tu ne le vois jamais — c'est voulu, ne le réclame pas. vault_list te dit où tu peux entrer. Si un site manque MAIS que Lionel t'a donné le site et l'identifiant (fréquent : « voici mon panel, l'identifiant c'est X, fais… ») : appelle enregistrer_identifiant avec ce site et cet identifiant. Il reçoit un lien qui ouvre le coffre déjà rempli, tape son mot de passe sur la page, écrit « c'est bon », et tu te connectes seul — sans jamais lui redemander. Ne réponds « ajoute-le sur /vault » que si tu n'as pas d'identifiant. Lionel ne doit JAMAIS écrire un mot de passe dans cette conversation, et s'il le fait quand même, dis-lui de le changer immédiatement. Ne tape jamais un mot de passe toi-même avec browser{action:"type"}.
 Pour GitHub et Vercel, n'utilise JAMAIS le navigateur : tu as des jetons d'API (outils git, sandbox, vercel), plus fiables et sans écran de connexion — et leur double authentification te bloquera de toute façon.
 
 Deux pages, deux choses, ne les confonds pas :
@@ -136,6 +136,55 @@ type Notify = (text: string) => Promise<void>;
  * se connecte de ses mains, ferme. La session reste sur le serveur, l'agent
  * reprend, et aucun secret n'a transité par personne.
  */
+/**
+ * Le chemin le plus court pour rendre un compte utilisable : l'opérateur t'a
+ * donné un site et un identifiant (ni l'un ni l'autre n'est un secret), il ne
+ * manque que le mot de passe. Tu envoies un lien qui ouvre le coffre avec le
+ * site et l'identifiant DÉJÀ remplis ; il n'a qu'à taper le mot de passe et
+ * enregistrer. Le mot de passe ne passe jamais par la conversation ni par
+ * l'URL — il ne se tape que sur cette page. Ensuite tu te connectes seul, pour
+ * toujours, sans plus rien lui demander.
+ */
+function enregistrerIdentifiantTool(peer: string) {
+  return betaZodTool({
+    name: "enregistrer_identifiant",
+    description:
+      "Range un compte dans le coffre pour pouvoir t'y connecter seul ensuite. À utiliser dès que l'opérateur te donne un site à faire et un identifiant, mais que le compte n'est pas encore au coffre. Tu fournis le site et l'identifiant (jamais le mot de passe) ; il reçoit un lien qui ouvre le coffre déjà rempli, tape SON mot de passe sur la page, enregistre. Tu ne demandes JAMAIS le mot de passe dans la conversation. Après, il dira « c'est bon » et tu te connecteras seul avec browser{action:\"login\"}.",
+    inputSchema: z.object({
+      site: z.string().max(200).describe("Le domaine du site, ex: 8k.cms-only.ru (pas l'URL complète)"),
+      identifiant: z.string().max(200).describe("Le nom d'utilisateur ou l'e-mail que l'opérateur t'a donné"),
+      page_connexion: z.string().max(300).optional().describe("L'URL exacte de la page de connexion si tu la connais, ex: https://8k.cms-only.ru/login.php"),
+    }),
+    run: async (i) => {
+      const base = config().PUBLIC_URL;
+      if (!base) return "Error: PUBLIC_URL absente du .env — impossible de fabriquer un lien joignable. Dis à l'opérateur de lancer `bash deploy/whatsapp-up.sh`.";
+      let site: string;
+      try {
+        site = normalizeSite(i.site);
+      } catch {
+        return `Error: « ${i.site} » n'est pas un nom de site valide. Redemande à l'opérateur l'adresse du site (ex: 8k.cms-only.ru).`;
+      }
+      const t = await createVaultTicket(15);
+      const q = new URLSearchParams({ t: t.id, site, login: i.identifiant.trim() });
+      if (i.page_connexion?.trim()) q.set("url", i.page_connexion.trim());
+      const texte = [
+        `🔐 Pour me connecter seul à ${site}, il me manque juste ton mot de passe.`,
+        "",
+        `Ouvre ce lien : le site (${site}) et l'identifiant (${i.identifiant.trim()}) sont déjà remplis. Tape seulement ton mot de passe, puis « Enregistrer ».`,
+        "",
+        `${base}/vault?${q.toString()}`,
+        "",
+        "Valable 15 min, une seule ouverture. Ton mot de passe ne se tape que sur cette page — jamais ici.",
+        "Reviens ensuite et écris « c'est bon ».",
+      ].join("\n");
+      const ok = await sendWhatsApp(peer, texte);
+      return ok
+        ? `lien d'enregistrement envoyé pour ${site} (identifiant ${i.identifiant.trim()}). Réponds en UNE ligne : dis-lui d'ouvrir le lien, taper son mot de passe, enregistrer, puis écrire « c'est bon ». Attends ce feu vert avant de te connecter.`
+        : "Error: le lien n'a pas pu être envoyé";
+    },
+  });
+}
+
 function loginRequestTool(peer: string) {
   return betaZodTool({
     name: "demande_connexion",
@@ -605,7 +654,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

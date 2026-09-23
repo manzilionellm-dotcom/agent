@@ -168,7 +168,12 @@ et aucun humain ne les lit — à l'exception du propriétaire du compte lui-mê
  * une page qui peut réafficher un secret est une page dont la fuite le
  * révèle. Pour changer une valeur, on la ressaisit.
  */
-export function vaultPage(entries: { site: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null }[], notice = "", enabled = true): string {
+export function vaultPage(entries: { site: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null }[], notice = "", enabled = true, prefill: { site?: string; login?: string; url?: string } = {}): string {
+  // Quand le bot a envoyé le lien avec un site et un identifiant déjà connus,
+  // on les pose dans le formulaire et on met le curseur sur le mot de passe :
+  // l'opérateur n'a plus qu'à taper le mot de passe et enregistrer. Le mot de
+  // passe, lui, n'est jamais dans l'URL — il ne se tape qu'ici.
+  const pre = Boolean(prefill.site || prefill.login);
   const rows = entries.length
     ? entries
         .map(
@@ -218,15 +223,16 @@ ${enabled ? "" : `<p class="notice warn">VAULT_KEY n'est pas définie dans le .e
 })();
 </script>
 
-<h2>Ajouter ou remplacer</h2>
+<h2 id="ajouter">Ajouter ou remplacer</h2>
+${pre ? `<p class="notice">Le bot a rempli le site et l'identifiant. Tape seulement le <b>mot de passe</b> ci-dessous, puis <b>Enregistrer</b>. Reviens ensuite sur WhatsApp et écris « c'est bon ».</p>` : ""}
 <form method="post" autocomplete="off">
 <input type="hidden" name="op" value="put">
-<label>Site<input name="site" placeholder="linkedin.com" required ${enabled ? "" : "disabled"}></label>
-<label>Identifiant ou e-mail<input name="login" placeholder="lionel@exemple.com" required ${enabled ? "" : "disabled"}></label>
-<label>Mot de passe<input name="secret" type="password" required ${enabled ? "" : "disabled"}></label>
+<label>Site<input name="site" placeholder="linkedin.com" required value="${esc(prefill.site ?? "")}"${prefill.site ? " readonly" : ""} ${enabled ? "" : "disabled"}></label>
+<label>Identifiant ou e-mail<input name="login" placeholder="lionel@exemple.com" required value="${esc(prefill.login ?? "")}" ${enabled ? "" : "disabled"}></label>
+<label>Mot de passe<input name="secret" type="password" required ${pre ? "autofocus" : ""} ${enabled ? "" : "disabled"}></label>
 <label>Clé de double authentification <span class="muted">(facultatif — la chaîne sous le QR code, pas le code à 6 chiffres)</span>
 <input name="totp" placeholder="JBSWY3DPEHPK3PXP" ${enabled ? "" : "disabled"}></label>
-<label>Page de connexion <span class="muted">(facultatif)</span><input name="url" placeholder="https://www.linkedin.com/login" ${enabled ? "" : "disabled"}></label>
+<label>Page de connexion <span class="muted">(facultatif)</span><input name="url" placeholder="https://www.linkedin.com/login" value="${esc(prefill.url ?? "")}" ${enabled ? "" : "disabled"}></label>
 <label>Note <span class="muted">(facultatif)</span><input name="note" placeholder="compte perso" ${enabled ? "" : "disabled"}></label>
 <button ${enabled ? "" : "disabled"}>Enregistrer</button>
 </form>

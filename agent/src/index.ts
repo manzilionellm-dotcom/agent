@@ -532,13 +532,27 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
       logger.warn({ ip: req.socket.remoteAddress }, "billet de coffre invalide ou déjà utilisé");
       return html("<!doctype html><meta charset=utf-8><title>Coffre</title><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Génère-en un autre :<br><code>ssh manzi@… 'cd manzi-junior &amp;&amp; bash deploy/vault-link.sh'</code>", 401);
     }
-    return poserCookie(req, res, "/vault", 3600);
+    // Le lien peut porter un site et un identifiant à pré-remplir (jamais le
+    // mot de passe) : on les garde à travers la redirection, pour que la page
+    // ouvre le formulaire déjà rempli sur le bon compte.
+    const qp = new URLSearchParams();
+    for (const k of ["site", "login", "url"]) {
+      const v = (url.searchParams.get(k) ?? "").slice(0, 200);
+      if (v) qp.set(k, v);
+    }
+    return poserCookie(req, res, qp.toString() ? `/vault?${qp.toString()}` : "/vault", 3600);
   }
 
   if (!vaultCookieOk(req)) {
     logger.warn({ ip: req.socket.remoteAddress }, "accès refusé au coffre");
     return versConnexion(res, "/vault");
   }
+
+  const prefill = {
+    site: (url.searchParams.get("site") ?? "").slice(0, 200) || undefined,
+    login: (url.searchParams.get("login") ?? "").slice(0, 200) || undefined,
+    url: (url.searchParams.get("url") ?? "").slice(0, 200) || undefined,
+  };
 
   let notice = "";
   if (req.method === "POST") {
@@ -568,7 +582,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
   // La liste ne peut pas se lire si VAULT_KEY manque — elle n'en a pas besoin
   // (rien n'est déchiffré ici), mais le dire évite une page blanche.
   const entries = await listCredentials().catch(() => []);
-  return html(vaultPage(entries, notice, vaultEnabled()));
+  return html(vaultPage(entries, notice, vaultEnabled(), req.method === "POST" ? {} : prefill));
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
