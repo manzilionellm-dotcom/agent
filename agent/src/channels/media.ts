@@ -150,9 +150,9 @@ async function compterDepense(usd: number): Promise<void> {
  * pris en charge ou si l'appel échoue — l'appelant garde alors le texte brut du
  * message, plutôt que de perdre le message entier à cause de sa pièce jointe.
  */
-export async function describeMedia(ref: MediaRef): Promise<string | undefined> {
+export async function describeMedia(ref: MediaRef, deja?: Fetched): Promise<string | undefined> {
   const cfg = config();
-  const got = await fetchMetaMedia(ref.id);
+  const got = deja ?? (await fetchMetaMedia(ref.id));
   if (!got) return undefined;
 
   const mime = got.mime.split(";")[0]!.trim();
@@ -223,6 +223,52 @@ export async function transcribeAudio(ref: MediaRef): Promise<Ecoute> {
   return transcrire(got.bytes, got.mime);
 }
 
+/** Où les pièces jointes reçues sont rangées dans le sandbox, à côté de /work/downloads. */
+export const DOSSIER_RECUS = "/work/whatsapp";
+const JOURS_CONSERVATION = 30;
+
+const EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+  "application/pdf": "pdf", "text/plain": "txt", "text/csv": "csv", "application/json": "json",
+};
+
+/**
+ * Dépose la pièce jointe dans /work, là où le navigateur du bot peut la
+ * reprendre avec browser{action:"upload"}. Sans ça, une photo envoyée sur
+ * WhatsApp n'existait que comme description : le bot pouvait dire ce qu'elle
+ * montrait, mais pas la mettre dans une annonce Vinted, et répondait
+ * « envoie-les moi en fichier » à quelqu'un qui venait de le faire.
+ *
+ * Écriture par l'entrée standard (pas en argument de commande) : 12 Mo de
+ * base64 dépassent la ligne de commande, et le sandbox exécute aussi du code
+ * écrit par un modèle. Les fichiers de plus de 30 jours sont effacés au
+ * passage. Un échec ne fait rien perdre : la description reste.
+ */
+export async function deposerPieceJointe(ref: MediaRef, got: Fetched): Promise<string | undefined> {
+  const mime = got.mime.split(";")[0]!.trim();
+  const ext = EXT[mime] ?? (ref.filename?.match(/\.([a-z0-9]{1,5})$/i)?.[1]?.toLowerCase() ?? "bin");
+  const base = (ref.filename ?? "").replace(/\.[^.]*$/, "").replace(/[^\w-]+/g, "_").slice(0, 40);
+  const jour = new Date().toISOString().slice(0, 10);
+  const chemin = `${DOSSIER_RECUS}/${jour}-${ref.id.replace(/[^\w]/g, "").slice(-12)}${base ? `-${base}` : ""}.${ext}`;
+  try {
+    const { sandboxExec, shellQuote } = await import("../tools/sandbox.js");
+    const r = await sandboxExec(
+      `mkdir -p ${shellQuote(DOSSIER_RECUS)} && find ${shellQuote(DOSSIER_RECUS)} -type f -mtime +${JOURS_CONSERVATION} -delete 2>/dev/null; base64 -d > ${shellQuote(chemin)} && wc -c < ${shellQuote(chemin)}`,
+      { timeoutMs: 60_000, stdin: got.bytes.toString("base64") },
+    );
+    const octets = Number(r.stdout.trim());
+    if (r.code !== 0 || octets !== got.bytes.byteLength) {
+      logger.warn({ code: r.code, octets, attendu: got.bytes.byteLength, err: r.stderr.slice(0, 200) }, "dépôt de la pièce jointe dans /work en échec");
+      return undefined;
+    }
+    logger.info({ chemin, octets }, "pièce jointe déposée dans /work");
+    return chemin;
+  } catch (e) {
+    logger.warn({ err: String(e).slice(0, 200) }, "dépôt de la pièce jointe impossible");
+    return undefined;
+  }
+}
+
 /** Texte à donner au chat : la description de la pièce jointe, plus la légende s'il y en a une. */
 export async function mediaToText(ref: MediaRef): Promise<string> {
   if (ref.kind === "vocal") {
@@ -234,8 +280,13 @@ export async function mediaToText(ref: MediaRef): Promise<string> {
       ? `[message vocal reçu mais je n'ai pas pu l'écouter : ${e.raison}. Dis-le à Lionel en une ligne et demande-lui de le renvoyer ou de l'écrire.]`
       : `[message vocal reçu mais l'écoute n'est pas branchée (${e.raison}). Dis-le à Lionel en une ligne et envoie-lui lien_panneau section voix.]`;
   }
-  const described = await describeMedia(ref);
+  const got = await fetchMetaMedia(ref.id);
   const label = ref.filename ? `${ref.kind} « ${ref.filename} »` : ref.kind;
-  if (!described) return `[${label} reçu — je n'ai pas pu le lire]${ref.caption ? `\n${ref.caption}` : ""}`;
-  return [`[${label} reçu, voici ce qu'il contient]`, described, ref.caption ? `\nLégende : ${ref.caption}` : ""].filter(Boolean).join("\n");
+  if (!got) return `[${label} reçu — je n'ai pas pu le télécharger]${ref.caption ? `\n${ref.caption}` : ""}`;
+  // Le dépôt et la lecture partent ensemble : la lecture prend quelques
+  // secondes de modèle, le dépôt une fraction, et aucun n'attend l'autre.
+  const [chemin, described] = await Promise.all([deposerPieceJointe(ref, got), describeMedia(ref, got)]);
+  const fichier = chemin ? `[fichier enregistré sur le serveur : ${chemin} — pour le mettre dans un formulaire (annonce Vinted, Blocket, pièce jointe), browser{action:"upload", file:"${chemin}"}. Ne demande jamais à Lionel de le renvoyer « en fichier ».]` : "";
+  if (!described) return [`[${label} reçu — je n'ai pas pu le lire]`, fichier, ref.caption ?? ""].filter(Boolean).join("\n");
+  return [`[${label} reçu, voici ce qu'il contient]`, described, fichier, ref.caption ? `\nLégende : ${ref.caption}` : ""].filter(Boolean).join("\n");
 }
