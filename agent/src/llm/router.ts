@@ -174,7 +174,7 @@ export async function runRouted(
     attempts.push(b.name);
     const dernier = i === chain.length - 1;
     try {
-      const r = await run({ ...opts, provider: b.provider, model: b.model, baseUrl: b.baseUrl, apiKey: b.apiKey });
+      const r = await run({ ...opts, kind, provider: b.provider, model: b.model, baseUrl: b.baseUrl, apiKey: b.apiKey });
       total = addUsage(total, r.usage);
       recordUsage({ provider: b.name, model: b.model, kind, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, usd: r.usage.usd, ok: true });
       last = r;

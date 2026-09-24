@@ -13,6 +13,7 @@ import { outilsDeclencheurs } from "../declencheurs.js";
 import { outilImage } from "../images.js";
 import { SECTIONS, SECTION_IDS, type SectionId } from "../panel-sections.js";
 import { runRouted } from "../llm/router.js";
+import { REFLEXIONS } from "../llm/openaiCompat.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
 import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, captureFeedback, spentToday } from "../memory/store.js";
@@ -120,7 +121,7 @@ Rappels et tâches : « rappelle-moi… », « chaque matin/lundi/jour à… »,
 Mémoire : « oublie que… », « efface ce que tu sais sur… », « ce n'est plus vrai que… » → outil oublier, puis cite ce qui a été effacé. Lionel voit et efface aussi sa mémoire sur le panneau.
 
 Diagnostic : « qu'est-ce qui ne va pas ? », « pourquoi t'as raté ? », « qu'est-ce que t'as fait ce matin ? », « tu vas bien ? » → outil diagnostic (etat, scanner, boite_noire, trace). Tu réponds avec ce que tu y LIS — la panne, la preuve, le remède — jamais avec une supposition. Pour le détail visuel : lien_panneau section diagnostic ou boitenoire.
-Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « appelle-toi X », « mets DeepSeek sur deepseek-flash », ou juste un nom de modèle envoyé seul (« deepseek-flash ») → outil reglage, immédiatement, sans demander confirmation. Un nom de modèle envoyé seul n'est jamais « sans contexte » : c'est un ordre de changer le modèle du service qui porte ce préfixe. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
+Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « appelle-toi X », « mets DeepSeek sur deepseek-flash », « réfléchis plus / moins » (reflexion eco, auto ou max), ou juste un nom de modèle envoyé seul (« deepseek-flash ») → outil reglage, immédiatement, sans demander confirmation. Un nom de modèle envoyé seul n'est jamais « sans contexte » : c'est un ordre de changer le modèle du service qui porte ce préfixe. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer. C'est le seul ordre qui t'arrête.`;
 
@@ -297,7 +298,7 @@ function settingsTool() {
   return betaZodTool({
     name: "reglage",
     description:
-      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase). `nom` : ton nom. `service` + `modele` : change le nom de modèle d'un service (ex. service « DeepSeek », modele « deepseek-flash ») — le nom est vérifié auprès de l'API ; un nom seul comme « deepseek-flash » sans service désigne le service dont il porte le préfixe. Exécute sans demander confirmation, puis confirme en une ligne.",
+      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase). `nom` : ton nom. `reflexion` : eco / auto / max, l'effort de réflexion de DeepSeek. `service` + `modele` : change le nom de modèle d'un service (ex. service « DeepSeek », modele « deepseek-flash ») — le nom est vérifié auprès de l'API ; un nom seul comme « deepseek-flash » sans service désigne le service dont il porte le préfixe. Exécute sans demander confirmation, puis confirme en une ligne.",
     inputSchema: z.object({
       approbations: z.enum(["on", "off"]).optional(),
       plafond_jour: z.number().positive().max(500).optional().describe("Plafond quotidien en USD."),
@@ -305,6 +306,7 @@ function settingsTool() {
       caractere: z.enum(["executant", "associe", "complice", "mentor"]).optional(),
       nom: z.string().min(1).max(40).optional(),
       memoire: z.enum(["on", "off"]).optional().describe("off = tu ne retiens plus rien et ne lis plus le profil"),
+      reflexion: z.enum(["eco", "auto", "max"]).optional().describe("Effort de réflexion de DeepSeek : eco (rapide, pas cher partout), auto (peu en conversation, à fond pour planifier et coder), max (à fond partout, lent et cher)."),
       service: z.string().min(1).max(60).optional().describe("Le service dont on change le modèle (DeepSeek, Mistral, Claude, voix, image, ecoute)."),
       modele: z.string().min(1).max(120).optional().describe("Le nouveau nom de modèle, tel que l'API l'attend."),
     }),
@@ -346,6 +348,10 @@ function settingsTool() {
       if (i.memoire) {
         await setSetting("MEMOIRE", i.memoire);
         faits.push(i.memoire === "off" ? "mémoire coupée — je ne retiens plus rien" : "mémoire réactivée");
+      }
+      if (i.reflexion) {
+        await setSetting("REFLEXION", i.reflexion);
+        faits.push(`réflexion DeepSeek : ${i.reflexion} (${REFLEXIONS[i.reflexion]})`);
       }
       if (!faits.length) return "Error: rien à changer — précise au moins un réglage.";
       logger.info({ reglages: faits }, "réglage changé depuis le chat");

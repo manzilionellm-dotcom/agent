@@ -1,20 +1,25 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import { client, priceOf } from "../llm.js";
+import { coutAppel, estDeepSeek } from "../llm/openaiCompat.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
+import { decryptSecret } from "../vault.js";
 import { transcrire, type Ecoute } from "../ecoute.js";
 
 /**
  * Pièces jointes WhatsApp : photo, capture d'écran, PDF, document.
  *
- * Le modèle de conversation est DeepSeek, qui ne voit ni les images ni les PDF.
  * Plutôt que de rendre tout le moteur multimodal, on convertit la pièce jointe
  * en texte AVANT le chat, par un appel séparé à un modèle qui voit. Le chat
  * reçoit ensuite une description, donc ça marche quel que soit le modèle de
  * conversation — et ça continuera de marcher si celui-ci change.
  *
- * Coût : un appel Claude par pièce jointe, compté dans la dépense du jour.
+ * Qui regarde : pour une IMAGE, deepseek-flash d'abord (il voit depuis la
+ * V4.1, au plus 1024 jetons par image, soit un tiers de millième de dollar),
+ * Claude si DeepSeek manque ou échoue. Pour un PDF, Claude seul : DeepSeek ne
+ * lit pas les documents. Avant, tout passait par Claude, et sans clé
+ * Anthropic le bot ne voyait rien du tout.
  */
 
 const META_API = "https://graph.facebook.com/v21.0";
@@ -66,6 +71,80 @@ Si c'est un document, donne sa nature, son émetteur, et les chiffres clés.
 
 N'interprète pas, ne conseille pas, n'invente rien. Si quelque chose est illisible, écris « illisible ».`;
 
+/** Le modèle DeepSeek qui voit : seul deepseek-flash a la vision (deepseek-v4-pro non). */
+export const MODELE_VISION_DEEPSEEK = "deepseek-flash";
+
+export type Oeil = { base: string; cle: string; nom: string };
+
+/**
+ * Une clé DeepSeek, d'où qu'elle vienne : une carte du panneau dont l'adresse
+ * est deepseek.com, sinon le .env. Le modèle de la carte ne compte pas : la
+ * vision impose deepseek-flash.
+ */
+export async function oeilDeepSeek(): Promise<Oeil | undefined> {
+  try {
+    const r = await db().query<{ id: string; base_url: string; api_key: string }>(
+      `SELECT id, base_url, api_key FROM providers WHERE enabled AND api_key IS NOT NULL AND base_url ILIKE '%deepseek.com%' ORDER BY priority LIMIT 1`,
+    );
+    const x = r.rows[0];
+    if (x) return { base: x.base_url.replace(/\/+$/, ""), cle: decryptSecret(x.api_key), nom: x.id };
+  } catch (e) {
+    logger.warn({ err: String(e) }, "recherche d'une clé DeepSeek impossible");
+  }
+  const c = config();
+  if (c.OPENAI_COMPAT_API_KEY && estDeepSeek(c.OPENAI_COMPAT_BASE_URL)) {
+    return { base: c.OPENAI_COMPAT_BASE_URL!.replace(/\/+$/, ""), cle: c.OPENAI_COMPAT_API_KEY, nom: ".env" };
+  }
+  return undefined;
+}
+
+/**
+ * Décrit une image avec deepseek-flash. Format vérifié dans le guide Vision
+ * de DeepSeek : un bloc `image_url` portant une URL `data:` en base64.
+ * Réflexion « low » : décrire une photo ne demande pas de raisonner longtemps,
+ * et le mode réflexion est activé par défaut chez DeepSeek.
+ */
+export async function decrireImageDeepSeek(oeil: Oeil, bytes: Buffer, mime: string, caption?: string): Promise<{ texte: string; usd: number }> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 90_000);
+  try {
+    const res = await fetch(`${oeil.base}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${oeil.cle}`, "content-type": "application/json" },
+      signal: ctl.signal,
+      body: JSON.stringify({
+        model: MODELE_VISION_DEEPSEEK,
+        reasoning_effort: "low",
+        max_tokens: 2_000,
+        messages: [
+          { role: "system", content: PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: `data:${mime};base64,${bytes.toString("base64")}` } },
+              { type: "text", text: caption ? `Légende envoyée avec : ${caption}` : "Décris cette pièce jointe." },
+            ],
+          },
+        ],
+      }),
+    });
+    const corps = await res.text();
+    if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status} ${corps.slice(0, 200)}`);
+    const j = JSON.parse(corps) as { choices?: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number } };
+    const texte = (j.choices?.[0]?.message?.content ?? "").trim();
+    if (!texte) throw new Error("DeepSeek a rendu une description vide");
+    return { texte, usd: coutAppel(MODELE_VISION_DEEPSEEK, j.usage as never).usd };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function compterDepense(usd: number): Promise<void> {
+  await db()
+    .query(`INSERT INTO spend(day, usd) VALUES (CURRENT_DATE, $1) ON CONFLICT (day) DO UPDATE SET usd = spend.usd + EXCLUDED.usd`, [usd])
+    .catch(() => undefined);
+}
+
 /**
  * Convertit une pièce jointe en texte. Renvoie `undefined` si le type n'est pas
  * pris en charge ou si l'appel échoue — l'appelant garde alors le texte brut du
@@ -73,14 +152,30 @@ N'interprète pas, ne conseille pas, n'invente rien. Si quelque chose est illisi
  */
 export async function describeMedia(ref: MediaRef): Promise<string | undefined> {
   const cfg = config();
-  if (!cfg.ANTHROPIC_API_KEY) {
-    logger.warn("pièce jointe reçue mais ANTHROPIC_API_KEY absente : pas de lecture possible");
-    return undefined;
-  }
   const got = await fetchMetaMedia(ref.id);
   if (!got) return undefined;
 
   const mime = got.mime.split(";")[0]!.trim();
+
+  // Une image : DeepSeek d'abord, Claude en secours.
+  if (IMAGE_MIME.has(mime)) {
+    const oeil = await oeilDeepSeek();
+    if (oeil) {
+      try {
+        const d = await decrireImageDeepSeek(oeil, got.bytes, mime, ref.caption);
+        await compterDepense(d.usd);
+        logger.info({ kind: ref.kind, mime, usd: d.usd.toFixed(4), oeil: oeil.nom }, "pièce jointe lue par DeepSeek");
+        return d.texte;
+      } catch (e) {
+        logger.warn({ err: String(e).slice(0, 200) }, "DeepSeek n'a pas pu lire l'image — on tente Claude");
+      }
+    }
+  }
+
+  if (!cfg.ANTHROPIC_API_KEY) {
+    logger.warn({ mime }, "pièce jointe reçue mais aucun modèle pour la lire (ni DeepSeek pour une image, ni clé Anthropic)");
+    return undefined;
+  }
   let block: Anthropic.Beta.Messages.BetaContentBlockParam;
   if (IMAGE_MIME.has(mime)) {
     block = { type: "image", source: { type: "base64", media_type: mime as "image/jpeg", data: got.bytes.toString("base64") } };
@@ -104,9 +199,7 @@ export async function describeMedia(ref: MediaRef): Promise<string | undefined> 
       messages: [{ role: "user", content: [block, { type: "text", text: ref.caption ? `Légende envoyée avec : ${ref.caption}` : "Décris cette pièce jointe." }] }],
     });
     const usd = priceOf(model, res.usage);
-    await db()
-      .query(`INSERT INTO spend(day, usd) VALUES (CURRENT_DATE, $1) ON CONFLICT (day) DO UPDATE SET usd = spend.usd + EXCLUDED.usd`, [usd])
-      .catch(() => undefined);
+    await compterDepense(usd);
     const text = res.content
       .filter((c): c is Anthropic.Beta.Messages.BetaTextBlock => c.type === "text")
       .map((c) => c.text)

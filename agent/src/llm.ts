@@ -94,6 +94,8 @@ export type AgentRunOptions = {
   task: string;
   tools: (BetaRunnableTool<any> | Anthropic.Beta.Messages.BetaToolUnion)[];
   effort?: Effort;
+  /** Nature du travail (chat, worker, planner, critical) : règle l'effort de réflexion des modèles qui en ont un. */
+  kind?: ModelKind;
   maxIterations?: number;
   budgetUsd?: number;
   /** Appelé après chaque tour ; permet journalisation / arrêt anticipé. */
