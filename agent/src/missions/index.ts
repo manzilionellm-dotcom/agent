@@ -9,7 +9,10 @@ import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodes
 import { mcpToolsFor } from "../mcp/registry.js";
 import { bashTool, readFileTool, writeFileTool } from "../tools/sandbox.js";
 import { coderTool } from "../tools/coder.js";
-import { ensureRepoTool, pushDeployTool } from "../tools/git.js";
+import { ensureRepoTool, pushDeployTool, pullRequestTool } from "../tools/git.js";
+import { lireCodeSiteTool } from "../tools/code-site.js";
+import { indexNowTool } from "../tools/indexnow.js";
+import { GABARIT_PAGE_GEO, RECHERCHE_MOTS_CLES, ROBOTS_IA, SUIVI_CITATIONS } from "../seo-geo.js";
 import { webSearchTool, webFetchTool, scrapePageTool } from "../tools/web.js";
 import { xProfileTool } from "../tools/x.js";
 import { searchTools } from "../tools/search.js";
@@ -75,14 +78,17 @@ Critère de succès : au moins 5 faits sourcés enregistrés, backlog SEO enrich
     budgetUsd: 4,
     maxIterations: 60,
     mcpServers: ["github"],
-    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool, pushDeployTool],
+    tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool, pushDeployTool, indexNowTool],
     task: ({ now, siteUrl, repo }) => `Date: ${now.toISOString()}. Site: ${siteUrl}. Dépôt: ${repo}.
 Mission ARTICLE SEO du jour.
 1. git_ensure_repo (branche main). Lis la structure de contenu du site (dossier content/ ou app/blog) et /memories/seo/style.md (crée un guide de style à la première exécution : ton, longueur 1200-1800 mots, structure H2/H3, FAQ, maillage interne, méta).
 2. Choisis le sujet n°1 du backlog /memories/seo/backlog.md non encore traité (vérifie /memories/seo/publies.md pour éviter les doublons et la cannibalisation).
 3. Recherche 4-6 sources récentes (web_search/web_fetch). Aucun chiffre sans source.
 4. Rédige l'article (frontmatter complet : title ≤ 60 car., description ≤ 155 car., slug, date, tags, sources). Ajoute 2-3 liens internes vers des pages existantes du site.
-   GEO (Generative Engine Optimization, pour être cité par ChatGPT/Perplexity/AI Overviews) : réponse directe dans les 2 premières phrases de chaque H2, entités nommées explicites, chiffres datés et sourcés, FAQ en fin d'article avec schéma FAQPage JSON-LD, auteur identifié, date de mise à jour visible.
+   GEO (Generative Engine Optimization, pour être cité par Grok/ChatGPT/Perplexity/AI Overviews) : applique le gabarit ci-dessous à la lettre.
+${GABARIT_PAGE_GEO}
+${ROBOTS_IA}
+   Après publication : indexnow_submit sur l'URL de l'article.
 4b. Contrôle d'originalité et de cannibalisation : cherche (web_search/tavily_search) deux phrases distinctives de ton article entre guillemets ; si l'une existe déjà en ligne, reformule. Vérifie qu'aucune page existante du site ne cible déjà le même mot-clé principal (sinon, enrichis l'existante au lieu d'en créer une nouvelle).
 5. Délègue au codeur (delegate_coding_task) l'intégration : fichier au bon format, build (npm run build) vert, lint vert, commit.
 6. git_push_and_deploy et vérifie que l'URL finale répond 200 (web_fetch).
@@ -186,6 +192,70 @@ Mission AUDIT DE SITE hebdomadaire (technique, SEO, contenu, données structuré
 Critère de succès : 5 pages auditées avec chiffres, top 10 actions priorisées, 2 correctifs commités sur branche.`,
   },
 );
+
+/**
+ * Génération d'un site (ou d'un lot de pages) SEO + GEO complet, sur ordre :
+ * « crée un site sur l'IPTV légal en Suède », « ajoute 5 pages sur… ». Pas
+ * de cron : ça se lance depuis WhatsApp (run_mission avec brief) ou depuis
+ * le planning du panneau. La stratégie est faite par le planificateur ; le
+ * code par le codeur, rapide, sur un cahier des charges fermé.
+ */
+MISSIONS.push({
+  name: "site_seo_geo",
+  cron: "",
+  model: "critical",
+  effort: "high",
+  budgetUsd: 6,
+  maxIterations: 90,
+  mcpServers: ["github"],
+  tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), lireCodeSiteTool, auditTool, xProfileTool, scrapePageTool, ensureRepoTool, coderTool, pushDeployTool, pullRequestTool, indexNowTool],
+  task: ({ now, siteUrl, repo }) => `Date: ${now.toISOString()}. Site: ${siteUrl}. Dépôt: ${repo}.
+Mission SITE SEO + GEO : produire des pages complètes, classées par Google et citées par les IA, publiées et soumises à l'indexation dans la même exécution. La consigne de l'opérateur (ci-dessous) dit le sujet, le marché, la langue, et le dépôt ou le domaine si ce n'est pas le site configuré.
+
+VITESSE D'ABORD : la réflexion lourde (mots-clés, gaps, plan des pages) se fait ici, une fois. Le code est délégué au codeur avec un cahier des charges fermé, page par page, jamais réécrit deux fois. Objectif : pages en ligne en moins de 30 minutes.
+
+${RECHERCHE_MOTS_CLES}
+
+PLAN : choisis 3 à 6 pages (ou le nombre demandé), une par intention de recherche, sans cannibalisation entre elles ni avec les pages existantes du site (vérifie /memories/seo/publies.md et la structure du dépôt). Écris le plan dans /memories/seo/plan-${now.toISOString().slice(0, 10)}.md.
+
+${GABARIT_PAGE_GEO}
+
+${ROBOTS_IA}
+
+PRODUCTION :
+1. git_ensure_repo sur une branche seo/${now.toISOString().slice(0, 10)}. Lis README / AGENTS.md / la structure (content/, app/, public/). Si le dépôt est vide ou si la consigne demande un site neuf : un site statique sans framework lourd (HTML + une feuille de style, ou Astro si le dépôt l'utilise déjà), une page d'accueil, les pages du plan, mentions légales, contact, sitemap.xml, robots.txt, llms.txt, fichier de clé IndexNow.
+2. Pour CHAQUE page : delegate_coding_task avec le texte complet de la page (tu l'écris toi-même, données sourcées incluses), le gabarit ci-dessus comme critères d'acceptation, et les commandes de vérification (build, lint). Une page par délégation.
+3. Vérifie : build vert ; chaque page rendue contient un h1, un FAQPage JSON-LD valide, un canonical, ≥ 800 mots (sandbox_bash : grep, wc, node -e JSON.parse sur les blocs ld+json).
+4. Publie : git_push_and_deploy sur la branche ; si le déploiement Vercel est READY, git_pull_request vers la branche principale avec le plan dans le corps. Si la consigne dit « publie directement » et que le site est le nôtre, pousse sur la branche principale.
+5. Indexation : une fois l'URL finale en 200 (web_fetch ou scrape_page), indexnow_submit sur toutes les URL créées ; vérifie que le sitemap les liste.
+6. Mémoire : /memories/seo/publies.md (date, URL, mot-clé, questions H2) et /memories/seo/backlog.md (les sujets non traités, classés).
+
+RAPPORT (20 lignes max) : pages publiées avec URL, mot-clé et nombre de mots ; ce que les concurrents ne traitent pas et que ces pages traitent ; état IndexNow ; ce qui reste à faire (Search Console, backlinks, pages suivantes).
+Critère de succès : pages en ligne en 200, JSON-LD valides, sitemap à jour, IndexNow accepté (200/202), rapport avec URL.`,
+});
+
+/**
+ * Suivi quotidien des citations, de l'indexation et des positions, avec
+ * ajustements. Budget volontairement bas : c'est une lecture et deux
+ * petites corrections, pas une réécriture.
+ */
+MISSIONS.push({
+  name: "citations_monitor",
+  cron: "15 7 * * *",
+  model: "planner",
+  effort: "medium",
+  budgetUsd: 1,
+  maxIterations: 40,
+  mcpServers: ["github"],
+  tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), lireCodeSiteTool, xProfileTool, ensureRepoTool, coderTool, pushDeployTool, indexNowTool, alertTool],
+  task: ({ now, siteUrl, repo }) => `Date: ${now.toISOString()}. Site: ${siteUrl}. Dépôt: ${repo}.
+Mission SUIVI DES CITATIONS. Si le site n'est pas configuré ou si /memories/seo/publies.md est vide, arrête-toi en une ligne : rien à suivre.
+
+${SUIVI_CITATIONS}
+
+Règles : aucune position inventée (si l'outil ne rend pas la SERP, écris « non mesuré ») ; au plus 2 corrections publiées par jour, petites, testées (build vert), poussées sur la branche principale si elles ne touchent que du contenu ou des balises ; sinon une PR.
+Critère de succès : journal mis à jour, bilan de 8 lignes envoyé.`,
+});
 
 MISSIONS.push({
   name: "reflect",

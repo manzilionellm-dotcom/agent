@@ -136,7 +136,10 @@ export async function setSchedule(mission: string, cron: string | null, by: stri
 export async function startScheduler(): Promise<Cron[]> {
   const cfg = config();
   if (cfg.AUTONOMY_MODE === "scheduled") {
-    for (const m of MISSIONS) addJob(m.name, m.cron, "défaut");
+    // Une mission sans cron ne se lance que sur ordre (run_mission) ou par
+    // un planning posé au panneau : c'est le cas des gros travaux à la
+    // demande, comme la génération d'un site.
+    for (const m of MISSIONS) if (m.cron) addJob(m.name, m.cron, "défaut");
     addJob("report", REPORT_CRON, "défaut");
   } else {
     logger.info("AUTONOMY_MODE=manual : aucune cron par défaut ; seul le planning ordonné s'exécute");
