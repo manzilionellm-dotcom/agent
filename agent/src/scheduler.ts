@@ -1,6 +1,7 @@
 import { Cron } from "croner";
 import { config } from "./config.js";
 import { dailyBudget } from "./providers.js";
+import { outilsIndisponibles } from "./agents/runtime.js";
 import { logger } from "./logger.js";
 import { db } from "./memory/db.js";
 import { spentToday } from "./memory/store.js";
@@ -47,22 +48,44 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
   }
 }
 
+/** En dessous, une mission ne peut même pas finir un tour : autant ne pas partir. */
+const MARGE_MIN_USD = 0.2;
+
 export async function launch(m: Mission, opts: { brief?: string } = {}) {
   const cfg = config();
   const spent = await spentToday();
   const plafond = await dailyBudget();
-  if (spent >= plafond) {
+  // Le plafond se vérifiait AVANT le départ, puis la mission gardait SON
+  // budget (jusqu'à 5 $) : avec 0,30 $ de marge, elle en dépensait 5. C'est
+  // ainsi qu'un plafond de 2,50 $ est devenu 6,50 $ le 24 septembre. Le
+  // budget d'une mission est désormais borné par ce qui reste dans la journée.
+  const reste = plafond - spent;
+  if (reste < MARGE_MIN_USD) {
     logger.error({ spent, cap: plafond, mission: m.name }, "plafond journalier atteint — mission non lancée");
     return undefined;
   }
-  const first = await withLock(m.name, () => runMission(m, { brief: opts.brief }));
+  // Une mission qui a besoin de GitHub ne part pas si le jeton est mort :
+  // elle tournerait, paierait, et rendrait « accès refusé » (2,10 $ pour rien
+  // sur iptv_comparator le même jour).
+  if (m.mcpServers.includes("github")) {
+    const err = await outilsIndisponibles("code");
+    if (err) {
+      logger.error({ mission: m.name, err }, "mission non lancée : GitHub inutilisable");
+      return undefined;
+    }
+  }
+  const borne = { ...m, budgetUsd: Math.min(m.budgetUsd, reste) };
+  if (borne.budgetUsd < m.budgetUsd) logger.warn({ mission: m.name, budget: m.budgetUsd, reste: reste.toFixed(2) }, "budget de mission réduit au reste de la journée");
+  const first = await withLock(m.name, () => runMission(borne, { brief: opts.brief }));
   // Un seul retry, uniquement sur erreur transitoire (réseau, 429/5xx), après 3 minutes.
   // La consigne est rejouée à l'identique : une reprise qui perd l'ordre du jour
   // referait la mission par défaut, ce qui est pire que ne rien refaire.
   if (first && first.status === "failed" && /ECONN|ETIMEDOUT|429|5\d\d|rate limit|overloaded|socket hang up/i.test(first.text.slice(-2000))) {
     logger.warn({ mission: m.name }, "échec transitoire — nouvelle tentative dans 3 min");
     await new Promise((r) => setTimeout(r, 3 * 60_000));
-    return withLock(m.name, () => runMission(m, { brief: opts.brief }));
+    const encore = (await dailyBudget()) - (await spentToday());
+    if (encore < MARGE_MIN_USD) return first;
+    return withLock(m.name, () => runMission({ ...m, budgetUsd: Math.min(m.budgetUsd, encore) }, { brief: opts.brief }));
   }
   return first;
 }

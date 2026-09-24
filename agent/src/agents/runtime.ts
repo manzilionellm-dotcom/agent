@@ -35,12 +35,14 @@ const IDLE_MS = 5_000;
  * journalier global, celui de l'agent sur 24 h, et le budget de la tâche.
  * Vérifier après coup revient à constater un dépassement qu'on a payé.
  */
-async function budgetBlocked(agent: AgentRow): Promise<string | undefined> {
+async function budgetBlocked(agent: AgentRow): Promise<{ raison?: string; reste: number }> {
   const [day, plafond] = await Promise.all([spentToday(), dailyBudget()]);
-  if (day >= plafond) return `plafond journalier global atteint (${day.toFixed(2)} / ${plafond} $)`;
   const mine = await agentSpend(agent.id, 24);
-  if (mine >= agent.daily_usd) return `plafond de l'agent atteint (${mine.toFixed(2)} / ${agent.daily_usd} $ sur 24 h)`;
-  return undefined;
+  // Ce qu'une tâche a le droit de dépenser : le plus petit des deux restes.
+  const reste = Math.min(plafond - day, agent.daily_usd - mine);
+  if (day >= plafond) return { raison: `plafond journalier global atteint (${day.toFixed(2)} / ${plafond} $)`, reste: 0 };
+  if (mine >= agent.daily_usd) return { raison: `plafond de l'agent atteint (${mine.toFixed(2)} / ${agent.daily_usd} $ sur 24 h)`, reste: 0 };
+  return { reste };
 }
 
 /**
@@ -57,7 +59,7 @@ async function budgetBlocked(agent: AgentRow): Promise<string | undefined> {
 const PREVOL_TTL_MS = 5 * 60_000;
 const prevol = new Map<string, { at: number; err?: string }>();
 
-async function outilsIndisponibles(toolset: string): Promise<string | undefined> {
+export async function outilsIndisponibles(toolset: string): Promise<string | undefined> {
   if (toolset !== "code" && toolset !== "complet") return undefined;
   const cache = prevol.get("github");
   if (cache && Date.now() - cache.at < PREVOL_TTL_MS) return cache.err;
@@ -86,7 +88,7 @@ async function executeBrut(task: TaskRow): Promise<void> {
     return;
   }
 
-  const blocked = await budgetBlocked(agent);
+  const { raison: blocked, reste } = await budgetBlocked(agent);
   if (blocked) {
     // Un plafond n'est pas un échec de la tâche : elle attend, elle ne brûle
     // pas ses tentatives, et elle repartira quand la fenêtre se rouvrira.
@@ -137,7 +139,9 @@ async function executeBrut(task: TaskRow): Promise<void> {
       return;
     }
 
-    const res = await runMission(mission, { brief: task.brief || task.title });
+    // Même règle que le planificateur : jamais plus que ce qui reste dans la
+    // journée, quel que soit le budget nominal de la mission ou de l'agent.
+    const res = await runMission({ ...mission, budgetUsd: Math.min(mission.budgetUsd, agent.budget_usd, reste) }, { brief: task.brief || task.title });
     if (res.status === "ok") {
       await completeTask(task.id, res.text, res.usage.usd);
     } else if (res.status === "budget") {
