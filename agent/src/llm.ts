@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "./config.js";
+import { claudeActifSync } from "./providers.js";
 import { logger } from "./logger.js";
 import { enregistrer, instrumenter } from "./boite-noire.js";
 
@@ -69,16 +70,44 @@ export type ModelKind = "planner" | "worker" | "critical" | "chat";
  */
 export function resolveModel(kind: ModelKind): { provider: Provider; model: string } {
   const c = config();
-  switch (kind) {
-    case "critical":
-      return { provider: c.LLM_PROVIDER_CRITICAL ?? c.LLM_PROVIDER, model: c.MODEL_CRITICAL ?? c.MODEL_PLANNER };
-    case "chat":
-      return { provider: c.LLM_PROVIDER, model: c.MODEL_CHAT ?? c.MODEL_WORKER };
-    case "worker":
-      return { provider: c.LLM_PROVIDER, model: c.MODEL_WORKER };
-    default:
-      return { provider: c.LLM_PROVIDER, model: c.MODEL_PLANNER };
+  const brut = ((): { provider: Provider; model: string } => {
+    switch (kind) {
+      case "critical":
+        return { provider: c.LLM_PROVIDER_CRITICAL ?? c.LLM_PROVIDER, model: c.MODEL_CRITICAL ?? c.MODEL_PLANNER };
+      case "chat":
+        return { provider: c.LLM_PROVIDER, model: c.MODEL_CHAT ?? c.MODEL_WORKER };
+      case "worker":
+        return { provider: c.LLM_PROVIDER, model: c.MODEL_WORKER };
+      default:
+        return { provider: c.LLM_PROVIDER, model: c.MODEL_PLANNER };
+    }
+  })();
+  // Claude est coupé par défaut (réglage CLAUDE, « active Claude » sur
+  // WhatsApp) : tout ce qui le visait part sur le fournisseur compatible
+  // OpenAI du .env, DeepSeek en pratique.
+  if (brut.provider === "anthropic" && !claudeActifSync() && c.OPENAI_COMPAT_BASE_URL && c.OPENAI_COMPAT_API_KEY) {
+    return { provider: "openai_compat", model: kind === "worker" || kind === "chat" ? c.MODEL_WORKER : c.MODEL_PLANNER };
   }
+  return brut;
+}
+
+export type Cible = { provider: Provider; model: string; baseUrl?: string; apiKey?: string };
+
+/**
+ * Le modèle d'un type de travail, PANNEAU d'abord : la première carte active
+ * qui porte ce rôle (avec son adresse et sa clé), sinon le .env. Les
+ * missions passaient par le .env seul, donc à côté des cartes du panneau et
+ * de leurs plafonds ; un nom de modèle corrigé au panneau n'y changeait rien.
+ */
+export async function resolveModelAsync(kind: ModelKind): Promise<Cible> {
+  try {
+    const { activeProviders } = await import("./providers.js");
+    const p = (await activeProviders(kind))[0];
+    if (p) return { provider: p.kind, model: p.model, baseUrl: p.baseUrl, apiKey: p.apiKey };
+  } catch {
+    /* base indisponible : le .env décide */
+  }
+  return resolveModel(kind);
 }
 
 export type AgentRunOptions = {
@@ -275,6 +304,8 @@ export function textOf(msg: Anthropic.Beta.Messages.BetaMessage | undefined): st
 export async function structured<T>(opts: {
   model: string;
   provider?: Provider;
+  baseUrl?: string;
+  apiKey?: string;
   system: string;
   prompt: string;
   schema: { type: "json_schema"; schema: Record<string, unknown> };
@@ -282,7 +313,7 @@ export async function structured<T>(opts: {
 }): Promise<{ value: T; usd: number }> {
   if ((opts.provider ?? config().LLM_PROVIDER) === "openai_compat") {
     const { structuredOpenAICompat } = await import("./llm/openaiCompat.js");
-    return structuredOpenAICompat<T>({ model: opts.model, system: opts.system, prompt: opts.prompt, schema: opts.schema.schema });
+    return structuredOpenAICompat<T>({ model: opts.model, system: opts.system, prompt: opts.prompt, schema: opts.schema.schema, baseUrl: opts.baseUrl, apiKey: opts.apiKey });
   }
   const res = await client().beta.messages.create({
     model: opts.model,

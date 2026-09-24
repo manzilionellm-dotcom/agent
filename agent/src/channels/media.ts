@@ -5,6 +5,7 @@ import { coutAppel, estDeepSeek } from "../llm/openaiCompat.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
 import { decryptSecret } from "../vault.js";
+import { claudeActif } from "../providers.js";
 import { transcrire, type Ecoute } from "../ecoute.js";
 
 /**
@@ -182,8 +183,8 @@ export async function describeMedia(ref: MediaRef, deja?: Fetched): Promise<stri
     return undefined;
   }
 
-  if (!cfg.ANTHROPIC_API_KEY) {
-    logger.warn({ mime }, "pièce jointe reçue mais aucun modèle pour la lire (ni DeepSeek pour une image, ni clé Anthropic)");
+  if (!cfg.ANTHROPIC_API_KEY || !(await claudeActif())) {
+    logger.warn({ mime, claude: Boolean(cfg.ANTHROPIC_API_KEY) }, "pièce jointe non lue : DeepSeek ne lit pas ce type et Claude est éteint (« active Claude » pour un PDF)");
     return undefined;
   }
   let block: Anthropic.Beta.Messages.BetaContentBlockParam;

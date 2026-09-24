@@ -2,7 +2,7 @@ import { dansTrace, enregistrer } from "../boite-noire.js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
-import { runAgent, resolveModel, structured, type Effort, type Usage } from "../llm.js";
+import { runAgent, resolveModel, resolveModelAsync, structured, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { OPERATOR_SYSTEM } from "../prompts.js";
 import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, feedbackTool, openEpisode, closeEpisode } from "../memory/store.js";
@@ -363,7 +363,7 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal; brief
 
 async function runMissionBrut(m: Mission, opts: { signal?: AbortSignal; brief?: string }): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
   const cfg = config();
-  const target = resolveModel(m.model);
+  const target = await resolveModelAsync(m.model);
   const episodeId = await openEpisode(m.name, { model: target.model, provider: target.provider, effort: m.effort });
   const log = logger.child({ mission: m.name, episode: episodeId });
   log.info("mission démarrée");
@@ -386,6 +386,8 @@ async function runMissionBrut(m: Mission, opts: { signal?: AbortSignal; brief?: 
     const res = await runAgent({
       model: target.model,
       provider: target.provider,
+      baseUrl: target.baseUrl,
+      apiKey: target.apiKey,
       system: OPERATOR_SYSTEM,
       task,
       tools,
@@ -429,7 +431,7 @@ type Verdict = { score: number; pass: boolean; issues: string[]; usd: number };
 async function verify(m: Mission, finalText: string): Promise<Verdict> {
   const spec = m.task({ now: new Date(), memory: "", siteUrl: config().SITE_URL ?? "", repo: config().GITHUB_REPO });
   const { value, usd } = await structured<{ score: number; pass: boolean; issues: string[] }>({
-    ...resolveModel("worker"),
+    ...(await resolveModelAsync("worker")),
     effort: "low",
     system:
       "Tu es un vérificateur sévère mais juste. On te donne le cahier des charges d'une mission et le compte rendu final de l'agent. Note de 0 à 10 : le critère de succès est-il atteint avec des PREUVES concrètes (URL, sortie de commande, chiffres sourcés, fichiers nommés) ? Un compte rendu qui affirme sans preuve, contredit le cahier des charges, ou contient des chiffres non sourcés est pénalisé. pass = score ≥ 6. Liste les problèmes en une ligne chacun (max 6). Ne juge pas le style.",

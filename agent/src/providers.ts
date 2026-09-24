@@ -348,7 +348,26 @@ export async function activeProviders(role?: Role): Promise<ResolvedProvider[]> 
     }
     cache = { at: Date.now(), rows };
   }
-  return role ? cache.rows.filter((p) => p.roles.includes(role)) : cache.rows;
+  // Claude coupé : ses cartes restent au panneau, mais sortent du routage.
+  const rows = claudeActifSync() ? cache.rows : cache.rows.filter((p) => p.kind !== "anthropic");
+  return role ? rows.filter((p) => p.roles.includes(role)) : rows;
+}
+
+/**
+ * Claude est ÉTEINT par défaut. Lionel l'allume quand il en a besoin
+ * (« active Claude »), et l'éteint après. Raison : une journée à 10 $ le 24
+ * septembre, dont l'essentiel venait de la conversation qui basculait sur
+ * Claude dès que Mistral et DeepSeek toussaient — 10 à 40 fois le prix, sur
+ * des sessions de navigation de quarante actions.
+ */
+export async function claudeActif(): Promise<boolean> {
+  return (await setting("CLAUDE").catch(() => undefined)) === "on";
+}
+
+/** Version synchrone, pour le routage : lit le cache des réglages (rafraîchi par tout appel à setting()). Sans cache : éteint. */
+export function claudeActifSync(): boolean {
+  if (!reglages || Date.now() - reglages.at > TTL_MS) void setting("CLAUDE").catch(() => undefined);
+  return reglages?.map.get("CLAUDE") === "on";
 }
 
 /* --- Réglages modifiables ------------------------------------------------- */

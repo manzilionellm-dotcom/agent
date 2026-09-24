@@ -1,7 +1,7 @@
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult, type ModelKind, type Provider, type Usage } from "../llm.js";
-import { activeProviders, recordUsage, type Role } from "../providers.js";
+import { activeProviders, claudeActifSync, recordUsage, type Role } from "../providers.js";
 
 /**
  * Routeur à trois cerveaux.
@@ -47,7 +47,8 @@ export function backends(): Partial<Record<BackendName, Backend>> {
   if (c.OPENAI_COMPAT_API_KEY && c.OPENAI_COMPAT_BASE_URL) {
     out.deepseek = { name: "deepseek", provider: "openai_compat", model: c.MODEL_WORKER, baseUrl: c.OPENAI_COMPAT_BASE_URL, apiKey: c.OPENAI_COMPAT_API_KEY };
   }
-  if (c.ANTHROPIC_API_KEY) {
+  // Claude n'entre dans la chaîne que si Lionel l'a allumé (« active Claude »).
+  if (c.ANTHROPIC_API_KEY && claudeActifSync()) {
     out.claude = { name: "claude", provider: "anthropic", model: c.MODEL_CRITICAL ?? "claude-sonnet-5" };
   }
   return out;

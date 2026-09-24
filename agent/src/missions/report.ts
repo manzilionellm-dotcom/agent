@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { structured, resolveModel } from "../llm.js";
+import { structured, resolveModelAsync } from "../llm.js";
 import { logger } from "../logger.js";
 import { REPORT_SYSTEM } from "../prompts.js";
 import { episodesSince, spentToday, saveReport, markReportDelivered, memoryDigest } from "../memory/store.js";
@@ -74,7 +74,7 @@ ${episodes.map((e) => `## ${e.mission} — ${e.status} — ${Number(e.usd).toFix
 ${memory}
 </memoire>`;
 
-  const { value, usd } = await structured<Report>({ ...resolveModel("worker"), system: REPORT_SYSTEM, prompt, schema: SCHEMA, effort: "medium" });
+  const { value, usd } = await structured<Report>({ ...(await resolveModelAsync("worker")), system: REPORT_SYSTEM, prompt, schema: SCHEMA, effort: "medium" });
   const md = render(value);
   await saveReport(md);
 
