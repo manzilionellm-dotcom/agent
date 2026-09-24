@@ -29,7 +29,7 @@ import { redactSecrets } from "./safety.js";
  *   erreur, sans fin.
  */
 
-export type TypeTrace = "conversation" | "mission" | "tache" | "rappel" | "email" | "inspection";
+export type TypeTrace = "conversation" | "mission" | "tache" | "rappel" | "email" | "inspection" | "recherche";
 export type TypeEtape = "entree" | "reponse" | "modele" | "outil" | "livraison" | "log" | "mission" | "erreur" | "systeme";
 
 export const TYPES_TRACE: Record<TypeTrace, string> = {
@@ -37,6 +37,7 @@ export const TYPES_TRACE: Record<TypeTrace, string> = {
   mission: "Mission",
   tache: "Tâche d'agent",
   rappel: "Rappel / tâche planifiée",
+  recherche: "Recherche approfondie",
   email: "E-mail surveillé",
   inspection: "Inspection",
 };

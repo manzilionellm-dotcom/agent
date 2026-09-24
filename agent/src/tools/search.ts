@@ -106,11 +106,26 @@ export const serpapiSearchTool = betaZodTool({
   },
 });
 
-/** Outils de recherche disponibles selon les clés configurées. */
+/** Outils de recherche disponibles selon les clés du .env (synchrone : pour les gabarits de missions). */
 export function searchTools() {
   const cfg = config();
   const out = [];
   if (cfg.TAVILY_API_KEY) out.push(tavilySearchTool, tavilyExtractTool);
   if (cfg.SERPAPI_API_KEY) out.push(serpapiSearchTool);
+  return out;
+}
+
+/**
+ * Pareil, mais en regardant AUSSI le panneau : une clé Tavily collée dans
+ * Services ne mettait aucun outil de recherche dans la conversation, parce
+ * que la liste ne lisait que le .env. Le chat répondait alors « je n'ai pas
+ * de recherche web » à quelqu'un qui venait d'en brancher une.
+ */
+export async function searchToolsAsync() {
+  const cfg = config();
+  const [tavily, serpapi] = await Promise.all([secretFor("tavily", cfg.TAVILY_API_KEY), secretFor("serpapi", cfg.SERPAPI_API_KEY)]);
+  const out = [];
+  if (tavily) out.push(tavilySearchTool, tavilyExtractTool);
+  if (serpapi) out.push(serpapiSearchTool);
   return out;
 }

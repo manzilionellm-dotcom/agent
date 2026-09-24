@@ -172,6 +172,16 @@ export async function describeMedia(ref: MediaRef, deja?: Fetched): Promise<stri
     }
   }
 
+  // Word, Excel, PowerPoint : pas de modèle, le texte est dans le fichier.
+  if (OFFICE[mime]) {
+    const texte = await lireDocumentOffice(got.bytes, mime);
+    if (texte) {
+      logger.info({ kind: ref.kind, mime, caracteres: texte.length }, "document Office lu");
+      return texte;
+    }
+    return undefined;
+  }
+
   if (!cfg.ANTHROPIC_API_KEY) {
     logger.warn({ mime }, "pièce jointe reçue mais aucun modèle pour la lire (ni DeepSeek pour une image, ni clé Anthropic)");
     return undefined;
@@ -227,10 +237,84 @@ export async function transcribeAudio(ref: MediaRef): Promise<Ecoute> {
 export const DOSSIER_RECUS = "/work/whatsapp";
 const JOURS_CONSERVATION = 30;
 
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
 const EXT: Record<string, string> = {
   "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
   "application/pdf": "pdf", "text/plain": "txt", "text/csv": "csv", "application/json": "json",
+  [DOCX]: "docx", [XLSX]: "xlsx", [PPTX]: "pptx",
 };
+
+/** Les documents Office qu'on lit sans modèle : ce sont des zips de XML, Python suffit. */
+export const OFFICE: Record<string, "docx" | "xlsx" | "pptx"> = { [DOCX]: "docx", [XLSX]: "xlsx", [PPTX]: "pptx" };
+
+/**
+ * Extraction du texte d'un .docx, .xlsx ou .pptx, par python3 dans le
+ * sandbox (bibliothèque standard seulement : zipfile + expressions
+ * régulières, rien à installer). Grok lit ces fichiers ; avant, le bot
+ * répondait « je n'ai pas pu le lire » à un devis Word ou un tableau Excel.
+ * Le fichier arrive par l'entrée standard en base64, le texte ressort.
+ */
+export const SCRIPT_OFFICE = `
+import sys, base64, zipfile, io, re, html
+kind = sys.argv[1]
+z = zipfile.ZipFile(io.BytesIO(base64.b64decode(sys.stdin.read())))
+def strip(x):
+    x = re.sub(r'(</w:p>\\s*)+</w:tc>', ' | ', x)
+    x = re.sub(r'</w:p>|</a:p>|<w:br/>|<w:tab/>|</w:tr>', '\\n', x)
+    x = re.sub(r'</w:tc>|</a:tc>', ' | ', x)
+    x = re.sub(r'<[^>]+>', '', x)
+    return html.unescape(x)
+out = []
+names = z.namelist()
+if kind == 'docx':
+    out.append(strip(z.read('word/document.xml').decode('utf8', 'ignore')))
+elif kind == 'pptx':
+    slides = sorted([n for n in names if re.match(r'ppt/slides/slide\\d+\\.xml$', n)], key=lambda n: int(re.findall(r'\\d+', n)[-1]))
+    for i, n in enumerate(slides, 1):
+        out.append('--- Diapositive %d ---\\n%s' % (i, strip(z.read(n).decode('utf8', 'ignore'))))
+elif kind == 'xlsx':
+    shared = []
+    if 'xl/sharedStrings.xml' in names:
+        shared = [strip(m) for m in re.findall(r'<si>(.*?)</si>', z.read('xl/sharedStrings.xml').decode('utf8', 'ignore'), re.S)]
+    for n in sorted([n for n in names if re.match(r'xl/worksheets/sheet\\d+\\.xml$', n)]):
+        x = z.read(n).decode('utf8', 'ignore')
+        out.append('--- Feuille %s ---' % n.split('/')[-1].replace('.xml', ''))
+        for row in re.findall(r'<row[^>]*>(.*?)</row>', x, re.S):
+            cells = []
+            for attrs, body in re.findall(r'<c([^>]*)>(.*?)</c>', row, re.S):
+                v = re.search(r'<v>(.*?)</v>', body, re.S)
+                t = re.search(r'<t[^>]*>(.*?)</t>', body, re.S)
+                val = ''
+                if 't="s"' in attrs and v:
+                    try: val = shared[int(v.group(1))]
+                    except Exception: val = v.group(1)
+                elif t: val = html.unescape(t.group(1))
+                elif v: val = v.group(1)
+                cells.append(val.strip())
+            if any(cells): out.append(' | '.join(cells))
+texte = re.sub(r'\\n{3,}', '\\n\\n', '\\n'.join(out)).strip()
+sys.stdout.write(texte[:20000])
+`;
+
+export async function lireDocumentOffice(bytes: Buffer, mime: string): Promise<string | undefined> {
+  const kind = OFFICE[mime.split(";")[0]!.trim()];
+  if (!kind) return undefined;
+  try {
+    const { sandboxExec, shellQuote } = await import("../tools/sandbox.js");
+    const r = await sandboxExec(`python3 -c ${shellQuote(SCRIPT_OFFICE)} ${kind}`, { timeoutMs: 60_000, stdin: bytes.toString("base64") });
+    if (r.code !== 0) {
+      logger.warn({ code: r.code, err: r.stderr.slice(0, 200), kind }, "lecture du document Office en échec");
+      return undefined;
+    }
+    return r.stdout.trim() || undefined;
+  } catch (e) {
+    logger.warn({ err: String(e).slice(0, 200) }, "lecture du document Office impossible");
+    return undefined;
+  }
+}
 
 /**
  * Dépose la pièce jointe dans /work, là où le navigateur du bot peut la

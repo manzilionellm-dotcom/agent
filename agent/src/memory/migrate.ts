@@ -222,6 +222,15 @@ const MIGRATIONS: string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS pieces_jointes_ts ON pieces_jointes (ts DESC)`,
 
+  // Rapports de recherche approfondie, pour « renvoie-moi la recherche d'hier ».
+  `CREATE TABLE IF NOT EXISTS recherches (
+     id       BIGSERIAL PRIMARY KEY,
+     question TEXT NOT NULL,
+     rapport  TEXT NOT NULL,
+     usd      NUMERIC(10,4) NOT NULL DEFAULT 0,
+     ts       TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
   `CREATE TABLE IF NOT EXISTS vault_tickets (
      id         TEXT PRIMARY KEY,
      expires_at TIMESTAMPTZ NOT NULL,

@@ -35,6 +35,8 @@ export type ExecOptions = {
    * reste dans /proc/<pid>/environ tant que le processus vit.
    */
   stdin?: string;
+  /** Plafond de sortie pour CET appel, quand on attend un fichier encodé en base64 et non un journal. */
+  maxOutput?: number;
 };
 
 export async function sandboxExec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
@@ -61,7 +63,8 @@ export async function sandboxExec(cmd: string, opts: ExecOptions = {}): Promise<
       timedOut = true;
       child.kill("SIGKILL");
     }, opts.timeoutMs ?? cfg.SANDBOX_TIMEOUT_MS);
-    child.stdout?.on("data", (d) => (stdout = cap(stdout + d.toString())));
+    const max = opts.maxOutput ?? MAX_OUTPUT;
+    child.stdout?.on("data", (d) => (stdout = cap(stdout + d.toString(), max)));
     child.stderr?.on("data", (d) => (stderr = cap(stderr + d.toString())));
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -74,8 +77,8 @@ export async function sandboxExec(cmd: string, opts: ExecOptions = {}): Promise<
   });
 }
 
-function cap(s: string): string {
-  return s.length > MAX_OUTPUT ? s.slice(0, MAX_OUTPUT / 2) + "\n…[tronqué]…\n" + s.slice(-MAX_OUTPUT / 2) : s;
+function cap(s: string, max = MAX_OUTPUT): string {
+  return s.length > max ? s.slice(0, max / 2) + "\n…[tronqué]…\n" + s.slice(-max / 2) : s;
 }
 
 export function formatExec(r: ExecResult): string {

@@ -5,6 +5,8 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { createVaultTicket, normalizeSite } from "../vault.js";
 import { listerPiecesJointes } from "./media.js";
+import { outilRecherche, dernieresRecherches } from "../recherche.js";
+import { searchToolsAsync } from "../tools/search.js";
 import { dailyBudget, setProviderModel, setSetting } from "../providers.js";
 import { composerPrompt } from "../personality.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
@@ -23,7 +25,6 @@ import { listCustomMissions, saveCustomMission, deleteCustomMission, NAME_RE, TO
 import { buildAndDeliverReport } from "../missions/report.js";
 import { launch, withLock, setSchedule, listSchedules } from "../scheduler.js";
 import { runSwarm } from "../swarm/coordinator.js";
-import { searchTools } from "../tools/search.js";
 import { browserTool, lastScreenshot, vaultListTool } from "../tools/browser.js";
 import { marketTools } from "../tools/market.js";
 import { scrapePageTool } from "../tools/web.js";
@@ -114,6 +115,8 @@ Plusieurs choses à la fois : si Lionel te demande autre chose pendant qu'une pa
 Sites web : tu y vas SEUL. Le navigateur est celui du serveur, ses comptes restent connectés d'une fois sur l'autre. Pour un site où il n'est pas connecté, browser{action:"login"} avec l'identifiant du coffre, sans rien demander. Tu ne dis jamais à Lionel d'ouvrir une page lui-même : s'il manque un identifiant, enregistrer_identifiant ; s'il manque une étape que seul un humain peut faire (code SMS, captcha), demande précisément celle-là et rien d'autre.
 
 Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report avant de dire « je ne sais pas ». Les préférences de l'opérateur vont dans remember_fact avec topic 'profil:...'.
+
+Recherche approfondie : « renseigne-toi sur… », « fais une recherche sur… », « compare… », « quel est le meilleur… », « quelles sont les règles pour… », ou toute question de fond → recherche_approfondie (question reformulée précisément + angle). Tu confirmes en une ligne, le rapport arrive tout seul. Une question simple et factuelle (« il est quelle heure à Kigali ») se répond avec une recherche web directe, pas avec la recherche approfondie. « renvoie-moi ce que tu avais trouvé sur… » → dernieres_recherches.
 
 Images : « fais-moi une image / un logo / une bannière / un visuel de… » → generer_image, avec une description détaillée que tu rédiges toi-même. L'image arrive sur WhatsApp.
 
@@ -318,6 +321,17 @@ const fichiersRecusTool = betaZodTool({
     return l
       .map((p) => `${p.chemin} · ${p.mime} · ${new Date(p.ts).toLocaleString("fr-FR", { timeZone: config().TZ, dateStyle: "short", timeStyle: "short" })}${p.legende ? ` · légende : ${p.legende.slice(0, 120)}` : ""}${p.description ? ` · ${p.description.replace(/\s+/g, " ").slice(0, 160)}` : ""}`)
       .join("\n");
+  },
+});
+
+const dernieresRecherchesTool = betaZodTool({
+  name: "dernieres_recherches",
+  description: "Les derniers rapports de recherche approfondie (question, date, rapport). Pour « renvoie-moi la recherche sur… » ou « qu'est-ce que tu avais trouvé sur… ».",
+  inputSchema: z.object({ limite: z.number().int().min(1).max(20).optional() }),
+  run: async (i) => {
+    const l = await dernieresRecherches(i.limite ?? 5);
+    if (!l.length) return "Aucune recherche approfondie enregistrée.";
+    return l.map((r) => `#${r.id} · ${new Date(r.ts).toLocaleString("fr-FR", { timeZone: config().TZ, dateStyle: "short", timeStyle: "short" })} · ${r.question}\n${r.rapport.slice(0, 1500)}`).join("\n\n=====\n\n");
   },
 });
 
@@ -698,7 +712,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, ...searchTools(), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
