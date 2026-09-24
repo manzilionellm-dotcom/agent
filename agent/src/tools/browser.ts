@@ -25,6 +25,8 @@ const Action = z.enum([
   "tabs", "back", "cookies", "status", "login", "session",
   // Ce qu'il faut pour remplir un vrai formulaire, pas une maquette :
   "select", "check", "upload", "download", "form", "listings",
+  // Gmail à l'écran, quand l'API Google n'est pas là.
+  "gmail",
 ]);
 
 export function makeBrowserTool(container?: string) {
@@ -38,7 +40,8 @@ export function makeBrowserTool(container?: string) {
       "select{selector|label, value|name|index} : liste déroulante (type ne marche pas sur un <select>) · " +
       "check{selector|label, uncheck?} : case à cocher · " +
       "upload{selector|label, file | files:[…]} : envoie un ou plusieurs fichiers de /work dans un champ de fichier (les photos reçues sur WhatsApp sont dans /work/whatsapp/) · " +
-      "download{selector|text|url} : clique et récupère le fichier dans /work/downloads (factures PDF, exports). " +
+      "download{selector|text|url} : clique et récupère le fichier dans /work/downloads (factures PDF, exports) · " +
+      "gmail{op:inbox|search|read, query?, index?, max?} : la boîte Gmail de l'opérateur, telle qu'elle est ouverte dans ce navigateur — inbox liste les derniers messages, search cherche (« from:ionos », « is:unread »), read{index} ouvre le n-ième de la liste et rend son texte. C'est le chemin des e-mails quand les outils gmail_* sont absents ou en panne. " +
       "Les cibles sont cherchées aussi dans les iframes, et un clic qui ouvre un onglet le suit tout seul. " +
       "Un appel = une action ; lis le résultat avant la suivante. Ne saisis JAMAIS un mot de passe avec `type` — si un site en demande un, utilise `login`.",
     inputSchema: z.object({
@@ -63,7 +66,8 @@ export function makeBrowserTool(container?: string) {
       ms: z.number().int().optional(),
       timeout_ms: z.number().int().optional(),
       site: z.string().optional().describe("Site du coffre pour l'action login, ex: linkedin.com, blocket.se"),
-      op: z.enum(["list", "new", "switch", "close", "save", "load"]).optional(),
+      op: z.enum(["list", "new", "switch", "close", "save", "load", "inbox", "search", "read"]).optional(),
+      query: z.string().optional().describe("gmail search : requête Gmail (from:, subject:, is:unread, newer_than:2d)"),
       file: z.string().optional().describe("Chemin absolu sous /work, pour upload"),
       files: z.array(z.string()).optional(),
       uncheck: z.boolean().optional().describe("check : décocher au lieu de cocher"),

@@ -447,6 +447,83 @@ const handlers = {
   },
 
   /**
+   * Gmail par le web, pour quand l'API Google n'est pas branchée ou que son
+   * jeton est révoqué : le compte est connecté dans ce navigateur, et une
+   * boîte de réception se lit très bien à l'écran. Trois opérations :
+   *   inbox  — les derniers messages (expéditeur, objet, aperçu, date, non lu) ;
+   *   search — pareil, sur une recherche Gmail (« from:ionos », « is:unread ») ;
+   *   read   — ouvre le n-ième message de la liste courante et rend son texte.
+   *
+   * Les classes de Gmail (tr.zA, .yP, .bog, .y2, .a3s…) sont stables depuis
+   * des années mais pas éternelles : si elles manquent, on rend le texte
+   * lisible de la page, pour que le modèle s'en sorte quand même, et on dit
+   * lequel des deux chemins a servi. Si Gmail renvoie vers une page de
+   * connexion, on le dit tel quel : c'est à l'opérateur de se connecter à
+   * Google sur l'écran, jamais au robot de taper un mot de passe Google.
+   */
+  async gmail(a) {
+    const op = a.op || "inbox";
+    // `url` n'est là que pour les tests, qui servent une fausse boîte en local.
+    const base = a.url || "https://mail.google.com/mail/u/0/";
+    if (op === "inbox" || op === "search") {
+      const url = op === "search" ? `${base}#search/${encodeURIComponent(a.query || "")}` : `${base}#inbox`;
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await page.waitForSelector("tr.zA, input[type=email], #identifierId, .a3s", { timeout: 20_000 }).catch(() => undefined);
+      if (/accounts\.google\.com/.test(page.url()) || (await page.$("input[type=email], #identifierId"))) {
+        return { ok: false, connexion_requise: true, error: "Gmail demande une connexion : le compte Google n'est pas connecté dans ce navigateur. Lionel doit se connecter à Google sur l'écran, une fois ; ne tape jamais son mot de passe.", url: page.url() };
+      }
+      await page.waitForTimeout(a.settle_ms ?? 1_200);
+      const lignes = await page.evaluate((max) => {
+        const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
+        return [...document.querySelectorAll("tr.zA")].slice(0, max).map((tr, i) => {
+          const exp = tr.querySelector(".yX .yP, .yX .zF, .yW span[email]");
+          const objet = tr.querySelector(".bog, .y6 span:not(.y2)");
+          const date = tr.querySelector(".xW span[title], .xW span");
+          return {
+            index: i,
+            non_lu: tr.classList.contains("zE"),
+            de: clean(exp?.textContent) || clean(tr.querySelector(".yW")?.textContent),
+            email: exp?.getAttribute("email") || "",
+            objet: clean(objet?.textContent),
+            apercu: clean(tr.querySelector(".y2")?.textContent).replace(/^-\s*/, ""),
+            date: date?.getAttribute("title") || clean(date?.textContent),
+            piece_jointe: Boolean(tr.querySelector(".brd, .yf .brc")),
+          };
+        });
+      }, a.max ?? 10);
+      if (!lignes.length) {
+        return { ok: true, chemin: "texte", messages: [], note: "aucune ligne reconnue (boîte vide, ou Gmail a changé) : voici le texte de la page", texte: await text(6_000), url: page.url() };
+      }
+      return { ok: true, chemin: "selecteurs", messages: lignes, url: page.url() };
+    }
+    if (op === "read") {
+      const rows = await page.$$("tr.zA");
+      const i = a.index ?? 0;
+      if (!rows.length) throw new Error("aucune liste de messages à l'écran : appelle d'abord gmail inbox ou gmail search");
+      if (!rows[i]) throw new Error(`index ${i} hors de la liste (${rows.length} messages)`);
+      await rows[i].click({ timeout: 10_000 });
+      await page.waitForSelector(".a3s", { timeout: 20_000 }).catch(() => undefined);
+      await page.waitForTimeout(a.settle_ms ?? 800);
+      const m = await page.evaluate((maxChars) => {
+        const clean = (t) => (t || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+        const corps = [...document.querySelectorAll(".a3s")].map((e) => clean(e.innerText)).filter(Boolean);
+        const de = document.querySelector(".gD");
+        return {
+          objet: clean(document.querySelector("h2.hP")?.textContent),
+          de: clean(de?.textContent),
+          email: de?.getAttribute("email") || "",
+          date: document.querySelector(".g3")?.getAttribute("title") || clean(document.querySelector(".g3")?.textContent),
+          messages_dans_le_fil: corps.length,
+          corps: corps.slice(-3).join("\n\n— — —\n\n").slice(0, maxChars),
+        };
+      }, a.max_chars ?? 8_000);
+      if (!m.corps) return { ok: true, chemin: "texte", ...m, texte: await text(a.max_chars ?? 8_000), url: page.url() };
+      return { ok: true, chemin: "selecteurs", ...m, url: page.url() };
+    }
+    throw new Error("op attendu : inbox | search | read");
+  },
+
+  /**
    * Sauvegarde / restauration des sessions (cookies + localStorage).
    *
    * Le profil vit dans un volume Docker, donc il survit déjà aux

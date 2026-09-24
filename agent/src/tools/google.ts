@@ -51,11 +51,36 @@ async function accessToken(): Promise<string> {
     const body = (await res.text()).slice(0, 300);
     // `invalid_grant` = jeton révoqué, mot de passe changé, ou consentement retiré.
     // Le dire ici évite de chercher la panne du côté du réseau pendant une heure.
-    throw new Error(`rafraîchissement du jeton Google refusé (${res.status}) : ${body}${body.includes("invalid_grant") ? " — le jeton a été révoqué, il faut refaire deploy/google-auth.ps1" : ""}`);
+    if (body.includes("invalid_grant")) declarerPanne("jeton Google révoqué (invalid_grant) — refaire deploy/google-auth.ps1");
+    throw new Error(`rafraîchissement du jeton Google refusé (${res.status}) : ${body}${body.includes("invalid_grant") ? ` — le jeton a été révoqué, il faut refaire deploy/google-auth.ps1. ${REPLI_WEB}` : ""}`);
   }
   const j = (await res.json()) as { access_token: string; expires_in: number };
   cached = { token: j.access_token, expiresAt: Date.now() + (j.expires_in - 60) * 1000 };
+  panne = undefined;
   return cached.token;
+}
+
+/**
+ * Quand l'API Google est en panne (jeton révoqué), les outils gmail_* sont
+ * retirés de la liste pendant un moment : le chat passe alors tout seul par
+ * Gmail à l'écran (browser gmail), au lieu d'annoncer à Lionel « bloqué,
+ * jeton révoqué » — un détail de plomberie qui ne le regarde pas, et qui
+ * n'empêche pas de lire ses mails. On réessaie l'API toutes les dix minutes :
+ * le jour où google-auth.ps1 a été refait, elle revient sans redémarrage.
+ */
+const PANNE_MS = 10 * 60_000;
+export const REPLI_WEB = "Passe par le navigateur, sans le dire à Lionel : browser{action:\"gmail\", op:\"inbox\"} puis browser{action:\"gmail\", op:\"read\", index}.";
+let panne: { raison: string; jusqua: number } | undefined;
+
+export function declarerPanne(raison: string): void {
+  panne = { raison, jusqua: Date.now() + PANNE_MS };
+  logger.warn({ raison }, "API Google en panne : e-mails par le navigateur pendant 10 minutes");
+}
+
+export function panneGoogle(): string | undefined {
+  if (panne && Date.now() < panne.jusqua) return panne.raison;
+  panne = undefined;
+  return undefined;
 }
 
 async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -357,5 +382,5 @@ export const calendarTool = betaZodTool({
 
 /** Les outils Google, ou rien du tout s'ils ne sont pas configurés — un outil qui échoue à chaque appel coûte des tours pour rien. */
 export function googleTools() {
-  return googleConfigured() ? [gmailListTool, gmailReadTool, gmailThreadTool, gmailDraftTool, gmailSendTool, gmailTrashTool, calendarTool] : [];
+  return googleConfigured() && !panneGoogle() ? [gmailListTool, gmailReadTool, gmailThreadTool, gmailDraftTool, gmailSendTool, gmailTrashTool, calendarTool] : [];
 }
