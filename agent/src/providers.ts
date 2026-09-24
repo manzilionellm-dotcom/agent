@@ -160,6 +160,79 @@ export async function setProviderEnabled(id: string, enabled: boolean): Promise<
   return Boolean(r.rowCount);
 }
 
+/**
+ * Retrouve un fournisseur par son identifiant ou son libellé, sans se soucier
+ * de la casse ni des accents : « DeepSeek », « deepseek », « Deep Seek »
+ * désignent la même carte. C'est ce que Lionel tape depuis WhatsApp.
+ */
+export async function trouverFournisseur(nom: string): Promise<ProviderRow | undefined> {
+  const cle = nom.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!cle) return undefined;
+  const r = await db().query<ProviderRow>(`SELECT * FROM providers`);
+  const meme = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "") === cle;
+  const exact = r.rows.find((x) => meme(x.id) || meme(x.label));
+  if (exact) return norm(exact);
+  const partiel = r.rows.filter((x) => x.id.toLowerCase().includes(cle) || x.label.toLowerCase().includes(cle));
+  return partiel.length === 1 ? norm(partiel[0]!) : undefined;
+}
+
+export type ChangementModele = { ok: boolean; message: string; ancien?: string };
+
+/**
+ * Change le nom du modèle d'un fournisseur, puis VÉRIFIE le nouveau nom
+ * auprès de l'API (liste /models). Un nom faux fait planter chaque mission
+ * qui passe par ce fournisseur — c'est exactement ce qui est arrivé avec
+ * « deepseek-reasone » — donc on ne l'enregistre jamais à l'aveugle : si
+ * l'API le rejette, on remet l'ancien et on dit lesquels existent.
+ */
+export async function setProviderModel(nom: string, modele: string): Promise<ChangementModele> {
+  const row = await trouverFournisseur(nom);
+  if (!row) return { ok: false, message: `aucun service nommé « ${nom} » : regarde la section Services du panneau` };
+  if (row.category !== "modele" && row.id !== "voix" && row.id !== "image" && row.id !== "ecoute") {
+    return { ok: false, message: `« ${row.label || row.id} » n'a pas de modèle à régler` };
+  }
+  const nouveau = modele.trim().replace(/[\u0000-\u001f\s]/g, "");
+  if (!nouveau || nouveau.length > 120) return { ok: false, message: "nom de modèle vide ou trop long" };
+  const ancien = row.model;
+  if (ancien === nouveau) return { ok: true, message: `${row.label || row.id} est déjà sur ${nouveau}`, ancien };
+  const poser = async (m: string) => {
+    await db().query(`UPDATE providers SET model=$2, updated_at=now() WHERE id=$1`, [row.id, m]);
+    invalidate();
+  };
+  await poser(nouveau);
+  // Vérification : seul un fournisseur avec clé et adresse peut être testé.
+  if (row.api_key && row.base_url && row.kind === "openai_compat") {
+    const t = await testProvider(row.id);
+    if (!t.ok && /n'est pas dans la liste/.test(t.message)) {
+      await poser(ancien);
+      const proches = await modelesProposes(row.id, nouveau);
+      return { ok: false, message: `${row.label || row.id} ne connaît pas « ${nouveau} » — je garde ${ancien || "l'ancien"}.${proches.length ? ` Modèles proches : ${proches.join(", ")}.` : ""}`, ancien };
+    }
+    if (!t.ok) {
+      // Clé ou réseau en panne : le nom est enregistré, mais on le dit.
+      emitEvent({ kind: "provider.changed", message: `${row.id} : modèle ${ancien} → ${nouveau} (non vérifié)`, data: { id: row.id, model: nouveau } });
+      return { ok: true, message: `${row.label || row.id} passe de ${ancien || "(vide)"} à ${nouveau}, sans avoir pu vérifier : ${t.message}`, ancien };
+    }
+  }
+  emitEvent({ kind: "provider.changed", message: `${row.id} : modèle ${ancien} → ${nouveau}`, data: { id: row.id, model: nouveau } });
+  return { ok: true, message: `${row.label || row.id} passe de ${ancien || "(vide)"} à ${nouveau}, vérifié auprès de l'API`, ancien };
+}
+
+/** Les noms de modèles de l'API qui ressemblent à celui demandé (même préfixe). */
+async function modelesProposes(id: string, voulu: string): Promise<string[]> {
+  const row = await getProvider(id);
+  if (!row?.api_key || !row.base_url) return [];
+  try {
+    const p = await probe(`${row.base_url.replace(/\/+$/, "")}/models`, { authorization: `Bearer ${decryptSecret(row.api_key)}` });
+    const ids = ((p.body as { data?: Array<{ id?: string }> })?.data ?? []).map((m) => m.id).filter((x): x is string => Boolean(x));
+    const racine = voulu.toLowerCase().split(/[-_/]/)[0] ?? "";
+    const proches = racine.length >= 3 ? ids.filter((m) => m.toLowerCase().includes(racine)) : [];
+    return (proches.length ? proches : ids).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
 export async function bumpProviderPriority(id: string, delta: number): Promise<void> {
   await db().query(`UPDATE providers SET priority = GREATEST(1, LEAST(99, priority + $2)), updated_at=now() WHERE id=$1`, [id, delta]);
   invalidate();
