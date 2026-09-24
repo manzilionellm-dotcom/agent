@@ -269,8 +269,29 @@ export async function deposerPieceJointe(ref: MediaRef, got: Fetched): Promise<s
   }
 }
 
+export type PieceJointe = { id: number; chemin: string; mime: string; nom: string; legende: string; description: string; octets: number; ts: string };
+
+/** Les pièces jointes des derniers jours, la plus récente d'abord. */
+export async function listerPiecesJointes(jours = 30, limite = 30): Promise<PieceJointe[]> {
+  const r = await db().query<PieceJointe>(
+    `SELECT id, chemin, mime, nom, legende, description, octets, ts FROM pieces_jointes
+     WHERE ts > now() - ($1 || ' days')::interval ORDER BY ts DESC LIMIT $2`,
+    [String(Math.max(1, Math.min(365, jours))), Math.max(1, Math.min(200, limite))],
+  );
+  return r.rows;
+}
+
+async function noterPieceJointe(p: { peer: string; chemin: string; mime: string; nom: string; legende: string; description: string; octets: number }): Promise<void> {
+  await db()
+    .query(
+      `INSERT INTO pieces_jointes(peer, chemin, mime, nom, legende, description, octets) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [p.peer, p.chemin, p.mime, p.nom.slice(0, 200), p.legende.slice(0, 1000), p.description.slice(0, 2000), p.octets],
+    )
+    .catch((e) => logger.warn({ err: String(e) }, "pièce jointe non notée en base"));
+}
+
 /** Texte à donner au chat : la description de la pièce jointe, plus la légende s'il y en a une. */
-export async function mediaToText(ref: MediaRef): Promise<string> {
+export async function mediaToText(ref: MediaRef, peer = ""): Promise<string> {
   if (ref.kind === "vocal") {
     const e = await transcribeAudio(ref);
     if (e.ok) return `[message vocal de Lionel, transcrit — réponds-y comme à un message écrit]\n${e.texte}`;
@@ -286,6 +307,9 @@ export async function mediaToText(ref: MediaRef): Promise<string> {
   // Le dépôt et la lecture partent ensemble : la lecture prend quelques
   // secondes de modèle, le dépôt une fraction, et aucun n'attend l'autre.
   const [chemin, described] = await Promise.all([deposerPieceJointe(ref, got), describeMedia(ref, got)]);
+  if (chemin) {
+    await noterPieceJointe({ peer, chemin, mime: got.mime.split(";")[0]!.trim(), nom: ref.filename ?? "", legende: ref.caption ?? "", description: described ?? "", octets: got.bytes.byteLength });
+  }
   const fichier = chemin ? `[fichier enregistré sur le serveur : ${chemin} — pour le mettre dans un formulaire (annonce Vinted, Blocket, pièce jointe), browser{action:"upload", file:"${chemin}"}. Ne demande jamais à Lionel de le renvoyer « en fichier ».]` : "";
   if (!described) return [`[${label} reçu — je n'ai pas pu le lire]`, fichier, ref.caption ?? ""].filter(Boolean).join("\n");
   return [`[${label} reçu, voici ce qu'il contient]`, described, fichier, ref.caption ? `\nLégende : ${ref.caption}` : ""].filter(Boolean).join("\n");

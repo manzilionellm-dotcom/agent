@@ -15,6 +15,7 @@ import { sandboxExec } from "./tools/sandbox.js";
 import { handleChat } from "./channels/chat.js";
 import { deliverWhatsApp, primaryNumber, allowedNumbers, markRead, parseMetaWebhook, parseTwilioWebhook, readRawBody, sendWhatsApp, sendWhatsAppAudio, sendWhatsAppMedia, verifyMetaSignature, verifyTwilioSignature, whatsappEnabled } from "./channels/whatsapp.js";
 import { mediaToText } from "./channels/media.js";
+import { Rafale, assembler } from "./channels/rafale.js";
 import { createAgent, getAgent, listAgents, deleteAgent, agentSpend } from "./agents/store.js";
 import { createTask, listTasks, unblockTask } from "./agents/tasks.js";
 import { startRuntime, stopRuntime } from "./agents/runtime.js";
@@ -685,17 +686,37 @@ async function whatsappWebhook(req: IncomingMessage, res: ServerResponse, url: U
       continue;
     }
     void markRead(m.id);
-    // Une pièce jointe est d'abord lue par un modèle qui voit, puis transmise
-    // au chat en texte — le modèle de conversation peut rester textuel.
-    const prepared = m.media
-      ? mediaToText(m.media).then((t) => [t, m.text && m.text !== m.media?.caption ? m.text : ""].filter(Boolean).join("\n\n"))
+    // Les messages d'une même rafale (plusieurs photos, un texte puis sa
+    // suite) sont retenus quelques secondes et traités ensemble : voir
+    // channels/rafale.ts. Ils sont lus (pièce jointe → texte, dépôt du
+    // fichier) dès maintenant, en parallèle, pour ne pas attendre deux fois.
+    const prepared: Promise<string> = m.media
+      ? mediaToText(m.media, m.from).then((t) => [t, m.text && m.text !== m.media?.caption ? m.text : ""].filter(Boolean).join("\n\n"))
       : Promise.resolve(m.text);
-    void prepared
-      .then((text) => handleChat({ channel: "whatsapp", peer: m.from, text, extId: m.id }))
-      .then((reply) => (reply ? livrerReponse(m.from, reply, { entrantVocal: m.media?.kind === "vocal" }) : undefined))
-      .catch((e) => logger.error({ err: String(e) }, "whatsapp chat"));
+    prepared.catch(() => undefined);
+    rafale.ajouter(m.from, { prepared, media: Boolean(m.media), vocal: m.media?.kind === "vocal", id: m.id }, m.id);
   }
 }
+
+type EntreeRafale = { prepared: Promise<string>; media: boolean; vocal: boolean; id: string };
+
+const rafale = new Rafale<EntreeRafale>(
+  async (peer, lot) => {
+    const parts = await Promise.all(
+      lot.map(async (e) => ({ texte: await e.prepared.catch((err) => `[message illisible : ${String(err).slice(0, 120)}]`), media: e.media })),
+    );
+    const text = assembler(parts);
+    const extId = lot[lot.length - 1]!.id;
+    const entrantVocal = lot.some((e) => e.vocal);
+    try {
+      const reply = await handleChat({ channel: "whatsapp", peer, text, extId });
+      if (reply) await livrerReponse(peer, reply, { entrantVocal });
+    } catch (e) {
+      logger.error({ err: String(e) }, "whatsapp chat");
+    }
+  },
+  (e) => e.media,
+);
 
 /* --- API ----------------------------------------------------------------------- */
 

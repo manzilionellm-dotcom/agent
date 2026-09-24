@@ -37,7 +37,7 @@ export function makeBrowserTool(container?: string) {
       "form{selector?} : liste les champs d'un formulaire (nom, type, étiquette, options) — appelle-le plutôt que de deviner un sélecteur · " +
       "select{selector|label, value|name|index} : liste déroulante (type ne marche pas sur un <select>) · " +
       "check{selector|label, uncheck?} : case à cocher · " +
-      "upload{selector|label, file} : envoie un fichier de /work · " +
+      "upload{selector|label, file | files:[…]} : envoie un ou plusieurs fichiers de /work dans un champ de fichier (les photos reçues sur WhatsApp sont dans /work/whatsapp/) · " +
       "download{selector|text|url} : clique et récupère le fichier dans /work/downloads (factures PDF, exports). " +
       "Les cibles sont cherchées aussi dans les iframes, et un clic qui ouvre un onglet le suit tout seul. " +
       "Un appel = une action ; lis le résultat avant la suivante. Ne saisis JAMAIS un mot de passe avec `type` — si un site en demande un, utilise `login`.",

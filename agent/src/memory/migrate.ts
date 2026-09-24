@@ -206,6 +206,22 @@ const MIGRATIONS: string[] = [
   // Ils remplacent le jeton de l'API dans l'URL. Un jeton d'API dans une
   // adresse finit recopié — dans un historique, dans une capture d'écran,
   // dans un message. Un billet recopié, lui, est déjà mort.
+  // Pièces jointes reçues sur WhatsApp et déposées dans /work : ce que le bot
+  // peut remettre dans un formulaire (photos d'annonce, documents), avec de
+  // quoi les retrouver quand la conversation a tourné.
+  `CREATE TABLE IF NOT EXISTS pieces_jointes (
+     id          BIGSERIAL PRIMARY KEY,
+     peer        TEXT NOT NULL DEFAULT '',
+     chemin      TEXT NOT NULL,
+     mime        TEXT NOT NULL DEFAULT '',
+     nom         TEXT NOT NULL DEFAULT '',
+     legende     TEXT NOT NULL DEFAULT '',
+     description TEXT NOT NULL DEFAULT '',
+     octets      INTEGER NOT NULL DEFAULT 0,
+     ts          TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS pieces_jointes_ts ON pieces_jointes (ts DESC)`,
+
   `CREATE TABLE IF NOT EXISTS vault_tickets (
      id         TEXT PRIMARY KEY,
      expires_at TIMESTAMPTZ NOT NULL,
