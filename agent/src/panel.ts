@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { dailyBudget, vercelProject } from "./providers.js";
+import { dailyBudget, plafondTexte, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
 import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { approbationsActives } from "./channels/approvals.js";
@@ -370,7 +370,7 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
   const e = edit ? tous.find((s) => s.id === edit) : undefined;
   const rolesEdit = e ? e.roles.split(",").map((r) => r.trim()) : [];
   const sel = (a: string, b: string): string => (a === b ? " selected" : "");
-  const part = st.depense.plafond ? Math.min(100, (st.depense.jour / st.depense.plafond) * 100) : 0;
+  const part = Number.isFinite(st.depense.plafond) && st.depense.plafond ? Math.min(100, (st.depense.jour / st.depense.plafond) * 100) : 0;
   const cls = part > 90 ? "bad" : part > 60 ? "warn" : "";
   const actifs = st.categories.flatMap((c) => c.services).filter((s) => s.enabled && s.has_key).length;
   const total24 = st.consommation.reduce((a, x) => a + x.usd, 0);
@@ -408,11 +408,12 @@ export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon
 
 ${notice ? `<p class="notice${ton ? ` ${ton}` : ""}">${esc(notice)}</p>` : ""}
 ${st.coffre ? "" : `<p class="notice warn">VAULT_KEY absente du .env : impossible de chiffrer une clé, donc impossible d'en enregistrer une ici. Génère-la avec <code>openssl rand -base64 32</code>.</p>`}
-${st.depense.jour >= st.depense.plafond ? `<p class="notice bad">Plafond du jour atteint (${st.depense.jour.toFixed(2)} $ sur ${st.depense.plafond} $) : l'agent refuse de lancer une mission jusqu'à minuit. Relève-le en bas de page, ou laisse-le couper si c'est voulu.</p>` : ""}
+${st.depense.jour >= st.depense.plafond ? `<p class="notice bad">Plafond du jour atteint (${st.depense.jour.toFixed(2)} $ sur ${plafondTexte(st.depense.plafond)}) : l'agent refuse de lancer une mission jusqu'à minuit. Relève-le en bas de page, ou laisse-le couper si c'est voulu.</p>` : ""}
+${Number.isFinite(st.depense.plafond) ? "" : `<p class="notice warn">Aucune limite de dépense : Lionel a désactivé le plafond. Seul le budget de chaque mission borne encore la dépense. « remets les limites » sur WhatsApp pour le rétablir.</p>`}
 ${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé aujourd'hui » vient du compteur global, qui existait avant ce panneau. Le détail par service, lui, ne compte que depuis l'installation du panneau : c'est pour ça que les deux chiffres ne collent pas encore. Ils se rejoindront d'ici 24 h.</p>` : ""}
 
 <div class="tuiles">
-  <div class="t"><b>${st.depense.jour.toFixed(2)} $</b><span>dépensé aujourd'hui · plafond ${st.depense.plafond} $</span>
+  <div class="t"><b>${st.depense.jour.toFixed(2)} $</b><span>dépensé aujourd'hui · plafond ${plafondTexte(st.depense.plafond)}</span>
     <div class="jauge"><i class="${cls}" style="width:${part}%"></i></div></div>
   <div class="t"><b>${actifs}</b><span>service(s) actif(s)</span></div>
   <div class="t"><b>${total24.toFixed(2)} $</b><span>sur 24 h, tous services</span></div>
@@ -501,7 +502,7 @@ ${sectionAcces(st)}
 <p class="aide">Global, tous services confondus. Au-delà, l'agent refuse de lancer une mission — c'est le garde-fou qui empêche une boucle de coûter une nuit entière.</p>
 <form class="ajout" method="post">
   <input type="hidden" name="op" value="budget">
-  <div class="grille"><label>Plafond en $ par jour<input name="daily" type="number" min="0.5" step="0.5" value="${st.depense.plafond}"></label></div>
+  <div class="grille"><label>Plafond en $ par jour <span class="det">(0 = aucune limite)</span><input name="daily" type="number" min="0" step="0.5" value="${Number.isFinite(st.depense.plafond) ? st.depense.plafond : 0}"></label></div>
   <button class="principal">Changer le plafond</button>
 </form>
 

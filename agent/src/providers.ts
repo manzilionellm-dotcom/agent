@@ -404,9 +404,27 @@ export async function setSetting(cle: string, valeur: string): Promise<void> {
  * connectant au serveur est un plafond qu'on relève trop tard — au milieu
  * d'une tâche qui vient de s'arrêter.
  */
+/** Valeur du réglage qui veut dire « aucune limite ». Posée par Lionel (« désactive les limites »). */
+export const SANS_LIMITE = "illimite";
+
 export async function dailyBudget(): Promise<number> {
-  const v = Number(await setting("DAILY_BUDGET_USD"));
+  const brut = (await setting("DAILY_BUDGET_USD"))?.trim();
+  if (brut === SANS_LIMITE) return Number.POSITIVE_INFINITY;
+  const v = Number(brut);
   return Number.isFinite(v) && v > 0 ? v : config().DAILY_BUDGET_USD;
+}
+
+/** « 12 $ » ou « illimité » : pour tout ce qui affiche le plafond. */
+export function plafondTexte(n: number): string {
+  return Number.isFinite(n) ? `${n} $` : "illimité";
+}
+
+/** Messages acceptés par heure et par numéro : la limite anti-abus, qui se lève aussi. */
+export async function limiteMessagesHeure(): Promise<number> {
+  const brut = (await setting("CHAT_RATE_LIMIT").catch(() => undefined))?.trim();
+  if (brut === SANS_LIMITE) return Number.POSITIVE_INFINITY;
+  const v = Number(brut);
+  return Number.isFinite(v) && v > 0 ? v : config().CHAT_RATE_LIMIT_PER_HOUR;
 }
 
 /**

@@ -5,7 +5,7 @@ import { config } from "./config.js";
 import { db } from "./memory/db.js";
 import { logger } from "./logger.js";
 import { closeEpisode, openEpisode, spentToday } from "./memory/store.js";
-import { dailyBudget, secretFor, setting, setSetting } from "./providers.js";
+import { dailyBudget, plafondTexte, secretFor, setting, setSetting } from "./providers.js";
 import { approbationsActives } from "./channels/approvals.js";
 import { runRouted } from "./llm/router.js";
 import { untrusted } from "./safety.js";
@@ -521,7 +521,7 @@ const depense: Detecteur = {
     const out: Constat[] = [];
     const [aujourdhui, plafond] = await Promise.all([spentToday(), dailyBudget()]);
     if (aujourdhui >= plafond) out.push({
-      signature: "depense:plafond", source: "dépense", gravite: "haute", titre: `Plafond du jour atteint (${aujourdhui.toFixed(2)} $ / ${plafond} $)`,
+      signature: "depense:plafond", source: "dépense", gravite: "haute", titre: `Plafond du jour atteint (${aujourdhui.toFixed(2)} $ / ${plafondTexte(plafond)})`,
       detail: "Il refuse tout nouveau travail jusqu'à minuit.", occurrences: 1, usd: aujourdhui, exemples: [], traces: [],
       correction: "Si c'est voulu, rien à faire. Sinon regarde « Qui a coûté » avant de relever le plafond.", section: "depense",
     });

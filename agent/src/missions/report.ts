@@ -1,3 +1,4 @@
+import { dailyBudget, plafondTexte } from "../providers.js";
 import { config } from "../config.js";
 import { structured, resolveModelAsync } from "../llm.js";
 import { logger } from "../logger.js";
@@ -64,7 +65,7 @@ export async function buildAndDeliverReport(): Promise<string> {
   const memory = await memoryDigest(20_000);
 
   const prompt = `Date: ${new Date().toISOString()}
-Dépense LLM cumulée aujourd'hui: ${spent.toFixed(2)} USD (plafond ${cfg.DAILY_BUDGET_USD} USD).
+Dépense LLM cumulée aujourd'hui: ${spent.toFixed(2)} USD (plafond ${plafondTexte(await dailyBudget())}).
 
 <missions_24h>
 ${episodes.map((e) => `## ${e.mission} — ${e.status} — ${Number(e.usd).toFixed(2)} USD — ${e.started_at}\n${e.summary ?? ""}${e.error ? `\nERREUR: ${e.error}` : ""}`).join("\n\n") || "(aucune mission)"}

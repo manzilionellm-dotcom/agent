@@ -40,7 +40,7 @@ import { oublierFait, oublierFichierProfil, oublierTout } from "./souvenirs.js";
 import { apprendre, basculerCompetence, oublierCompetence } from "./competences.js";
 import { genererImage, typeImage } from "./images.js";
 import { basculerDeclencheur, creerDeclencheur, decrire, demarrerDeclencheurs, supprimerDeclencheur } from "./declencheurs.js";
-import { bumpProviderPriority, deleteProvider, getProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
+import { SANS_LIMITE, bumpProviderPriority, deleteProvider, getProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -500,9 +500,9 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         }
         case "budget": {
           const v = Number(g("daily"));
-          if (!Number.isFinite(v) || v <= 0) throw new Error("plafond invalide");
-          await setSetting("DAILY_BUDGET_USD", String(v));
-          notice = `Plafond journalier porté à ${v} $.`;
+          if (!Number.isFinite(v) || v < 0) throw new Error("plafond invalide");
+          await setSetting("DAILY_BUDGET_USD", v === 0 ? SANS_LIMITE : String(v));
+          notice = v === 0 ? "Plafond journalier désactivé : aucune limite de dépense." : `Plafond journalier porté à ${v} $.`;
           break;
         }
         default: notice = "Action inconnue.";

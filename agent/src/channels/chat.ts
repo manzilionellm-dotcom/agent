@@ -9,7 +9,7 @@ import { outilRecherche, dernieresRecherches } from "../recherche.js";
 import { outilDev } from "../dev.js";
 import { lireCodeSiteTool } from "../tools/code-site.js";
 import { searchToolsAsync } from "../tools/search.js";
-import { codeurChoisi, dailyBudget, setProviderModel, setSetting } from "../providers.js";
+import { SANS_LIMITE, codeurChoisi, dailyBudget, limiteMessagesHeure, plafondTexte, setProviderModel, setSetting } from "../providers.js";
 import { composerPrompt } from "../personality.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
 import { outilsRappels } from "../rappels.js";
@@ -135,7 +135,7 @@ Rappels et tâches : « rappelle-moi… », « chaque matin/lundi/jour à… »,
 Mémoire : « oublie que… », « efface ce que tu sais sur… », « ce n'est plus vrai que… » → outil oublier, puis cite ce qui a été effacé. Lionel voit et efface aussi sa mémoire sur le panneau.
 
 Diagnostic : « qu'est-ce qui ne va pas ? », « pourquoi t'as raté ? », « qu'est-ce que t'as fait ce matin ? », « tu vas bien ? » → outil diagnostic (etat, scanner, boite_noire, trace). Tu réponds avec ce que tu y LIS — la panne, la preuve, le remède — jamais avec une supposition. Pour le détail visuel : lien_panneau section diagnostic ou boitenoire.
-Réglages : « coupe les approbations », « monte le plafond à 20 », « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « parle-moi comme un pote » (caractere pote), « appelle-toi X », « mets DeepSeek sur deepseek-flash », « réfléchis plus / moins » (reflexion eco, auto ou max), « active Claude » / « désactive Claude » (claude on/off — il est éteint par défaut, tu ne le proposes pas de toi-même : Lionel décide), ou juste un nom de modèle envoyé seul (« deepseek-flash ») → outil reglage, immédiatement, sans demander confirmation. Un nom de modèle envoyé seul n'est jamais « sans contexte » : c'est un ordre de changer le modèle du service qui porte ce préfixe. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
+Réglages : « coupe les approbations », « monte le plafond à 20 », « désactive les limites » / « enlève le plafond » / « sans limite » (limites off), « remets les limites » (limites on), « parle-moi en vocal », « arrête les vocaux », « sois plus complice », « parle-moi comme un pote » (caractere pote), « appelle-toi X », « mets DeepSeek sur deepseek-flash », « réfléchis plus / moins » (reflexion eco, auto ou max), « active Claude » / « désactive Claude » (claude on/off — il est éteint par défaut, tu ne le proposes pas de toi-même : Lionel décide), ou juste un nom de modèle envoyé seul (« deepseek-flash ») → outil reglage, immédiatement, sans demander confirmation. Un nom de modèle envoyé seul n'est jamais « sans contexte » : c'est un ordre de changer le modèle du service qui porte ce préfixe. Tu confirmes en une ligne. Le reste de ta personnalité (consignes détaillées, voix exacte, ton) se règle sur le panneau : lien_panneau si Lionel le demande.
 
 Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lancer. C'est le seul ordre qui t'arrête.`;
 
@@ -348,7 +348,8 @@ function settingsTool() {
       "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase), pote (son pote au téléphone : décontracté, réagit d'abord, une question à la fois, jamais de listes, se souvient de tout). `nom` : ton nom. `reflexion` : eco / auto / max, l'effort de réflexion de DeepSeek. `codeur` : deepseek / claude / auto, qui écrit le code (« code avec DeepSeek », « c'est DeepSeek qui code »). `claude` : on / off — Claude est ÉTEINT par défaut (coûteux) ; « active Claude » l'allume pour un besoin précis, « désactive Claude » le recoupe. `service` + `modele` : change le nom de modèle d'un service (ex. service « DeepSeek », modele « deepseek-flash ») — le nom est vérifié auprès de l'API ; un nom seul comme « deepseek-flash » sans service désigne le service dont il porte le préfixe. Exécute sans demander confirmation, puis confirme en une ligne.",
     inputSchema: z.object({
       approbations: z.enum(["on", "off"]).optional(),
-      plafond_jour: z.number().positive().max(500).optional().describe("Plafond quotidien en USD."),
+      plafond_jour: z.number().positive().optional().describe("Plafond quotidien en USD."),
+      limites: z.enum(["off", "on"]).optional().describe("off = AUCUNE limite : plafond du jour et limite de messages levés (« désactive les limites », « enlève le plafond », « sans limite ») ; on = limites du .env remises."),
       voix: z.enum(["off", "si_vocal", "toujours"]).optional(),
       caractere: z.enum(["executant", "associe", "complice", "mentor", "pote"]).optional(),
       nom: z.string().min(1).max(40).optional(),
@@ -378,7 +379,17 @@ function settingsTool() {
             : "approbations réactivées — une action irréversible te demandera OUI-XXXX",
         );
       }
-      if (i.plafond_jour !== undefined) {
+      if (i.limites) {
+        if (i.limites === "off") {
+          await setSetting("DAILY_BUDGET_USD", SANS_LIMITE);
+          await setSetting("CHAT_RATE_LIMIT", SANS_LIMITE);
+          faits.push("limites désactivées : plus de plafond du jour, plus de limite de messages — la seule borne restante est le budget de chaque mission");
+        } else {
+          await setSetting("DAILY_BUDGET_USD", String(config().DAILY_BUDGET_USD));
+          await setSetting("CHAT_RATE_LIMIT", String(config().CHAT_RATE_LIMIT_PER_HOUR));
+          faits.push(`limites remises : plafond ${config().DAILY_BUDGET_USD} $ par jour, ${config().CHAT_RATE_LIMIT_PER_HOUR} messages par heure`);
+        }
+      } else if (i.plafond_jour !== undefined) {
         await setSetting("DAILY_BUDGET_USD", String(i.plafond_jour));
         faits.push(`plafond du jour porté à ${i.plafond_jour} $`);
       }
@@ -490,7 +501,7 @@ function controlTools(notify: Notify) {
     name: "spend_today",
     description: "Dépense LLM du jour et plafond.",
     inputSchema: z.object({}),
-    run: async () => `${(await spentToday()).toFixed(2)} $ / plafond ${await dailyBudget()} $`,
+    run: async () => `${(await spentToday()).toFixed(2)} $ / plafond ${plafondTexte(await dailyBudget())}`,
   });
 
   // Créer une mission depuis WhatsApp plutôt que dans le code : l'opérateur en
@@ -693,9 +704,9 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   }
   // Limite de débit par numéro : un téléphone volé ou un webhook rejoué ne vide pas le budget.
   const recent = await db().query<{ n: string }>(`SELECT count(*) AS n FROM chat_messages WHERE peer=$1 AND role='user' AND ts > now() - interval '1 hour'`, [opts.peer]);
-  if (Number(recent.rows[0]?.n ?? 0) >= config().CHAT_RATE_LIMIT_PER_HOUR) return "Trop de messages cette heure-ci ; je reprends dans un moment.";
+  if (Number(recent.rows[0]?.n ?? 0) >= (await limiteMessagesHeure())) return "Trop de messages cette heure-ci ; je reprends dans un moment.";
   const plafondJour = await dailyBudget();
-  if ((await spentToday()) >= plafondJour) return `Plafond journalier atteint (${plafondJour} $). Je ne lance plus rien aujourd'hui ; relève-le sur la page /panel.`;
+  if ((await spentToday()) >= plafondJour) return `Plafond journalier atteint (${plafondTexte(plafondJour)}). Je ne lance plus rien aujourd'hui ; écris « monte le plafond à 20 » ou « désactive les limites ».`;
   await db().query(`INSERT INTO chat_messages(channel, peer, role, content, ext_id) VALUES ($1,$2,'user',$3,$4)`, [opts.channel, opts.peer, text, opts.extId ?? null]);
 
   const hist = await db().query<{ role: string; content: string; ts: string }>(
