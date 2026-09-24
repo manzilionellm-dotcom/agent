@@ -9,7 +9,7 @@ import { outilRecherche, dernieresRecherches } from "../recherche.js";
 import { outilDev } from "../dev.js";
 import { lireCodeSiteTool } from "../tools/code-site.js";
 import { searchToolsAsync } from "../tools/search.js";
-import { dailyBudget, setProviderModel, setSetting } from "../providers.js";
+import { codeurChoisi, dailyBudget, setProviderModel, setSetting } from "../providers.js";
 import { composerPrompt } from "../personality.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
 import { outilsRappels } from "../rappels.js";
@@ -345,7 +345,7 @@ function settingsTool() {
   return betaZodTool({
     name: "reglage",
     description:
-      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase), pote (son pote au téléphone : décontracté, réagit d'abord, une question à la fois, jamais de listes, se souvient de tout). `nom` : ton nom. `reflexion` : eco / auto / max, l'effort de réflexion de DeepSeek. `service` + `modele` : change le nom de modèle d'un service (ex. service « DeepSeek », modele « deepseek-flash ») — le nom est vérifié auprès de l'API ; un nom seul comme « deepseek-flash » sans service désigne le service dont il porte le préfixe. Exécute sans demander confirmation, puis confirme en une ligne.",
+      "Change un réglage du bot, tout de suite. `approbations` : « off » = les actions irréversibles partent sans rien demander ; « on » = demande OUI-XXXX. `plafond_jour` : plafond de dépense quotidien en dollars. `voix` : « off » = réponses écrites, « si_vocal » = vocal quand Lionel parle en vocal, « toujours » = chaque réponse aussi en vocal. `caractere` : executant (fait et se tait), associe (exécute puis une ligne d'avis), complice (chaleureux, taquin), mentor (exécute puis explique en une phrase), pote (son pote au téléphone : décontracté, réagit d'abord, une question à la fois, jamais de listes, se souvient de tout). `nom` : ton nom. `reflexion` : eco / auto / max, l'effort de réflexion de DeepSeek. `codeur` : deepseek / claude / auto, qui écrit le code (« code avec DeepSeek », « c'est DeepSeek qui code »). `service` + `modele` : change le nom de modèle d'un service (ex. service « DeepSeek », modele « deepseek-flash ») — le nom est vérifié auprès de l'API ; un nom seul comme « deepseek-flash » sans service désigne le service dont il porte le préfixe. Exécute sans demander confirmation, puis confirme en une ligne.",
     inputSchema: z.object({
       approbations: z.enum(["on", "off"]).optional(),
       plafond_jour: z.number().positive().max(500).optional().describe("Plafond quotidien en USD."),
@@ -354,6 +354,7 @@ function settingsTool() {
       nom: z.string().min(1).max(40).optional(),
       memoire: z.enum(["on", "off"]).optional().describe("off = tu ne retiens plus rien et ne lis plus le profil"),
       reflexion: z.enum(["eco", "auto", "max"]).optional().describe("Effort de réflexion de DeepSeek : eco (rapide, pas cher partout), auto (peu en conversation, à fond pour planifier et coder), max (à fond partout, lent et cher)."),
+      codeur: z.enum(["deepseek", "claude", "auto"]).optional().describe("Qui écrit le code dans l'atelier et les missions : deepseek (deepseek-v4-pro par son API compatible Anthropic), claude, ou auto (DeepSeek si une clé existe, sinon Claude)."),
       service: z.string().min(1).max(60).optional().describe("Le service dont on change le modèle (DeepSeek, Mistral, Claude, voix, image, ecoute)."),
       modele: z.string().min(1).max(120).optional().describe("Le nouveau nom de modèle, tel que l'API l'attend."),
     }),
@@ -399,6 +400,11 @@ function settingsTool() {
       if (i.reflexion) {
         await setSetting("REFLEXION", i.reflexion);
         faits.push(`réflexion DeepSeek : ${i.reflexion} (${REFLEXIONS[i.reflexion]})`);
+      }
+      if (i.codeur) {
+        await setSetting("CODEUR", i.codeur);
+        const c = await codeurChoisi();
+        faits.push(`codeur : ${i.codeur} → en pratique ${c.raison}${c.cle ? ` (modèle ${c.modele})` : " — AUCUNE CLÉ, le code ne partira pas"}`);
       }
       if (!faits.length) return "Error: rien à changer — précise au moins un réglage.";
       logger.info({ reglages: faits }, "réglage changé depuis le chat");

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { sandboxExec, shellQuote } from "./sandbox.js";
+import { codeurChoisi } from "../providers.js";
 
 /**
  * Sous-agent « codeur » : délègue une tâche de code à Claude Code en mode
@@ -37,7 +38,10 @@ export function makeCoderTool(container?: string) {
     }),
     run: async (i) => {
       const cfg = config();
-      if (!cfg.ANTHROPIC_API_KEY) return "Error: le sous-agent codeur (Claude Code) exige ANTHROPIC_API_KEY, même avec LLM_PROVIDER=openai_compat. Utilise sandbox_bash/sandbox_write_file à la place.";
+      // Le harnais est Claude Code ; le cerveau est celui que Lionel a choisi :
+      // DeepSeek par son API compatible Anthropic, ou Claude.
+      const choix = await codeurChoisi();
+      if (!choix.cle) return `Error: le sous-agent codeur n'a aucune clé (${choix.raison}). Ajoute une clé DeepSeek au panneau (section Services) ou ANTHROPIC_API_KEY au .env. En attendant : sandbox_bash / sandbox_write_file.`;
       const prompt = [
         `Tu travailles dans ${i.repo_dir} sur la branche ${i.branch}.`,
         `Règles: lis AGENTS.md/CLAUDE.md s'ils existent; exécute lint/typecheck/tests avant de committer; commits atomiques avec messages clairs; ne pousse jamais (git push interdit); pas de refactor non demandé.`,
@@ -54,15 +58,16 @@ export function makeCoderTool(container?: string) {
         `--permission-mode acceptEdits`,
         `--allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(pytest:*),Bash(python:*)"`,
         `--max-budget-usd ${i.budget_usd}`,
-        `--model ${shellQuote(cfg.MODEL_CODER)}`,
+        `--model ${shellQuote(choix.modele)}`,
       ].join(" ");
 
-      logger.info({ container, repo: i.repo_dir, branch: i.branch }, "delegate_coding_task");
+      logger.info({ container, repo: i.repo_dir, branch: i.branch, codeur: choix.codeur, modele: choix.modele }, "delegate_coding_task");
       const r = await sandboxExec(cmd, {
         container,
         timeoutMs: cfg.SANDBOX_TIMEOUT_MS,
         env: {
-          ANTHROPIC_API_KEY: cfg.ANTHROPIC_API_KEY ?? "",
+          ANTHROPIC_API_KEY: choix.cle,
+          ...(choix.base ? { ANTHROPIC_BASE_URL: choix.base } : {}),
           GIT_AUTHOR_NAME: cfg.GIT_AUTHOR_NAME,
           GIT_AUTHOR_EMAIL: cfg.GIT_AUTHOR_EMAIL,
           GIT_COMMITTER_NAME: cfg.GIT_AUTHOR_NAME,
@@ -81,7 +86,7 @@ export function makeCoderTool(container?: string) {
       const d = parsed.data;
       const status = await sandboxExec(`cd ${shellQuote(i.repo_dir)} && git status --short && git log --oneline -5`, { timeoutMs: 20_000, container });
       return [
-        `status=${d.is_error ? "error" : (d.subtype ?? "ok")} turns=${d.num_turns ?? "?"} cost_usd=${(d.total_cost_usd ?? 0).toFixed(3)}`,
+        `status=${d.is_error ? "error" : (d.subtype ?? "ok")} turns=${d.num_turns ?? "?"} cost_usd=${(d.total_cost_usd ?? 0).toFixed(3)} codeur=${choix.codeur}:${choix.modele}`,
         `--- résumé du codeur ---`,
         d.result ?? "(vide)",
         `--- git ---`,

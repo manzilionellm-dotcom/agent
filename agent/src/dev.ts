@@ -12,6 +12,7 @@ import { searchToolsAsync } from "./tools/search.js";
 import { browserTool, vaultListTool } from "./tools/browser.js";
 import { ensureRepoTool, pullRequestTool, pushDeployTool, resoudreDepot } from "./tools/git.js";
 import { coderTool } from "./tools/coder.js";
+import { codeurChoisi } from "./providers.js";
 
 /**
  * L'atelier de développement — ce que Grok Build ou Cursor font sur un
@@ -127,7 +128,10 @@ export function outilDev(notify: (t: string) => Promise<void>, lancer: (m: Missi
         return `Error: ${String(e).slice(0, 200)}`;
       }
       const depot = m.mcpServers.includes("github") ? resoudreDepot(i.depot) : undefined;
-      if (depot && !config().ANTHROPIC_API_KEY) return "Error: le codeur (Claude Code) a besoin d'une clé Anthropic sur le serveur : ANTHROPIC_API_KEY absente. L'analyse des sites reste possible sans dépôt.";
+      if (depot) {
+        const c = await codeurChoisi();
+        if (!c.cle) return `Error: aucun modèle pour coder (${c.raison}) : ajoute une clé DeepSeek au panneau, ou ANTHROPIC_API_KEY. L'analyse des sites reste possible sans dépôt.`;
+      }
       void lancer(m, {})
         .then((r) =>
           r

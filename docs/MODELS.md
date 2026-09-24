@@ -21,6 +21,26 @@ Risques : prix (5 $/25 $ par M tokens sur Opus 5), dépendance à un fournisseur
 
 `resolveModel(kind)` dans `agent/src/llm.ts` : `planner`, `worker`, `chat` → `LLM_PROVIDER`/`MODEL_*` ; `critical` (missions `seo_daily`, `iptv_comparator`, `repo_maintenance`, rôles `coder`/`publisher`/`deployer`) → `LLM_PROVIDER_CRITICAL`/`MODEL_CRITICAL`. Le `.env.example` livre DeepSeek pour le premier groupe et Claude Sonnet 5 pour le second : c'est le compromis coût/fiabilité recommandé (le déploiement cassé coûte plus cher que les tokens économisés).
 
+## Qui écrit le code : DeepSeek ou Claude
+
+Le sous-agent codeur reste Claude Code (le harnais : fichiers, bash, tests, git),
+mais le modèle derrière est au choix, réglé depuis WhatsApp (« code avec
+DeepSeek », « code avec Claude ») ou par le réglage `CODEUR` :
+
+- `deepseek` — Claude Code pointé sur l'API DeepSeek compatible Anthropic
+  (`ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`, clé DeepSeek du
+  panneau), modèle `deepseek-v4-pro` (réglage `CODEUR_MODELE` pour en changer).
+  D'après les chiffres publiés en 2026 (UNVERIFIED sur Opus 5) : DeepSeek
+  V4-Pro à 80,6 % sur SWE-bench Verified, à 0,2 point de Claude Opus 4.6,
+  devant sur Terminal-Bench, pour un prix de sortie environ 7 fois plus bas.
+- `claude` — `MODEL_CODER` avec `ANTHROPIC_API_KEY`.
+- `auto` (défaut) — DeepSeek dès qu'une clé DeepSeek existe, sinon Claude.
+
+Limites DeepSeek par cette API (sa documentation) : `budget_tokens` ignoré,
+`top_k` non pris en charge, pas de blocs document ni de résultats de
+recherche, certains types d'outils (MCP, exécution de code côté serveur)
+absents. Rien de tout ça n'est utilisé par le codeur.
+
 ## Brancher un autre fournisseur
 
 ```env

@@ -233,6 +233,49 @@ async function modelesProposes(id: string, voulu: string): Promise<string[]> {
   }
 }
 
+/**
+ * Une clé DeepSeek, d'où qu'elle vienne : une carte du panneau dont
+ * l'adresse est deepseek.com, sinon le .env. Sert au codeur (Claude Code
+ * pointé sur l'API DeepSeek compatible Anthropic) et à la vision.
+ */
+export async function sourceDeepSeek(): Promise<{ cle: string; nom: string } | undefined> {
+  try {
+    const r = await db().query<{ id: string; api_key: string }>(
+      `SELECT id, api_key FROM providers WHERE enabled AND api_key IS NOT NULL AND base_url ILIKE '%deepseek.com%' ORDER BY priority LIMIT 1`,
+    );
+    const x = r.rows[0];
+    if (x) return { cle: decryptSecret(x.api_key), nom: x.id };
+  } catch (e) {
+    logger.warn({ err: String(e) }, "recherche d'une clé DeepSeek impossible");
+  }
+  const c = config();
+  if (c.OPENAI_COMPAT_API_KEY && /deepseek\.com/i.test(c.OPENAI_COMPAT_BASE_URL ?? "")) return { cle: c.OPENAI_COMPAT_API_KEY, nom: ".env" };
+  return undefined;
+}
+
+export type Codeur = "deepseek" | "claude" | "auto";
+
+/**
+ * Quel modèle fait le code (le sous-agent Claude Code) : DeepSeek via son
+ * API compatible Anthropic (api-docs.deepseek.com/guides/anthropic_api, lu
+ * le 24/09/2026 : claude-opus* → deepseek-v4-pro, claude-sonnet/haiku →
+ * deepseek-flash), ou Claude. « auto » = DeepSeek dès qu'une clé DeepSeek
+ * existe, sinon Claude. Réglé depuis WhatsApp (« code avec DeepSeek »).
+ */
+export async function codeurChoisi(): Promise<{ codeur: "deepseek" | "claude"; cle?: string; base?: string; modele: string; raison: string }> {
+  const c = config();
+  const voulu = ((await setting("CODEUR").catch(() => undefined)) ?? "auto") as Codeur;
+  const modeleDeepSeek = (await setting("CODEUR_MODELE").catch(() => undefined))?.trim() || "deepseek-v4-pro";
+  const ds = voulu === "claude" ? undefined : await sourceDeepSeek();
+  if (ds && (voulu === "deepseek" || voulu === "auto")) {
+    return { codeur: "deepseek", cle: ds.cle, base: "https://api.deepseek.com/anthropic", modele: modeleDeepSeek, raison: `DeepSeek (${ds.nom})${voulu === "auto" ? ", choix automatique" : ""}` };
+  }
+  if (c.ANTHROPIC_API_KEY) {
+    return { codeur: "claude", cle: c.ANTHROPIC_API_KEY, modele: c.MODEL_CODER, raison: voulu === "deepseek" ? "Claude (aucune clé DeepSeek trouvée)" : "Claude" };
+  }
+  return { codeur: voulu === "claude" ? "claude" : "deepseek", modele: voulu === "claude" ? c.MODEL_CODER : modeleDeepSeek, raison: "aucune clé : ni DeepSeek au panneau, ni ANTHROPIC_API_KEY" };
+}
+
 export async function bumpProviderPriority(id: string, delta: number): Promise<void> {
   await db().query(`UPDATE providers SET priority = GREATEST(1, LEAST(99, priority + $2)), updated_at=now() WHERE id=$1`, [id, delta]);
   invalidate();
