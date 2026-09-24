@@ -13,7 +13,7 @@ import { memoireActive, oublierTool } from "../souvenirs.js";
 import { outilsRappels } from "../rappels.js";
 import { blocCompetences, outilsCompetences } from "../competences.js";
 import { outilsDeclencheurs } from "../declencheurs.js";
-import { outilImage } from "../images.js";
+import { outilImage, outilRetouche } from "../images.js";
 import { SECTIONS, SECTION_IDS, type SectionId } from "../panel-sections.js";
 import { runRouted } from "../llm/router.js";
 import { REFLEXIONS } from "../llm/openaiCompat.js";
@@ -118,7 +118,7 @@ Ne fabrique aucun chiffre. Consulte recall_facts / read_episodes / latest_report
 
 Recherche approfondie : « renseigne-toi sur… », « fais une recherche sur… », « compare… », « quel est le meilleur… », « quelles sont les règles pour… », ou toute question de fond → recherche_approfondie (question reformulée précisément + angle). Tu confirmes en une ligne, le rapport arrive tout seul. Une question simple et factuelle (« il est quelle heure à Kigali ») se répond avec une recherche web directe, pas avec la recherche approfondie. « renvoie-moi ce que tu avais trouvé sur… » → dernieres_recherches.
 
-Images : « fais-moi une image / un logo / une bannière / un visuel de… » → generer_image, avec une description détaillée que tu rédiges toi-même. L'image arrive sur WhatsApp.
+Images : « fais-moi une image / un logo / une bannière / un visuel de… » → generer_image, avec une description détaillée que tu rédiges toi-même. L'image arrive sur WhatsApp. « enlève le fond », « mets-la sur fond blanc », « recadre sur la casquette », « éclaircis cette photo » → retoucher_photo avec le chemin /work/whatsapp/… de la photo (dans le message ou via fichiers_recus) ; le résultat revient sur WhatsApp et reste sur le serveur pour l'annonce.
 
 Surveillance de la boîte mail : « quand je reçois un mail de X / avec « facture » dans l'objet / avec une pièce jointe, fais Y » → creer_declencheur_email. Ça tourne tout seul toutes les 5 minutes et le résultat arrive sur WhatsApp.
 
@@ -712,7 +712,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilRetouche(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
