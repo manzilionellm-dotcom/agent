@@ -1,4 +1,4 @@
-# Essaim — 15 sous-agents parallèles
+# Essaim — 18 sous-agents parallèles
 
 ## Lancer
 
@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 2. **Vagues parallèles** — tout ce dont les dépendances sont satisfaites part en même temps, jusqu'à `SWARM_CONCURRENCY` (10). Un rôle qui touche du code prend un conteneur dans `SANDBOX_POOL` (attend s'il n'y en a plus). Chaque sous-agent : son prompt système, sa mémoire (`/memories/agents/<rôle>`), ses outils, son budget ; il reçoit les `<result>` de ses dépendances, rien d'autre.
 3. **Fusion** — le coordinateur relit tous les résultats, tranche les contradictions, produit le livrable, la liste des actions humaines et les points ouverts. Tout est journalisé (`episodes` : `swarm` + `swarm:<rôle>`), avec durée mur et estimation séquentielle pour mesurer le gain.
 
-## Les 15 rôles
+## Les 18 rôles
 
 | Rôle | Modèle | Sandbox | Outils clés | Livrable |
 |---|---|---|---|---|
@@ -42,6 +42,9 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 | landing_crafter | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | landing de conversion : copy, tracking, Lighthouse > 90, preview Vercel |
 | scrape_factory | Sonnet 5 | oui | sandbox, coder, git, scrape, browser, search, alert | module de scraping réutilisable : parser, scheduler, stockage, alertes |
 | automation_smith | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | workflow self-healing : triggers, actions, retry, logs, doc |
+| seo_crawl_flotte | Sonnet 5 | oui | sandbox, audit, browser, search, alert | tableau de santé de la flotte IPTV (HTTP, canonical, hreflang, schema, CTA WA) |
+| gsc_schema_fix | Opus 5 (critical) | oui | sandbox, coder, git, audit, search, alert | JSON-LD corrigé + issues GSC, 0 AggregateRating inventé |
+| self_healer | Opus 5 (critical) | oui | sandbox, coder, git, audit, alert | bots/sites/process réparés sans attendre Lionel |
 
 Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effort, budget, outils, prompt). Le planificateur le voit immédiatement.
 
@@ -60,6 +63,12 @@ Quatre rôles spécialisés dans la création de produits web à la demande :
 - **automation_smith** : crée des workflows self-healing (triggers webhook/cron/event, actions API/git/deploy/notify, conditions, retry backoff, logs, détection d'échec → correction → relance). Livrable : workflow JSON/YAML + code + test de run + doc.
 
 Ces rôles peuvent aussi créer d'autres bots spécialisés (forums, communautés, landings, scrapers, automatisations) à la demande de Lionel, coordonnés par grok_bot_mirror.
+
+## Rôles de surveillance flotte
+
+Deux rôles dédiés à la santé de la flotte IPTV :
+- **seo_crawl_flotte** : crawl quotidien de tous les sites IPTV (testiptv24h.com, latinoiptvbox.com, iptvpremiumpolska.com, iptvnyc.us, nigeriaiptv.com, worldiptv1.com, iptv-sport.com, premiumlatinoiptv.us, iptv-toronto.ca, stableiptv.ca, iptvusastream.com). Vérifie HTTP 200, canonical, hreflang, JSON-LD, pages 404/minces, Lighthouse, CTA WhatsApp +44 7307 410512. Ouvre une issue GitHub par régression.
+- **gsc_schema_fix** : corrige les données structurées (FAQPage, HowTo, Product/Offer, Organization) et signale les problèmes Search Console. 0 AggregateRating inventé, 0 M3U, soft-sell.
 
 ## Ce que « diviser le temps par dix » veut dire vraiment
 
