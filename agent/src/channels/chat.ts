@@ -189,7 +189,7 @@ function enregistrerIdentifiantTool(peer: string) {
         "",
         `${base}/vault?${q.toString()}`,
         "",
-        "Valable 15 min, une seule ouverture. Ton mot de passe ne se tape que sur cette page — jamais ici.",
+        "Valable 15 min. Ton mot de passe ne se tape que sur cette page — jamais ici.",
         "Reviens ensuite et écris « c'est bon ».",
       ].join("\n");
       const ok = await sendWhatsApp(peer, texte);
@@ -222,7 +222,7 @@ function loginRequestTool(peer: string) {
         "",
         lien,
         "",
-        "Valable 15 min, une seule ouverture.",
+        "Valable 15 min.",
       ].join("\n");
       const ok = await sendWhatsApp(peer, texte);
       return ok
@@ -261,7 +261,7 @@ function panelLinkTool(peer: string) {
         `Le lien ouvre ton panneau directement sur « ${sec.titre} » (${sec.pour}) :`,
         `${base}/panel?t=${t.id}&s=${i.section}`,
         "",
-        "Valable 15 min, une seule ouverture. Une clé ou un mot de passe se tape sur la page, jamais dans un message.",
+        "Valable 15 min ; une fois ouvert, le panneau reste accessible 30 jours depuis ce navigateur. Une clé ou un mot de passe se tape sur la page, jamais dans un message.",
       ].join("\n");
       const ok = await sendWhatsApp(peer, texte);
       // La consigne de retour est volontairement fermée : le message envoyé

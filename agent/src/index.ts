@@ -31,7 +31,7 @@ import { lireVue } from "./panel-diagnostic.js";
 import { dansTrace, ouvrirBoiteNoire, viderBoiteNoire } from "./boite-noire.js";
 import { creerTicket, demarrerInspecteur, inspecter, marquerProbleme, reglerInspecteur, type Reglages } from "./inspecteur.js";
 import { livrerReponse } from "./voice.js";
-import { adresse, definirMotDePasse, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter } from "./login.js";
+import { adresse, definirMotDePasse, envoyerCode, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter, verifierCode, type EtatConnexion } from "./login.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
 import { VOIX_MODES, synthese } from "./voice.js";
 import { estCommandeEcran, ouvrirSurEcran, sitesConnectes, telecommande } from "./navigator.js";
@@ -103,12 +103,29 @@ async function ticketToCookie(req: IncomingMessage, res: ServerResponse, url: UR
   const token = config().ORCHESTRATOR_TOKEN;
   const ticket = url.searchParams.get("t") ?? "";
   if (!token) return void json(res, 503, { error: "ORCHESTRATOR_TOKEN absent" });
+  // Un lien posté dans WhatsApp est visité AVANT le clic : par le robot
+  // d'aperçu de Meta, par un HEAD de préchargement. Chacun consommait le
+  // billet, et Lionel, lui, tombait sur « ce lien a déjà servi ». Ces
+  // visiteurs-là reçoivent une page vide et ne touchent pas au billet.
+  if (req.method === "HEAD" || estRobotApercu(req)) {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    return void res.end("<!doctype html><meta charset=utf-8><title>Manzi Junior</title>");
+  }
   if (!(await consumeVaultTicket(ticket).catch(() => false))) {
     logger.warn({ ip: req.socket.remoteAddress, destination }, "billet invalide ou déjà utilisé");
     res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Demande-en un autre au bot, ou lance <code>bash deploy/vault-link.sh</code>.");
+    return void res.end("<!doctype html><meta charset=utf-8><p style=\"font:16px system-ui;padding:2rem\">Ce lien a déjà servi ou a expiré. Ouvre <a href=\"/login\">la page de connexion</a> : elle t'envoie un code sur WhatsApp.");
   }
-  poserCookie(req, res, destination, 3600);
+  // Même durée qu'un mot de passe : le billet est arrivé sur le WhatsApp du
+  // propriétaire, c'est une preuve au moins aussi bonne. Une heure, comme
+  // avant, voulait dire un panneau qui se refermait pendant qu'on s'en sert.
+  poserCookie(req, res, destination, SESSION_S);
+}
+
+/** Les robots qui fabriquent l'aperçu d'un lien : Meta pour WhatsApp, et les autres messageries. */
+function estRobotApercu(req: IncomingMessage): boolean {
+  const ua = String(req.headers["user-agent"] ?? "");
+  return /facebookexternalhit|WhatsApp\/|Twitterbot|TelegramBot|Slackbot|Discordbot|LinkedInBot|Googlebot|bingbot|SkypeUriPreview/i.test(ua);
 }
 
 /**
@@ -156,37 +173,64 @@ function versConnexion(res: ServerResponse, suite: string): void {
 }
 
 /**
- * Connexion par mot de passe : l'adresse du panneau s'ouvre comme n'importe
- * quel site, sans passer par le serveur ni par la conversation.
- * Douze heures de session : assez pour une journée de travail, assez court
- * pour qu'un téléphone oublié ne reste pas ouvert indéfiniment.
+ * Trente jours de session, quel que soit le chemin d'entrée : un code
+ * WhatsApp, un mot de passe ou un lien du bot. Le panneau et l'écran
+ * s'ouvrent ensuite depuis un signet jusqu'au mois prochain.
+ */
+const SESSION_S = 30 * 24 * 3600;
+
+/**
+ * Connexion : l'adresse du panneau s'ouvre comme n'importe quel site, sans
+ * passer par le serveur ni par la conversation.
+ *
+ * Deux chemins, tous deux sur cette page : un code à six chiffres envoyé sur
+ * le WhatsApp du propriétaire (le chemin par défaut, rien à retenir), ou le
+ * mot de passe s'il en a défini un. Voir login.ts pour ce qui borne l'abus.
  */
 async function loginRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const nom = (await personnalite().catch(() => undefined))?.nom;
   const demandee = url.searchParams.get("suite") ?? "";
-  const page = (m = "", code = 200, suite = demandee) => {
+  const mdp = await motDePasseDefini();
+  const page = (m = "", code = 200, suite = demandee, etat: Partial<EtatConnexion> = {}) => {
     res.writeHead(code, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
-    res.end(pageConnexion(m, nom, SUITES[suite] ? suite : ""));
+    res.end(pageConnexion(m, nom, SUITES[suite] ? suite : "", { mdp, ...etat }));
   };
   if (!config().ORCHESTRATOR_TOKEN) return page("ORCHESTRATOR_TOKEN absent du serveur : connexion impossible.", 503);
   if (req.method !== "POST") {
     if (vaultCookieOk(req)) return void (res.writeHead(302, { location: SUITES[url.searchParams.get("suite") ?? ""] ?? "/panel" }), res.end());
-    return page(await motDePasseDefini() ? "" : "Aucun mot de passe défini pour l'instant. Entre avec un lien du bot, puis définis-le dans le panneau, section Accès.");
+    return page();
   }
   const f = new URLSearchParams((await readRawBody(req)).toString("utf8"));
   const ip = adresse(req);
   const voulue = f.get("suite") ?? "";
+  const action = f.get("action") ?? "";
+  if (action === "code_envoyer") {
+    const e = await envoyerCode(ip, deliverWhatsApp);
+    if (!e.ok) {
+      logger.warn({ ip, raison: e.raison }, "code de connexion non envoyé");
+      // Le champ du code reste visible quand un code est déjà en route :
+      // « un code vient de partir » sans champ pour le taper serait absurde.
+      return page(e.raison, 429, voulue, { codeEnvoye: /vient de partir/.test(e.raison) });
+    }
+    logger.info({ ip }, "code de connexion envoyé sur WhatsApp");
+    return page("Code envoyé sur WhatsApp. Il arrive dans quelques secondes.", 200, voulue, { codeEnvoye: true, bon: true });
+  }
+  if (action === "code_verifier") {
+    const r = verifierCode(ip, f.get("code") ?? "");
+    if (!r.ok) {
+      logger.warn({ ip }, "code de connexion refusé");
+      return page(r.raison, 401, voulue, { codeEnvoye: !/expiré|nouveau/.test(r.raison) });
+    }
+    logger.info({ ip }, "connexion au panneau par code WhatsApp");
+    return poserCookie(req, res, SUITES[voulue] ?? "/panel", SESSION_S);
+  }
   const r = await tenter(ip, f.get("mdp") ?? "");
   if (!r.ok) {
     logger.warn({ ip }, "connexion refusée");
     return page(r.raison, 401, voulue);
   }
   logger.info({ ip }, "connexion au panneau par mot de passe");
-  // Trente jours : un mot de passe tapé une fois, et le panneau comme l'écran
-  // s'ouvrent depuis un signet du téléphone jusqu'au mois prochain. Les liens
-  // à usage unique du bot restent à quinze minutes : ce sont eux qui
-  // circulent dans WhatsApp, pas celui-ci.
-  poserCookie(req, res, SUITES[voulue] ?? "/panel", 30 * 24 * 3600);
+  poserCookie(req, res, SUITES[voulue] ?? "/panel", SESSION_S);
 }
 
 /**
@@ -442,7 +486,7 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         }
         case "retirermdp": {
           await retirerMotDePasse();
-          notice = "Mot de passe retiré : on n'entre plus qu'avec un lien du bot.";
+          notice = "Mot de passe retiré : on entre avec un code WhatsApp ou un lien du bot.";
           ton = "bad";
           break;
         }
@@ -1074,7 +1118,7 @@ function startKeyWatch(): void {
       ];
       if (base) {
         const t = await createVaultTicket(15).catch(() => undefined);
-        if (t) lignes.push("", "Corrige-la ici :", `${base}/panel?t=${t.id}`, "", "Valable 15 min, une seule ouverture.");
+        if (t) lignes.push("", "Corrige-la ici :", `${base}/panel?t=${t.id}`, "", "Valable 15 min.");
       }
       await deliverWhatsApp(to, lignes.join("\n")).catch(() => false);
     }

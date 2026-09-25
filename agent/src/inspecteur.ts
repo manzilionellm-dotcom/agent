@@ -1000,7 +1000,7 @@ export function messageDuJour(r: Resultat, priorite: string, mode: Reglages["wha
     lignes.push("", r.inspection.ouverts ? `${r.inspection.ouverts} problème(s) connu(s), rien de nouveau de grave.` : "Rien à signaler. ✅");
   }
   if (priorite) lignes.push("", `👉 ${priorite}`);
-  if (url) lignes.push("", "Détails :", url, "Valable 2 h, une seule ouverture.");
+  if (url) lignes.push("", "Détails :", url, "Valable 2 h.");
   return lignes.join("\n");
 }
 

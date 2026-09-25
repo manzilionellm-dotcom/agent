@@ -109,8 +109,8 @@ Elle ne changera plus, même après un redémarrage. Mets-la en signet.
   $PUBLIC/vault     coffre d'identifiants
   $PUBLIC/screen    écran du navigateur du serveur
 
-Pour entrer : $PUBLIC/login et ton mot de passe. Pas encore de mot de
-passe ? Entre une première fois avec un lien du bot (« envoie-moi le lien
-du panneau »), puis définis-le dans la section « Accès depuis n'importe où ».
+Pour entrer : $PUBLIC/login → « Recevoir un code sur WhatsApp », tape le
+code reçu, et c'est ouvert pour 30 jours. Un mot de passe est possible en
+plus, dans la section « Accès depuis n'importe où » du panneau.
 ────────────────────────────────────────────────────────────────
 EOF

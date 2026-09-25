@@ -344,7 +344,7 @@ function sectionAcces(st: PanelState): string {
   return `<h2 id="acces">Accès depuis n'importe où</h2>
 <p class="aide">${st.mdp
     ? "Un mot de passe est défini : ouvre l'adresse du panneau depuis n'importe quel navigateur, tape-le, tu es dedans pour trente jours : mets /panel et /screen en signets sur ton téléphone. Cinq erreurs bloquent l'adresse quinze minutes."
-    : "Aucun mot de passe : pour l'instant, on n'entre qu'avec un lien envoyé par le bot. Définis-en un pour ouvrir ce panneau comme n'importe quel site, depuis ton téléphone ou ton PC."}</p>
+    : "Sans mot de passe, tu entres avec un code envoyé sur ton WhatsApp depuis la page de connexion : rien à retenir, trente jours par navigateur. Un mot de passe est un chemin en plus, utile si WhatsApp est indisponible."}</p>
 <form class="ajout" method="post" autocomplete="off">
   <input type="hidden" name="op" value="motdepasse">
   <div class="grille">
@@ -353,7 +353,7 @@ function sectionAcces(st: PanelState): string {
   </div>
   <button class="principal">${st.mdp ? "Changer le mot de passe" : "Définir le mot de passe"}</button>
 </form>
-${st.mdp ? `<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="retirermdp"><button class="danger" onclick="return confirm('Retirer le mot de passe ? On ne pourra plus entrer qu\\'avec un lien du bot.')">Retirer le mot de passe</button></form>` : ""}`;
+${st.mdp ? `<form method="post" style="margin-top:.5rem"><input type="hidden" name="op" value="retirermdp"><button class="danger" onclick="return confirm('Retirer le mot de passe ? On entrera avec un code WhatsApp ou un lien du bot.')">Retirer le mot de passe</button></form>` : ""}`;
 }
 
 /**

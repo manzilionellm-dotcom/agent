@@ -47,7 +47,7 @@ if (!name) {
       const t = await createVaultTicket(10);
       const base = config().PUBLIC_URL ?? "http://127.0.0.1:8787";
       console.log(`\n  ${base}/${page}?t=${t.id}\n`);
-      console.log(`  Valable jusqu'à ${t.expiresAt.toLocaleTimeString("fr-FR")}, une seule ouverture.`);
+      console.log(`  Valable jusqu'à ${t.expiresAt.toLocaleTimeString("fr-FR")}.`);
       if (!config().PUBLIC_URL) console.log(`  (PUBLIC_URL absente : passe par « ssh -L 8787:127.0.0.1:8787 manzi@… »)`);
     } else if (name === "test-capture") {
       // « Le screenshot ne marche pas » est un symptôme, pas un diagnostic :

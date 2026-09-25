@@ -215,12 +215,19 @@ export async function createVaultTicket(minutes = 10): Promise<{ id: string; exp
 }
 
 /**
- * Consomme un billet. L'usage unique se joue dans le `WHERE` : marquer après
- * avoir lu laisserait deux requêtes simultanées passer toutes les deux.
+ * Consomme un billet. L'usage se joue dans le `WHERE` : marquer après avoir
+ * lu laisserait deux requêtes simultanées passer toutes les deux.
+ *
+ * « Usage unique » avec deux minutes de grâce après la première ouverture :
+ * un téléphone ouvre parfois le même lien deux fois (l'aperçu, puis le
+ * clic ; un onglet rechargé), et la seconde ouverture tombait sur « ce lien
+ * a déjà servi ». Deux minutes ne changent rien pour un billet recopié plus
+ * tard : il est mort quand même.
  */
 export async function consumeVaultTicket(id: string): Promise<boolean> {
   const r = await db().query(
-    `UPDATE vault_tickets SET used_at=now() WHERE id=$1 AND used_at IS NULL AND expires_at > now()`,
+    `UPDATE vault_tickets SET used_at=COALESCE(used_at, now())
+      WHERE id=$1 AND expires_at > now() AND (used_at IS NULL OR used_at > now() - interval '2 minutes')`,
     [id],
   );
   return Boolean(r.rowCount);
