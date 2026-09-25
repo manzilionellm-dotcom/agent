@@ -182,7 +182,11 @@ async function loginRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     return page(r.raison, 401, voulue);
   }
   logger.info({ ip }, "connexion au panneau par mot de passe");
-  poserCookie(req, res, SUITES[voulue] ?? "/panel", 12 * 3600);
+  // Trente jours : un mot de passe tapé une fois, et le panneau comme l'écran
+  // s'ouvrent depuis un signet du téléphone jusqu'au mois prochain. Les liens
+  // à usage unique du bot restent à quinze minutes : ce sont eux qui
+  // circulent dans WhatsApp, pas celui-ci.
+  poserCookie(req, res, SUITES[voulue] ?? "/panel", 30 * 24 * 3600);
 }
 
 /**

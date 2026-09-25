@@ -343,7 +343,7 @@ ${coffre}
 function sectionAcces(st: PanelState): string {
   return `<h2 id="acces">Accès depuis n'importe où</h2>
 <p class="aide">${st.mdp
-    ? "Un mot de passe est défini : ouvre l'adresse du panneau depuis n'importe quel navigateur, tape-le, tu es dedans pour douze heures. Cinq erreurs bloquent l'adresse quinze minutes."
+    ? "Un mot de passe est défini : ouvre l'adresse du panneau depuis n'importe quel navigateur, tape-le, tu es dedans pour trente jours : mets /panel et /screen en signets sur ton téléphone. Cinq erreurs bloquent l'adresse quinze minutes."
     : "Aucun mot de passe : pour l'instant, on n'entre qu'avec un lien envoyé par le bot. Définis-en un pour ouvrir ce panneau comme n'importe quel site, depuis ton téléphone ou ton PC."}</p>
 <form class="ajout" method="post" autocomplete="off">
   <input type="hidden" name="op" value="motdepasse">
