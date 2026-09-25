@@ -32,7 +32,15 @@ export function modelePour(base: string, choisi?: string): string {
   if (choisi) return choisi;
   if (/groq\.com/i.test(base)) return "whisper-large-v3-turbo";
   if (/openai\.com/i.test(base)) return "gpt-4o-mini-transcribe";
+  // Mistral : Voxtral Mini Transcribe, 0,003 $ la minute, même endpoint
+  // /audio/transcriptions (docs.mistral.ai, lu le 25/09/2026).
+  if (/mistral\.ai/i.test(base)) return "voxtral-mini-latest";
   return "whisper-1";
+}
+
+/** Mistral n'accepte pas le champ `prompt` de Whisper : on ne lui envoie que le fichier et le modèle. */
+export function estMistral(base: string): boolean {
+  return /mistral\.ai/i.test(base);
 }
 
 export const LANGUES_ECOUTE: Record<string, string> = {
@@ -66,15 +74,17 @@ export async function sourceEcoute(): Promise<SourceEcoute | undefined> {
     const modele = c.TRANSCRIBE_MODEL === "whisper-large-v3" && !/groq/i.test(base) ? modelePour(base) : c.TRANSCRIBE_MODEL;
     return { nom: ".env", base, cle: c.TRANSCRIBE_API_KEY, modele };
   }
-  // 3. Une clé Groq ou OpenAI déjà là pour autre chose.
+  // 3. Une clé Groq, Mistral ou OpenAI déjà là pour autre chose. Mistral
+  //    est presque toujours là (c'est le modèle de conversation) : les
+  //    vocaux marchent donc sans rien coller de plus.
   try {
     const r = await db().query<{ id: string; label: string; base_url: string; api_key: string }>(
-      `SELECT id, label, base_url, api_key FROM providers WHERE enabled AND api_key IS NOT NULL AND (base_url ILIKE '%groq.com%' OR base_url ILIKE '%api.openai.com%' OR id IN ('voix','image'))
-       ORDER BY CASE WHEN base_url ILIKE '%groq.com%' THEN 0 ELSE 1 END, priority`,
+      `SELECT id, label, base_url, api_key FROM providers WHERE enabled AND api_key IS NOT NULL AND (base_url ILIKE '%groq.com%' OR base_url ILIKE '%mistral.ai%' OR base_url ILIKE '%api.openai.com%' OR id IN ('voix','image'))
+       ORDER BY CASE WHEN base_url ILIKE '%groq.com%' THEN 0 WHEN base_url ILIKE '%mistral.ai%' THEN 1 ELSE 2 END, priority`,
     );
     for (const x of r.rows) {
       const base = (x.base_url || OPENAI).replace(/\/+$/, "");
-      if (!/groq\.com|api\.openai\.com/i.test(base)) continue;
+      if (!/groq\.com|mistral\.ai|api\.openai\.com/i.test(base)) continue;
       try {
         return { nom: `${x.label || x.id} (réutilisée)`, base, cle: decryptSecret(x.api_key), modele: modelePour(base) };
       } catch {
@@ -99,7 +109,7 @@ const VOCABULAIRE = "Lionel, Manzi Junior, IPTV, 8K, Vinted, Blocket, WhatsApp, 
  */
 export async function transcrire(son: Buffer, mime: string, source?: SourceEcoute): Promise<Ecoute> {
   const s = source ?? (await sourceEcoute());
-  if (!s) return { ok: false, configure: false, raison: "aucune clé d'écoute : ajoute une clé Groq (gratuite) ou OpenAI au panneau, section Voix" };
+  if (!s) return { ok: false, configure: false, raison: "aucune clé d'écoute : une clé Mistral, Groq (gratuite) ou OpenAI au panneau suffit" };
   const langue = await langueEcoute();
   const debut = Date.now();
   let derniere = "";
@@ -109,7 +119,7 @@ export async function transcrire(son: Buffer, mime: string, source?: SourceEcout
     form.append("file", new Blob([new Uint8Array(son)], { type: mime.split(";")[0] || "audio/ogg" }), `vocal.${ext}`);
     form.append("model", s.modele);
     if (langue !== "auto") form.append("language", langue);
-    form.append("prompt", VOCABULAIRE);
+    if (!estMistral(s.base)) form.append("prompt", VOCABULAIRE);
     try {
       const res = await fetch(`${s.base}/audio/transcriptions`, {
         method: "POST",

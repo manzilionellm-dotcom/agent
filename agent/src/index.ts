@@ -380,20 +380,20 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           break;
         }
         case "ecoute": {
-          const four = g("fournisseur") === "openai" ? "openai" : "groq";
+          const four = g("fournisseur") === "openai" ? "openai" : g("fournisseur") === "mistral" ? "mistral" : "groq";
           const cle = (f.get("cle") ?? "").trim();
           const langue = g("langue");
           if (!(langue in LANGUES_ECOUTE)) throw new Error("langue inconnue");
           const existe = await getProvider("ecoute");
-          if (!cle && !existe) throw new Error("colle d'abord une clé Groq ou OpenAI");
+          if (!cle && !existe) throw new Error("colle d'abord une clé Groq, Mistral ou OpenAI");
           if (cle && /\s/.test(cle)) throw new Error("la clé contient un espace : recopie-la sans espace");
           if (cle || existe) {
             await putProvider({
               id: "ecoute",
               category: "autre",
-              label: four === "openai" ? "OpenAI (écoute)" : "Groq (écoute)",
+              label: four === "openai" ? "OpenAI (écoute)" : four === "mistral" ? "Mistral (écoute)" : "Groq (écoute)",
               kind: "openai_compat",
-              baseUrl: four === "openai" ? "https://api.openai.com/v1" : "https://api.groq.com/openai/v1",
+              baseUrl: four === "openai" ? "https://api.openai.com/v1" : four === "mistral" ? "https://api.mistral.ai/v1" : "https://api.groq.com/openai/v1",
               model: "",
               apiKey: cle || undefined,
               note: "transcription des vocaux WhatsApp",

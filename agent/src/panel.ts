@@ -96,7 +96,7 @@ export async function panelState(vue: VueBN = lireVue(new URLSearchParams())): P
     perso,
     voix: { ...voix, service: tous.some((x) => x.id === "voix" && x.enabled && x.has_key) },
     // Le nom de la source seulement : la clé ne quitte jamais le serveur.
-    ecoute: { source: ecoute?.nom, fournisseur: ecoute && /openai/i.test(ecoute.base) ? "openai" : "groq", langue },
+    ecoute: { source: ecoute?.nom, fournisseur: ecoute && /openai/i.test(ecoute.base) ? "openai" : ecoute && /mistral/i.test(ecoute.base) ? "mistral" : "groq", langue },
     mdp,
     navigateur: { vivant, branche: ecranBranche(), comptes },
     plus,
@@ -277,7 +277,7 @@ function sectionEcoute(st: PanelState): string {
   const e = st.ecoute;
   const etat = e.source
     ? `<p class="notice bon">Il écoute tes vocaux (clé : ${esc(e.source)}). Parle-lui normalement sur WhatsApp : il transcrit et répond.</p>`
-    : `<p class="notice warn"><b>Il n'entend pas encore tes vocaux.</b> Colle une clé ci-dessous. Groq a une offre gratuite : sur <b>console.groq.com</b> → <i>API Keys</i> → <i>Create API Key</i>, copie la clé (elle commence par <code>gsk_</code>) et colle-la ici.</p>`;
+    : `<p class="notice warn"><b>Il n'entend pas encore tes vocaux.</b> Une clé Mistral déjà présente dans Services suffit (il la réutilise tout seul). Sinon colle une clé ci-dessous : Groq a une offre gratuite : sur <b>console.groq.com</b> → <i>API Keys</i> → <i>Create API Key</i>, copie la clé (elle commence par <code>gsk_</code>) et colle-la ici.</p>`;
   const sel = (a: string, b: string): string => (a === b ? " selected" : "");
   return `<h2 id="ecoute" style="margin-top:1.8rem">Écoute de tes vocaux</h2>
 <p class="aide">Pour qu'il comprenne les messages vocaux que tu lui envoies sur WhatsApp. La clé se colle ici, jamais dans une conversation.</p>
@@ -285,7 +285,7 @@ ${etat}
 <form class="ajout" method="post" autocomplete="off">
   <input type="hidden" name="op" value="ecoute">
   <div class="grille">
-    <label>Fournisseur<select name="fournisseur"><option value="groq"${sel(e.fournisseur, "groq")}>Groq (rapide, offre gratuite)</option><option value="openai"${sel(e.fournisseur, "openai")}>OpenAI</option></select></label>
+    <label>Fournisseur<select name="fournisseur"><option value="groq"${sel(e.fournisseur, "groq")}>Groq (rapide, offre gratuite)</option><option value="mistral"${sel(e.fournisseur, "mistral")}>Mistral (Voxtral, 0,003 $/min)</option><option value="openai"${sel(e.fournisseur, "openai")}>OpenAI</option></select></label>
     <label>Clé d'API<input name="cle" type="password" placeholder="${e.source ? "(en place — laisse vide pour la garder)" : "gsk_… ou sk-…"}"></label>
     <label>Langue que tu parles<select name="langue">${Object.entries(LANGUES_ECOUTE).map(([k, t]) => `<option value="${k}"${sel(e.langue, k)}>${esc(t)}</option>`).join("")}</select></label>
   </div>
