@@ -1,4 +1,4 @@
-# Essaim — 11 sous-agents parallèles
+# Essaim — 15 sous-agents parallèles
 
 ## Lancer
 
@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 2. **Vagues parallèles** — tout ce dont les dépendances sont satisfaites part en même temps, jusqu'à `SWARM_CONCURRENCY` (10). Un rôle qui touche du code prend un conteneur dans `SANDBOX_POOL` (attend s'il n'y en a plus). Chaque sous-agent : son prompt système, sa mémoire (`/memories/agents/<rôle>`), ses outils, son budget ; il reçoit les `<result>` de ses dépendances, rien d'autre.
 3. **Fusion** — le coordinateur relit tous les résultats, tranche les contradictions, produit le livrable, la liste des actions humaines et les points ouverts. Tout est journalisé (`episodes` : `swarm` + `swarm:<rôle>`), avec durée mur et estimation séquentielle pour mesurer le gain.
 
-## Les 11 rôles
+## Les 15 rôles
 
 | Rôle | Modèle | Sandbox | Outils clés | Livrable |
 |---|---|---|---|---|
@@ -38,6 +38,10 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 | inbox | Sonnet 5 | non | gmail, gcal (dry-run) | tri, brouillons, créneaux |
 | analyst | Opus 5 | oui | sandbox (python/node), site_audit | chiffres calculés par code, méthode visible |
 | grok_bot_mirror | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | réflexe Grok Bot natif : intuition, vitesse <30s, mémoire vive du profil Lionel, anti-jobs, coordination Versel/GitHub, rapports au Premier Ministre |
+| forum_builder | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | communauté complète : DB, API, UI, modération, déploiement Vercel |
+| landing_crafter | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | landing de conversion : copy, tracking, Lighthouse > 90, preview Vercel |
+| scrape_factory | Sonnet 5 | oui | sandbox, coder, git, scrape, browser, search, alert | module de scraping réutilisable : parser, scheduler, stockage, alertes |
+| automation_smith | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | workflow self-healing : triggers, actions, retry, logs, doc |
 
 Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effort, budget, outils, prompt). Le planificateur le voit immédiatement.
 
@@ -46,6 +50,16 @@ Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effo
 Le rôle `grok_bot_mirror` est le pont entre Manzi Junior et les Grok Bots de Lionel. Il reproduit leurs réflexes : intuition (devine l'intention avant qu'on finisse de parler), vitesse (<30s sur ordres simples), mémoire vive du profil Lionel (projets IPTV flotte, casquettes, eSIM, Vinted, pépites nordiques ; règles soft-sell, 0 M3U, 0 AggregateRating inventé, WA +44 7307 410512), réflexe natif sur un seul mot ("Build" = construis, "Sucre" = résume et exécute, "Pro" = monte le niveau), auto-amélioration continue vers 80% de réflexe Grok Bot, anti-jobs (soft-sell white-hat, preuves curl), coordination Versel/GitHub/Seo Wa Landing, rapports au Premier Ministre Manzi.
 
 La mission quotidienne `grok_bots_sync` (cron 04:00) synchronise les rôles/missions du dépôt avec les Grok Bots actifs : lit la liste, vérifie la fidélité des descriptions, propose des ajouts sans toucher à l'existant, ouvre une PR vers main, rapporte dans `/memories/grok-bots/`.
+
+## Flotte de création
+
+Quatre rôles spécialisés dans la création de produits web à la demande :
+- **forum_builder** : crée des forums et communautés (schéma DB, routes API, UI Next.js, règles de modération, anti-spam, soft-sell). Livrable : repo branché + preview Vercel + README d'exploitation.
+- **landing_crafter** : crée des landings de conversion (hero, proposition de valeur, preuve sociale sourcée, CTA unique, tracking Plausible/Umami, responsive, Lighthouse > 90). Livrable : branche + preview Vercel + curl HTTP 200.
+- **scrape_factory** : fabrique des outils de scraping réutilisables (parsers modulaires, scheduler cron, stockage Postgres, alertes sur delta). Livrable : module testé + doc d'usage + preuve de run.
+- **automation_smith** : crée des workflows self-healing (triggers webhook/cron/event, actions API/git/deploy/notify, conditions, retry backoff, logs, détection d'échec → correction → relance). Livrable : workflow JSON/YAML + code + test de run + doc.
+
+Ces rôles peuvent aussi créer d'autres bots spécialisés (forums, communautés, landings, scrapers, automatisations) à la demande de Lionel, coordonnés par grok_bot_mirror.
 
 ## Ce que « diviser le temps par dix » veut dire vraiment
 
