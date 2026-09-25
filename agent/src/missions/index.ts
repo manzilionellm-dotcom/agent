@@ -12,7 +12,7 @@ import { coderTool } from "../tools/coder.js";
 import { ensureRepoTool, pushDeployTool, pullRequestTool } from "../tools/git.js";
 import { lireCodeSiteTool } from "../tools/code-site.js";
 import { indexNowTool } from "../tools/indexnow.js";
-import { GABARIT_PAGE_GEO, RECHERCHE_MOTS_CLES, ROBOTS_IA, SUIVI_CITATIONS } from "../seo-geo.js";
+import { GABARIT_PAGE_GEO, RECHERCHE_MOTS_CLES, ROBOTS_IA, SAVOIR_SEO_2026, SUIVI_CITATIONS } from "../seo-geo.js";
 import { webSearchTool, webFetchTool, scrapePageTool } from "../tools/web.js";
 import { xProfileTool } from "../tools/x.js";
 import { searchTools } from "../tools/search.js";
@@ -88,6 +88,7 @@ Mission ARTICLE SEO du jour.
    GEO (Generative Engine Optimization, pour être cité par Grok/ChatGPT/Perplexity/AI Overviews) : applique le gabarit ci-dessous à la lettre.
 ${GABARIT_PAGE_GEO}
 ${ROBOTS_IA}
+${SAVOIR_SEO_2026}
    Après publication : indexnow_submit sur l'URL de l'article.
 4b. Contrôle d'originalité et de cannibalisation : cherche (web_search/tavily_search) deux phrases distinctives de ton article entre guillemets ; si l'une existe déjà en ligne, reformule. Vérifie qu'aucune page existante du site ne cible déjà le même mot-clé principal (sinon, enrichis l'existante au lieu d'en créer une nouvelle).
 5. Délègue au codeur (delegate_coding_task) l'intégration : fichier au bon format, build (npm run build) vert, lint vert, commit.
@@ -221,6 +222,8 @@ PLAN : choisis 3 à 6 pages (ou le nombre demandé), une par intention de recher
 ${GABARIT_PAGE_GEO}
 
 ${ROBOTS_IA}
+
+${SAVOIR_SEO_2026}
 
 PRODUCTION :
 1. git_ensure_repo sur une branche seo/${now.toISOString().slice(0, 10)}. Lis README / AGENTS.md / la structure (content/, app/, public/). Si le dépôt est vide ou si la consigne demande un site neuf : un site statique sans framework lourd (HTML + une feuille de style, ou Astro si le dépôt l'utilise déjà), une page d'accueil, les pages du plan, mentions légales, contact, sitemap.xml, robots.txt, llms.txt, fichier de clé IndexNow.

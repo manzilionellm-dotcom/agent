@@ -3,7 +3,7 @@ import { dailyBudget, plafondTexte, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
 import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { approbationsActives } from "./channels/approvals.js";
-import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
+import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, REGLES_MAX, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
 import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
 import { LANGUES_ECOUTE, langueEcoute, sourceEcoute } from "./ecoute.js";
 import { MDP_MIN, motDePasseDefini } from "./login.js";
@@ -13,7 +13,7 @@ import { menuPanneau } from "./panel-sections.js";
 import { SITES } from "./browsing/sites.js";
 import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
 import { CSS_DIAG, diagState, lireVue, sectionBoiteNoire, sectionDiagnostic, type DiagState, type VueBN } from "./panel-diagnostic.js";
-import { plusState, sectionCompetences, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, type PlusState } from "./panel-plus.js";
+import { plusState, sectionCompetences, sectionCrochets, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, sectionRefus, type PlusState } from "./panel-plus.js";
 
 /**
  * Le panneau : ajouter, retirer, mettre en pause, prioriser.
@@ -239,6 +239,8 @@ function sectionPersonnalite(st: PanelState): string {
   ${carac}
   <label style="margin-top:.7rem">Tes consignes à toi <span class="det">(facultatif, ${LIBRE_MAX} caractères max — ce que tu veux qu'il sache ou fasse toujours)</span>
     <textarea name="libre" maxlength="${LIBRE_MAX}" placeholder="Ex. : Appelle-moi « patron ». Mes priorités : le site IPTV, puis DHgate. Quand tu trouves un produit, donne toujours le prix en couronnes suédoises.">${esc(p.libre)}</textarea></label>
+  <label style="margin-top:.7rem">Règles absolues <span class="det">(une par ligne, ${REGLES_MAX} caractères max — approbations et interdits en langage naturel ; elles priment sur tout, y compris sur « exécute sans demander »)</span>
+    <textarea name="regles" maxlength="${REGLES_MAX}" placeholder="Ex. :&#10;Jamais d'envoi d'e-mail sans mon OK.&#10;Jamais d'achat ni de paiement.&#10;Ne publie une annonce qu'après m'avoir montré le texte.&#10;Ne touche jamais aux mails de ma banque.">${esc(p.regles)}</textarea></label>
   <button class="principal">Enregistrer la personnalité</button>
   <details><summary>Voir exactement ce qu'il reçoit</summary><div class="apercu">${esc(blocPersonnalite(p))}</div></details>
 </form>`;
@@ -439,6 +441,10 @@ ${sectionRappels(st.plus)}
 
 ${sectionDeclencheurs(st.plus)}
 
+${sectionCrochets(st.plus)}
+
+${sectionRefus(st.plus)}
+
 ${sectionImages(st.plus)}
 
 <div id="services"></div>
@@ -504,6 +510,11 @@ ${sectionAcces(st)}
   <input type="hidden" name="op" value="budget">
   <div class="grille"><label>Plafond en $ par jour <span class="det">(0 = aucune limite)</span><input name="daily" type="number" min="0" step="0.5" value="${Number.isFinite(st.depense.plafond) ? st.depense.plafond : 0}"></label></div>
   <button class="principal">Changer le plafond</button>
+</form>
+<form class="ajout" method="post" style="margin-top:.6rem">
+  <input type="hidden" name="op" value="alerte">
+  <div class="grille"><label>Alerte en $ par jour <span class="det">(0 = jamais — un message WhatsApp au seuil ; au double, les missions passent en réflexion éco jusqu'à minuit, rien n'est arrêté)</span><input name="seuil" type="number" min="0" step="0.5" value="${st.plus.alerte}"></label></div>
+  <button class="principal">Changer l'alerte</button>
 </form>
 
 <div class="liens"><a href="/board">Tableau de bord</a><a href="/vault">Coffre</a><a href="/screen">Écran</a></div>

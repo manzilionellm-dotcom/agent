@@ -101,8 +101,20 @@ export function normalizeSite(input: string): string {
   return s;
 }
 
+/**
+ * Le nom d'un compte : « perso », « pro », « boutique »… Vide = le compte
+ * par défaut du site. Un site peut en avoir plusieurs (Gmail perso et pro,
+ * deux boutiques Vinted) ; la clé du coffre est (site, compte).
+ */
+export function normalizeCompte(input: string | undefined): string {
+  const c = (input ?? "").trim().toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+  if (c && !/^[a-z0-9_.@-]+$/.test(c)) throw new Error(`nom de compte invalide : « ${input} » (lettres, chiffres, tirets)`);
+  return c;
+}
+
 export type CredentialRow = {
   site: string;
+  compte: string;
   login: string;
   secret: string;
   totp: string | null;
@@ -115,22 +127,23 @@ export type CredentialRow = {
 };
 
 /** Ce que le modèle a le droit de voir : de quoi choisir un site, rien de plus. */
-export type PublicCredential = { site: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null };
+export type PublicCredential = { site: string; compte: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null };
 
 function publicView(r: CredentialRow): PublicCredential {
-  return { site: r.site, login: r.login, url: r.url, has_totp: Boolean(r.totp), note: r.note, uses: Number(r.uses), last_used_at: r.last_used_at };
+  return { site: r.site, compte: r.compte ?? "", login: r.login, url: r.url, has_totp: Boolean(r.totp), note: r.note, uses: Number(r.uses), last_used_at: r.last_used_at };
 }
 
-export async function putCredential(a: { site: string; login: string; secret: string; totp?: string; url?: string; note?: string }): Promise<PublicCredential> {
+export async function putCredential(a: { site: string; compte?: string; login: string; secret: string; totp?: string; url?: string; note?: string }): Promise<PublicCredential> {
   const site = normalizeSite(a.site);
+  const compte = normalizeCompte(a.compte);
   if (!a.login.trim()) throw new Error("identifiant vide");
   if (!a.secret) throw new Error("mot de passe vide");
   const totp = a.totp?.replace(/\s+/g, "").toUpperCase();
   if (totp && !/^[A-Z2-7]{16,}=*$/.test(totp)) throw new Error("clé TOTP invalide : attendu du base32 (la chaîne derrière « secret= » du QR code)");
   const r = await db().query<CredentialRow>(
-    `INSERT INTO credentials(site, login, secret, totp, url, note)
-     VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (site) DO UPDATE SET
+    `INSERT INTO credentials(site, compte, login, secret, totp, url, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (site, compte) DO UPDATE SET
        login=EXCLUDED.login, secret=EXCLUDED.secret, totp=EXCLUDED.totp,
        url=EXCLUDED.url, note=EXCLUDED.note, updated_at=now()
      RETURNING *`,
@@ -138,20 +151,40 @@ export async function putCredential(a: { site: string; login: string; secret: st
     // connexion : la réduire à « https://<hôte>/ » perdrait le chemin
     // (/login, /session/new), que beaucoup de sites n'affichent pas depuis
     // leur accueil.
-    [site, a.login.trim(), seal(a.secret), totp ? seal(totp) : null, a.url?.trim() || (a.site.includes("://") ? a.site.trim() : `https://${site}/`), a.note?.trim() ?? ""],
+    [site, compte, a.login.trim(), seal(a.secret), totp ? seal(totp) : null, a.url?.trim() || (a.site.includes("://") ? a.site.trim() : `https://${site}/`), a.note?.trim() ?? ""],
   );
   // L'événement nomme le site, jamais la valeur. Un journal qui contient un
   // mot de passe est un mot de passe public.
-  emitEvent({ kind: "vault.stored", message: `identifiant enregistré pour ${site}`, data: { site, login: a.login.trim(), totp: Boolean(totp) } });
+  emitEvent({ kind: "vault.stored", message: `identifiant enregistré pour ${site}${compte ? ` (${compte})` : ""}`, data: { site, compte, login: a.login.trim(), totp: Boolean(totp) } });
   return publicView(r.rows[0]!);
 }
 
-/** Réservé au code serveur. N'expose JAMAIS le retour de cette fonction à un modèle. */
-export async function getCredential(site: string): Promise<{ site: string; login: string; secret: string; totp?: string; url: string } | undefined> {
-  const r = await db().query<CredentialRow>(`SELECT * FROM credentials WHERE site=$1`, [normalizeSite(site)]);
-  const row = r.rows[0];
+/**
+ * Réservé au code serveur. N'expose JAMAIS le retour de cette fonction à un modèle.
+ *
+ * Sans `compte` : le compte par défaut (vide) s'il existe, sinon le seul
+ * compte du site ; s'il y en a plusieurs et aucun par défaut, on ne devine
+ * pas — se connecter au mauvais compte est pire que ne pas se connecter.
+ */
+export async function getCredential(site: string, compte?: string): Promise<{ site: string; compte: string; login: string; secret: string; totp?: string; url: string } | undefined> {
+  const s = normalizeSite(site);
+  const r = await db().query<CredentialRow>(`SELECT * FROM credentials WHERE site=$1 ORDER BY (compte = '') DESC, compte`, [s]);
+  let row: CredentialRow | undefined;
+  if (compte !== undefined && compte !== "") {
+    const c = normalizeCompte(compte);
+    row = r.rows.find((x) => x.compte === c) ?? r.rows.find((x) => x.login.toLowerCase() === c);
+  } else {
+    row = r.rows.find((x) => x.compte === "") ?? (r.rows.length === 1 ? r.rows[0] : undefined);
+    if (!row && r.rows.length > 1) throw new Error(`plusieurs comptes pour ${s} (${r.rows.map((x) => x.compte).join(", ")}) : précise lequel`);
+  }
   if (!row) return undefined;
-  return { site: row.site, login: row.login, secret: open(row.secret), totp: row.totp ? open(row.totp) : undefined, url: row.url };
+  return { site: row.site, compte: row.compte ?? "", login: row.login, secret: open(row.secret), totp: row.totp ? open(row.totp) : undefined, url: row.url };
+}
+
+/** Les comptes d'un site, par nom : de quoi choisir sans rien déchiffrer. */
+export async function comptesDuSite(site: string): Promise<Array<{ compte: string; login: string }>> {
+  const r = await db().query<{ compte: string; login: string }>(`SELECT compte, login FROM credentials WHERE site=$1 ORDER BY (compte = '') DESC, compte`, [normalizeSite(site)]);
+  return r.rows;
 }
 
 /**
@@ -177,19 +210,22 @@ export async function findCredentialSite(input: string): Promise<string | undefi
 }
 
 export async function listCredentials(): Promise<PublicCredential[]> {
-  const r = await db().query<CredentialRow>(`SELECT * FROM credentials ORDER BY site`);
+  const r = await db().query<CredentialRow>(`SELECT * FROM credentials ORDER BY site, (compte = '') DESC, compte`);
   return r.rows.map(publicView);
 }
 
-export async function forgetCredential(site: string): Promise<boolean> {
+/** Supprime un compte d'un site ; sans `compte`, tous les comptes du site. */
+export async function forgetCredential(site: string, compte?: string): Promise<boolean> {
   const s = normalizeSite(site);
-  const r = await db().query(`DELETE FROM credentials WHERE site=$1`, [s]);
-  if (r.rowCount) emitEvent({ kind: "vault.forgotten", message: `identifiant supprimé pour ${s}`, data: { site: s } });
+  const r = compte === undefined
+    ? await db().query(`DELETE FROM credentials WHERE site=$1`, [s])
+    : await db().query(`DELETE FROM credentials WHERE site=$1 AND compte=$2`, [s, normalizeCompte(compte)]);
+  if (r.rowCount) emitEvent({ kind: "vault.forgotten", message: `identifiant supprimé pour ${s}${compte ? ` (${compte})` : ""}`, data: { site: s, compte: compte ?? "" } });
   return Boolean(r.rowCount);
 }
 
-export async function touchCredential(site: string): Promise<void> {
-  await db().query(`UPDATE credentials SET uses=uses+1, last_used_at=now() WHERE site=$1`, [normalizeSite(site)]);
+export async function touchCredential(site: string, compte = ""): Promise<void> {
+  await db().query(`UPDATE credentials SET uses=uses+1, last_used_at=now() WHERE site=$1 AND compte=$2`, [normalizeSite(site), normalizeCompte(compte)]);
 }
 
 /* --- Billets d'accès ------------------------------------------------------ */

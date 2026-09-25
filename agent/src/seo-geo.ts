@@ -39,6 +39,56 @@ export const RECHERCHE_MOTS_CLES = `RECHERCHE DE MOTS-CLÉS ET DE QUESTIONS (dou
 3. Concurrents : lire_code_site sur les 3 à 5 pages qui se classent ; note leurs H2, leur JSON-LD, leurs signaux commerciaux, ce qu'ils n'expliquent pas. Le GAP = les questions posées sur X et dans les SERP que personne ne traite proprement : c'est la matière première des pages.
 4. Sortie : une liste de pages à créer (mot-clé principal, 3 à 6 questions H2, entités à nommer, données à sourcer, CTA), classée par intérêt de recherche × faiblesse de la concurrence.`;
 
+/**
+ * Ce que les praticiens du SEO viral et de la vitesse font en 2026, versé
+ * par Lionel, trié en trois familles : ce que le bot APPLIQUE, ce qu'il
+ * VÉRIFIE (les chiffres sont des ordres de grandeur rapportés, pas des
+ * constantes), et ce qu'il N'APPLIQUE PAS parce que Google l'a inscrit dans
+ * sa politique anti-spam (abus de domaine expiré, abus de réputation de
+ * site, faux signaux) : ces méthodes rapportent un trimestre et coûtent le
+ * site. Le bot les connaît pour les reconnaître chez un concurrent et pour
+ * les refuser en une ligne, pas pour les employer.
+ */
+export const SAVOIR_SEO_2026 = `SAVOIR SEO / GEO / VITESSE 2026 (à appliquer par défaut, sans qu'on le demande) :
+
+CE QUI FAIT CITER PAR LES IA ET CLASSER PAR GOOGLE
+- Intention exacte avant tout : la page répond à la question complète de l'utilisateur (collection, liste, service, comparatif…), pas à un mot-clé collé. Une page d'intention exacte bat une page longue.
+- Réponse directe dans les 200 premiers mots, sous un titre clair ; la valeur dans le premier tiers de la page. Les extracteurs lisent le début, pas l'essai. (Rapporté : plus de la moitié des citations d'AI Overview viennent du premier tiers.)
+- Couvre les sous-questions (query fan-out) : Google découpe une requête en sous-recherches ; chaque H2 en traite une. Profondeur = mieux que la concurrence sur le sujet, pas plus de mots.
+- Les citations IA viennent en majorité d'URL hors du top 10 Google : on peut être cité sans être classé, à condition d'être extractible (gabarit ci-dessus) et présent hors site.
+- Mentions de marque hors site (posts, forums, annuaires, YouTube, X) pèsent plus que les backlinks pour être cité par une IA. Chaque page publiée → 1 mention hors site prévue (post X, fil Reddit détaillé dans le bon subreddit, fiche annuaire), jamais du spam.
+- YouTube : une part majeure et croissante des citations IA. Pour un mot-clé commercial, propose un script vidéo de 3 minutes avec la même réponse directe, à publier sur la chaîne du site ; même une petite chaîne prend des requêtes commerciales.
+- Outils interactifs (calculatrice, simulateur, générateur, compteur) plutôt que du texte seul : une page-outil attire des clics hors saison et des liens. Quand le sujet s'y prête (prix, économies, dimensions, conversion), code l'outil en HTML+JS inline, résultat visible sans rechargement, et garde le texte explicatif dans le HTML.
+- Maillage interne : 3 à 4 liens sortants par page, et les pages importantes reçoivent des dizaines de liens internes avec des ancres visibles (rapporté : 40+ liens entrants internes multiplient le trafic d'une page). Aucune page orpheline : rel=next seul ne compte pas.
+- Pagination : noindex sur les pages profondes ; les hubs lient directement aux produits/pages finales.
+- Titres et méta descriptions uniques par page ; E-E-A-T : auteur nommé, expérience réelle, sources, surtout sur la santé, l'argent, le droit (YMYL).
+- Backlinks : qualité, pas quantité ; un lien d'un site pertinent vaut cent annuaires.
+- Entités et JSON-LD : Article, FAQPage, HowTo, Product/Offer, Service, BreadcrumbList — pour que la machine comprenne sans deviner.
+- Contenu rendu côté serveur : tout ce qui n'est pas dans le HTML brut est invisible pour les robots IA. Jamais de contenu JavaScript-only.
+- llms.txt : deux secondes à faire, aucun miracle à attendre.
+- Cadence : publier ou mettre à jour chaque semaine gagne des positions ; moins d'une fois par mois en perd. Mais METTRE À JOUR avant d'écrire du neuf : les pages en position 4 à 20 sont les gains les plus faciles, et 20 % des pages font 70 % du trafic — élargis les gagnantes.
+- Dates de mise à jour VRAIES : dateModified change quand le contenu change réellement, avec un vrai ajout. Une fausse fraîcheur est un faux signal et se retourne contre le site.
+- Pages « X contre Y » (comparatif honnête avec un concurrent) et pages de réponse directe : elles interceptent l'intention commerciale. Toujours signées par le site, jamais déguisées en avis tiers.
+- Programmatic SEO : seulement avec au moins 10 attributs vraiment uniques par page (données, prix, lieux, spécificités) ; les gabarits minces ont perdu la moitié de leur trafic.
+- Plusieurs petits sites sur un même sujet, angles différents : possible, mais chaque site doit avoir une identité et un contenu propres ; les impressions de la Search Console disent quelles requêtes creuser ensuite.
+- Un seul agent avec mémoire (questions des clients, ton, exemples) bat dix outils séparés : consigne /memories/seo/ (vocabulaire du marché, questions relevées, ce qui a marché) et relis-le avant d'écrire.
+- L'UI qui répond instantanément à l'intention est le vrai levier : le texte est bon marché, l'interaction ne l'est pas.
+
+VITESSE (Core Web Vitals : LCP < 2,5 s, INP < 200 ms, CLS < 0,1 ; mobile d'abord)
+- Images en WebP/AVIF, dimensions déclarées, loading="lazy" sous la ligne de flottaison, l'image LCP en priorité (fetchpriority="high", pas lazy).
+- JavaScript minimal : c'est le premier coupable. Découpe (code splitting), charge seulement ce qui est visible, defer/async sur tout script non critique.
+- SSR ou SSG pour le contenu critique ; HTML complet dès la première réponse.
+- Polices : preload de la police principale, font-display: swap, jamais de police bloquante ; polices système quand c'est possible.
+- CDN devant le site, compression Brotli (Gzip à défaut), cache long (immutable) sur les assets statiques versionnés, HTTP/2 ou HTTP/3.
+- Vérification : lire_code_site sur la page publiée, puis un contrôle des poids (HTML < 150 ko, images < 200 ko chacune, JS < 100 ko compressé) ; corriger avant de soumettre à IndexNow.
+
+À NE PAS FAIRE (politique anti-spam Google : abus de domaine expiré, abus de réputation de site, contenu à grande échelle sans valeur)
+- Racheter des domaines expirés pour les rediriger en 301 vers le site.
+- Afficher une date de mise à jour sans vrai changement.
+- Faire passer une page d'avis pour un tiers indépendant, ou un publireportage pour un article neutre.
+- Sites parasites ou « burner domains » sur des plateformes à forte autorité.
+- Signaux d'engagement simulés. Si Lionel demande l'une de ces méthodes, explique en une ligne le risque (perte du site entier) et propose l'équivalent propre : comparatif signé, page-outil, mention hors site réelle.`;
+
 export const SUIVI_CITATIONS = `SUIVI DES CITATIONS ET DE L'INDEXATION (quotidien) :
 1. Indexation : pour chaque page publiée depuis 14 jours, tavily_search avec l'URL exacte entre guillemets et serpapi_search « site:<domaine> » ; note indexée / pas encore. Une page absente après 7 jours → resoumettre via indexnow_submit et vérifier qu'elle est bien dans le sitemap et sans noindex.
 2. Citations : tavily_search (topic news, 7 jours) sur « <marque> », « <domaine> », et sur 3 questions clés du site ; x_profile sur les comptes qui reprennent le sujet ; relève toute page ou tout post qui cite le site ou reprend ses chiffres.

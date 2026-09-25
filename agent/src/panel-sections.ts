@@ -21,6 +21,8 @@ export const SECTIONS = {
   competences: { titre: "Compétences", pour: "les méthodes que tu lui as apprises" },
   rappels: { titre: "Rappels", pour: "rappels et tâches planifiées" },
   declencheurs: { titre: "E-mails", pour: "la surveillance de la boîte mail" },
+  crochets: { titre: "Crochets", pour: "les webhooks : les adresses que d'autres services appellent pour le réveiller, avec leur secret" },
+  refus: { titre: "Refus", pour: "tout ce qu'il n'a pas pu faire, avec la preuve — en rouge quand il a lâché sans preuve" },
   images: { titre: "Images", pour: "la création d'images" },
   services: { titre: "Services", pour: "les clés d'API : modèles, GitHub, Vercel, recherche — chaque carte a « Modifier » et « Tester la clé »" },
   formulaire: { titre: "Ajouter", pour: "ajouter un service ou coller une clé" },

@@ -419,6 +419,42 @@ const MIGRATIONS: string[] = [
      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
 
+  // Crochets (webhooks entrants) : une adresse par service extérieur, qui
+  // déclenche une notification ou une mission. Le secret n'est stocké que
+  // haché : la page du panneau l'affiche une fois, à la création.
+  `CREATE TABLE IF NOT EXISTS crochets (
+     id          BIGSERIAL PRIMARY KEY,
+     nom         TEXT NOT NULL UNIQUE,
+     secret_hash TEXT NOT NULL,
+     mode        TEXT NOT NULL DEFAULT 'notifier',
+     mission     TEXT NOT NULL DEFAULT '',
+     consigne    TEXT NOT NULL DEFAULT '',
+     actif       BOOLEAN NOT NULL DEFAULT true,
+     declenches  INTEGER NOT NULL DEFAULT 0,
+     dernier     TIMESTAMPTZ,
+     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+
+  // Journal des refus : chaque chose que le bot n'a pas faite, avec la
+  // preuve. Une ligne sans preuve est un échec, pas un refus.
+  `CREATE TABLE IF NOT EXISTS refus (
+     id        BIGSERIAL PRIMARY KEY,
+     ts        TIMESTAMPTZ NOT NULL DEFAULT now(),
+     trace_id  TEXT,
+     peer      TEXT NOT NULL DEFAULT '',
+     quoi      TEXT NOT NULL,
+     raison    TEXT NOT NULL DEFAULT '',
+     preuve    TEXT NOT NULL DEFAULT '',
+     source    TEXT NOT NULL DEFAULT 'bot'
+   )`,
+  `CREATE INDEX IF NOT EXISTS refus_ts ON refus (ts DESC)`,
+
+  // Plusieurs comptes par site dans le coffre (perso, pro) : la clé devient
+  // (site, compte), le compte par défaut étant la chaîne vide.
+  `ALTER TABLE credentials ADD COLUMN IF NOT EXISTS compte TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_pkey`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS credentials_site_compte ON credentials (site, compte)`,
+
   `CREATE TABLE IF NOT EXISTS reports (
      id          BIGSERIAL PRIMARY KEY,
      day         DATE NOT NULL UNIQUE,

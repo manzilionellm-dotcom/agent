@@ -1,4 +1,4 @@
-import { setting } from "./providers.js";
+import { setSetting, setting } from "./providers.js";
 
 /**
  * La personnalité de l'agent, réglée depuis le panneau.
@@ -88,6 +88,13 @@ export type Personnalite = {
   emojis: Emojis;
   langue: Langue;
   libre: string;
+  /**
+   * Règles absolues en langage naturel, une par ligne : approbations
+   * (« jamais d'envoi d'e-mail sans mon OK ») et interdits (« ne touche
+   * jamais à mon compte bancaire »). Contrairement aux consignes libres,
+   * elles PEUVENT imposer une question avant d'agir : c'est leur rôle.
+   */
+  regles: string;
 };
 
 export const PERSONNALITE_DEFAUT: Personnalite = {
@@ -98,11 +105,42 @@ export const PERSONNALITE_DEFAUT: Personnalite = {
   emojis: "rares",
   langue: "auto",
   libre: "",
+  regles: "",
 };
 
 /** Borne d'une consigne libre : au-delà, elle mange le contexte du modèle à chaque message. */
 export const LIBRE_MAX = 2_000;
+export const REGLES_MAX = 1_500;
 export const NOM_MAX = 40;
+
+/** Les règles, une par ligne, nettoyées. */
+export function listeRegles(regles: string): string[] {
+  return regles.split(/\r?\n/).map((l) => l.replace(/^\s*[-·•*]\s*/, "").trim()).filter(Boolean);
+}
+
+export async function ajouterRegle(texte: string): Promise<string[]> {
+  const p = await personnalite();
+  const regles = listeRegles(p.regles);
+  const t = texte.trim().replace(/\s+/g, " ").slice(0, 200);
+  if (t.length < 5) throw new Error("règle trop courte");
+  if (!regles.some((r) => r.toLowerCase() === t.toLowerCase())) regles.push(t);
+  const joint = regles.join("\n");
+  if (joint.length > REGLES_MAX) throw new Error(`trop de règles (${REGLES_MAX} caractères au plus) : retire-en une d'abord`);
+  await setSetting("BOT_REGLES", joint);
+  return regles;
+}
+
+export async function retirerRegle(texte: string): Promise<{ retiree?: string; restantes: string[] }> {
+  const p = await personnalite();
+  const regles = listeRegles(p.regles);
+  const cle = texte.trim().toLowerCase();
+  const n = Number(texte.trim());
+  const idx = Number.isInteger(n) && n >= 1 && n <= regles.length ? n - 1 : regles.findIndex((r) => r.toLowerCase().includes(cle));
+  if (idx < 0) return { restantes: regles };
+  const [retiree] = regles.splice(idx, 1);
+  await setSetting("BOT_REGLES", regles.join("\n"));
+  return { retiree, restantes: regles };
+}
 
 function parmi<T extends string>(v: string | undefined, table: Record<string, unknown>, defaut: T): T {
   return v && v in table ? (v as T) : defaut;
@@ -110,8 +148,8 @@ function parmi<T extends string>(v: string | undefined, table: Record<string, un
 
 export async function personnalite(): Promise<Personnalite> {
   const d = PERSONNALITE_DEFAUT;
-  const [nom, caractere, reflexion, longueur, emojis, langue, libre] = await Promise.all(
-    ["BOT_NOM", "BOT_CARACTERE", "BOT_REFLEXION", "BOT_LONGUEUR", "BOT_EMOJIS", "BOT_LANGUE", "BOT_LIBRE"].map((k) => setting(k).catch(() => undefined)),
+  const [nom, caractere, reflexion, longueur, emojis, langue, libre, regles] = await Promise.all(
+    ["BOT_NOM", "BOT_CARACTERE", "BOT_REFLEXION", "BOT_LONGUEUR", "BOT_EMOJIS", "BOT_LANGUE", "BOT_LIBRE", "BOT_REGLES"].map((k) => setting(k).catch(() => undefined)),
   );
   return {
     nom: nom?.trim().slice(0, NOM_MAX) || d.nom,
@@ -121,6 +159,7 @@ export async function personnalite(): Promise<Personnalite> {
     emojis: parmi(emojis, EMOJIS, d.emojis),
     langue: parmi(langue, LANGUES, d.langue),
     libre: (libre ?? "").slice(0, LIBRE_MAX),
+    regles: (regles ?? "").slice(0, REGLES_MAX),
   };
 }
 
@@ -144,6 +183,14 @@ export function blocPersonnalite(p: Personnalite): string {
   ];
   if (p.libre.trim()) lignes.push(`· Consignes personnelles de Lionel :\n${p.libre.trim()}`);
   lignes.push(`Aucun de ces réglages ne t'autorise à refuser un ordre, à poser une question avant d'agir, ou à demander confirmation : ils changent la façon de faire, jamais le fait de faire.`);
+  const regles = listeRegles(p.regles);
+  if (regles.length) {
+    lignes.push(
+      ``,
+      `RÈGLES ABSOLUES posées par Lionel — elles priment sur TOUT ce qui précède, y compris sur la règle d'exécution. Quand une règle exige son OK avant une action (envoyer, acheter, publier, supprimer), tu prépares tout, tu lui montres le résultat en trois lignes et tu attends son « ok » : ce n'est pas un refus, c'est la règle. Quand une règle interdit quelque chose, tu ne le fais pas, tu le dis en une ligne et tu proposes ce qui reste possible.`,
+      ...regles.map((r, i) => `${i + 1}. ${r}`),
+    );
+  }
   return lignes.join("\n");
 }
 

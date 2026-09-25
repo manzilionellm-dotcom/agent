@@ -152,7 +152,24 @@ export function optionsDeepSeek(kind: AgentRunOptions["kind"], reflexion: Reflex
   return { reasoning_effort: effort, max_tokens: effort === "low" ? 16_000 : effort === "high" ? 32_000 : 64_000 };
 }
 
+let ralenti = false;
+
+/**
+ * Frein de dépense : posé par la veille (scheduler.veillerDepense) quand la
+ * dépense du jour dépasse le double du seuil d'alerte. Tant qu'il est posé,
+ * tout passe en réflexion éco, quel que soit le réglage. Levé à minuit par
+ * la même veille.
+ */
+export function setRalenti(v: boolean): void {
+  ralenti = v;
+}
+
+export function estRalenti(): boolean {
+  return ralenti;
+}
+
 export async function reflexionReglee(): Promise<Reflexion> {
+  if (ralenti) return "eco";
   try {
     const { setting } = await import("../providers.js");
     const v = await setting("REFLEXION");

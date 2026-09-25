@@ -32,7 +32,10 @@ import { dansTrace, ouvrirBoiteNoire, viderBoiteNoire } from "./boite-noire.js";
 import { creerTicket, demarrerInspecteur, inspecter, marquerProbleme, reglerInspecteur, type Reglages } from "./inspecteur.js";
 import { livrerReponse } from "./voice.js";
 import { adresse, definirMotDePasse, envoyerCode, motDePasseDefini, pageConnexion, retirerMotDePasse, tenter, verifierCode, type EtatConnexion } from "./login.js";
-import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, personnalite } from "./personality.js";
+import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, REGLES_MAX, personnalite } from "./personality.js";
+import { adresseCrochet, basculerCrochet, creerCrochet, recevoir, regenererSecret, supprimerCrochet, traiter as traiterCrochet } from "./crochets.js";
+import { supprimerRefus } from "./refus.js";
+import { veillerDepense } from "./scheduler.js";
 import { VOIX_MODES, synthese } from "./voice.js";
 import { estCommandeEcran, ouvrirSurEcran, sitesConnectes, telecommande } from "./navigator.js";
 import { annulerRappel, demarrerRappels, heureLocale, planifier, supprimerRappel } from "./rappels.js";
@@ -352,6 +355,32 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           break;
         }
         case "declencheur_supprimer": { notice = (await supprimerDeclencheur(Number(g("did")))) ? "Déclencheur supprimé." : "Introuvable."; ton = "bon"; break; }
+        case "crochet_creer": {
+          const { crochet, secret } = await creerCrochet({ nom: g("nom"), consigne: f.get("consigne") ?? "", mode: g("mode") === "mission" ? "mission" : "notifier", mission: g("mission") });
+          // La seule fois où l'adresse complète s'affiche : copie-la dans le
+          // service appelant maintenant. Elle n'est pas stockée en clair.
+          notice = `Crochet « ${crochet.nom} » créé. Adresse à coller dans le service qui doit l'appeler (elle ne sera plus affichée) : ${adresseCrochet(crochet.nom, secret)}`;
+          ton = "bon";
+          break;
+        }
+        case "crochet_secret": {
+          const c = (await import("./crochets.js").then((m) => m.listerCrochets())).find((x) => x.id === Number(g("cid")));
+          const secret = c ? await regenererSecret(c.id) : undefined;
+          notice = c && secret ? `Nouveau secret pour « ${c.nom} » (l'ancien ne marche plus). Nouvelle adresse : ${adresseCrochet(c.nom, secret)}` : "Introuvable.";
+          ton = "bon";
+          break;
+        }
+        case "crochet_basculer": { await basculerCrochet(Number(g("cid")), g("etat") !== "off"); notice = g("etat") === "off" ? "Crochet en pause." : "Crochet réactivé."; ton = "bon"; break; }
+        case "crochet_supprimer": { notice = (await supprimerCrochet(Number(g("cid")))) ? "Crochet supprimé." : "Introuvable."; ton = "bon"; break; }
+        case "refus_supprimer": { notice = (await supprimerRefus(Number(g("rid")))) ? "Entrée retirée." : "Introuvable."; ton = "bon"; break; }
+        case "alerte": {
+          const v = Number(g("seuil"));
+          if (!Number.isFinite(v) || v < 0) throw new Error("seuil invalide");
+          await setSetting("ALERTE_JOUR", String(v));
+          notice = v === 0 ? "Alerte de dépense coupée." : `Alerte à ${v} $ par jour ; au double (${2 * v} $), les missions passent en réflexion éco.`;
+          ton = "bon";
+          break;
+        }
         case "testimage": {
           const to = primaryNumber();
           if (!to) throw new Error("aucun numéro WhatsApp autorisé à qui l'envoyer");
@@ -395,6 +424,7 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
             setSetting("BOT_EMOJIS", choix("emojis", EMOJIS)),
             setSetting("BOT_LANGUE", choix("langue", LANGUES)),
             setSetting("BOT_LIBRE", (f.get("libre") ?? "").slice(0, LIBRE_MAX)),
+            setSetting("BOT_REGLES", (f.get("regles") ?? "").slice(0, REGLES_MAX)),
           ]);
           notice = `Personnalité enregistrée. ${nom || "Il"} la prend au prochain message.`;
           ton = "bon";
@@ -636,7 +666,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     // mot de passe) : on les garde à travers la redirection, pour que la page
     // ouvre le formulaire déjà rempli sur le bon compte.
     const qp = new URLSearchParams();
-    for (const k of ["site", "login", "url"]) {
+    for (const k of ["site", "login", "url", "compte"]) {
       const v = (url.searchParams.get(k) ?? "").slice(0, 200);
       if (v) qp.set(k, v);
     }
@@ -652,6 +682,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     site: (url.searchParams.get("site") ?? "").slice(0, 200) || undefined,
     login: (url.searchParams.get("login") ?? "").slice(0, 200) || undefined,
     url: (url.searchParams.get("url") ?? "").slice(0, 200) || undefined,
+    compte: (url.searchParams.get("compte") ?? "").slice(0, 40) || undefined,
   };
 
   let notice = "";
@@ -660,7 +691,7 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
     const get = (k: string): string => (form.get(k) ?? "").trim();
     try {
       if (get("op") === "delete") {
-        notice = (await forgetCredential(get("site"))) ? `${get("site")} supprimé.` : `${get("site")} n'était pas enregistré.`;
+        notice = (await forgetCredential(get("site"), get("compte"))) ? `${get("site")}${get("compte") ? ` (${get("compte")})` : ""} supprimé.` : `${get("site")} n'était pas enregistré.`;
       } else if (get("op") === "importer") {
         // Le contenu du fichier n'est JAMAIS journalisé : il contient tous les
         // mots de passe en clair. Seul le bilan (des noms de sites) sort d'ici.
@@ -671,8 +702,8 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
           : "";
         notice = `${b.importes} site(s) ajouté(s), ${b.remplaces} mis à jour.${ign} Supprime maintenant le fichier CSV de ton appareil : il contient tous tes mots de passe en clair.`;
       } else {
-        const saved = await putCredential({ site: get("site"), login: get("login"), secret: form.get("secret") ?? "", totp: get("totp") || undefined, url: get("url") || undefined, note: get("note") });
-        notice = `${saved.site} enregistré pour ${saved.login}${saved.has_totp ? " (double authentification incluse)" : ""}.`;
+        const saved = await putCredential({ site: get("site"), compte: get("compte"), login: get("login"), secret: form.get("secret") ?? "", totp: get("totp") || undefined, url: get("url") || undefined, note: get("note") });
+        notice = `${saved.site}${saved.compte ? ` (compte ${saved.compte})` : ""} enregistré pour ${saved.login}${saved.has_totp ? " (double authentification incluse)" : ""}.`;
       }
     } catch (e) {
       notice = `Refusé : ${e instanceof Error ? e.message : String(e)}`;
@@ -688,6 +719,40 @@ async function vaultRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
 function json(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/* --- Crochets (webhooks entrants) ------------------------------------------- */
+
+/**
+ * POST /hook/<nom> — voir crochets.ts. Sa propre porte : le secret du
+ * crochet, jamais le jeton de l'API. On répond 202 tout de suite : le service
+ * appelant n'attend pas qu'un modèle réfléchisse, et beaucoup réessaient au
+ * bout de quelques secondes sans réponse.
+ */
+async function hookRoute(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const nom = decodeURIComponent(url.pathname.slice("/hook/".length)).toLowerCase();
+  if (req.method !== "POST") return json(res, 405, { error: "POST attendu" });
+  const secret = (req.headers["x-manzi-secret"] as string | undefined) ?? url.searchParams.get("s") ?? undefined;
+  const raw = await readRawBody(req);
+  const r = await recevoir(nom, secret, raw.length);
+  if (!r.ok) {
+    logger.warn({ ip: adresse(req), crochet: nom, code: r.code }, `crochet refusé : ${r.raison}`);
+    return json(res, r.code, { error: r.raison });
+  }
+  json(res, 202, { ok: true, crochet: nom, mode: r.crochet.mode });
+  const to = primaryNumber();
+  const livrer = async (texte: string) => (to ? deliverWhatsApp(to, texte) : false);
+  const lancer = async (mission: string, brief: string) => {
+    const m = await resolveMission(mission);
+    if (!m) {
+      await livrer(`🔔 ${nom} : la mission « ${mission} » n'existe plus, rien lancé.`);
+      return;
+    }
+    void launch(m, { brief }).catch((e) => logger.error({ err: String(e), crochet: nom }, "mission de crochet"));
+  };
+  void traiterCrochet(r.crochet, raw.toString("utf8"), String(req.headers["content-type"] ?? ""), livrer, lancer).catch((e) =>
+    logger.error({ err: String(e), crochet: nom }, "traitement de crochet"),
+  );
 }
 
 /* --- WhatsApp ---------------------------------------------------------------- */
@@ -771,6 +836,7 @@ const rafale = new Rafale<EntreeRafale>(
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/whatsapp/webhook") return whatsappWebhook(req, res, url);
+  if (url.pathname.startsWith("/hook/")) return hookRoute(req, res, url);
 
   // Pages publiques exigées par Google pour publier l'écran de consentement
   // OAuth. Servies ici, sur l'adresse qui porte déjà le webhook : le domaine
@@ -1001,6 +1067,13 @@ async function main(): Promise<void> {
   ).catch((e) => logger.error({ err: String(e) }, "inspecteur non démarré"));
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) { startHeartbeat(); startKeyWatch(); }
+  // Veille de dépense : toutes les dix minutes, un message au seuil, un frein au double.
+  const veille = () => {
+    const to = primaryNumber();
+    return veillerDepense(async (t) => (to ? deliverWhatsApp(to, t) : false)).catch((e) => logger.warn({ err: String(e) }, "veille de dépense"));
+  };
+  void veille();
+  setInterval(() => void veille(), 10 * 60_000).unref();
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err) => {

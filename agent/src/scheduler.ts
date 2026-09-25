@@ -126,10 +126,35 @@ export async function listSchedules(): Promise<Array<{ mission: string; cron: st
   return r.rows;
 }
 
+/** Intervalle minimal entre deux exécutions d'une routine, sauf ordre explicite. */
+export const INTERVALLE_MIN_MS = 60 * 60_000;
+
+/**
+ * L'écart le plus court entre deux exécutions consécutives, sur les dix
+ * prochaines. « Toutes les 5 minutes » réveille un modèle 288 fois par jour
+ * pour, la plupart du temps, constater que rien n'a changé : c'est la façon
+ * la plus sûre de brûler un budget. Une fois par heure suffit presque
+ * toujours ; pour ce qui doit réagir à la seconde, il y a les crochets.
+ */
+export function ecartMinimalMs(cron: string): number {
+  const job = new Cron(cron, { timezone: config().TZ });
+  const suivants = job.nextRuns(10);
+  job.stop();
+  let min = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < suivants.length; i++) min = Math.min(min, suivants[i]!.getTime() - suivants[i - 1]!.getTime());
+  return min;
+}
+
 /** Planifie (cron) ou déplanifie (null) une mission SUR ORDRE. Prend effet immédiatement. */
-export async function setSchedule(mission: string, cron: string | null, by: string): Promise<void> {
+export async function setSchedule(mission: string, cron: string | null, by: string, opts: { forcer?: boolean } = {}): Promise<void> {
   if (cron) {
     new Cron(cron, { timezone: config().TZ }); // valide l'expression, lève sinon
+    const ecart = ecartMinimalMs(cron);
+    if (ecart < INTERVALLE_MIN_MS && !opts.forcer) {
+      throw new Error(
+        `« ${cron} » lancerait ${mission} toutes les ${Math.round(ecart / 60_000)} min, soit ${Math.round((24 * 60_000 * 60) / ecart)} fois par jour : chaque passage coûte un appel de modèle même quand rien n'a changé. Une fois par heure suffit presque toujours ; si un service peut prévenir lui-même, un crochet (webhook) réagit à la seconde et ne coûte rien entre deux. Pour garder cette fréquence quand même, dis « quand même ».`,
+      );
+    }
     await db().query(
       `INSERT INTO schedules(mission, cron, created_by) VALUES ($1,$2,$3) ON CONFLICT (mission) DO UPDATE SET cron=EXCLUDED.cron, created_by=EXCLUDED.created_by, created_at=now()`,
       [mission, cron, by],
@@ -143,8 +168,85 @@ export async function setSchedule(mission: string, cron: string | null, by: stri
   }
 }
 
+/* --- Rétention des exécutions ------------------------------------------- */
+
+/** Exécutions gardées par mission, au-delà des sept derniers jours. */
+export const EXECUTIONS_GARDEES = 50;
+
+/**
+ * Une routine qui tourne chaque heure laisse 8 760 traces par an, chacune
+ * avec ses étapes. On garde tout ce qui a moins de sept jours, et les
+ * cinquante dernières exécutions de chaque mission au-delà : de quoi
+ * comparer, pas de quoi remplir le disque.
+ */
+export async function purgerExecutions(): Promise<number> {
+  const r = await db().query(
+    `WITH classees AS (
+       SELECT id, row_number() OVER (PARTITION BY titre ORDER BY debut DESC) AS rang
+         FROM traces WHERE type IN ('mission', 'rappel', 'crochet') AND debut < now() - interval '7 days'
+     ), vieilles AS (SELECT id FROM classees WHERE rang > $1),
+     e AS (DELETE FROM boite_noire WHERE trace_id IN (SELECT id FROM vieilles))
+     DELETE FROM traces WHERE id IN (SELECT id FROM vieilles)`,
+    [EXECUTIONS_GARDEES],
+  );
+  const n = r.rowCount ?? 0;
+  if (n) logger.info({ traces: n }, "vieilles exécutions purgées");
+  return n;
+}
+
+/* --- Veille de dépense --------------------------------------------------- */
+
+/** Seuil d'alerte par défaut, en dollars par jour. */
+export const ALERTE_DEFAUT_USD = 5;
+
+/** Le seuil d'alerte réglé (setting ALERTE_JOUR), 0 = jamais. */
+export async function seuilAlerte(): Promise<number> {
+  const { setting } = await import("./providers.js");
+  const v = Number((await setting("ALERTE_JOUR").catch(() => undefined))?.trim());
+  return Number.isFinite(v) && v >= 0 ? v : ALERTE_DEFAUT_USD;
+}
+
+/**
+ * Un plafond arrête ; une alerte prévient. Depuis que Lionel a levé les
+ * limites, plus rien ne disait « tu as déjà dépensé 10 $ aujourd'hui » avant
+ * la facture. Ici : un message WhatsApp la première fois que la dépense du
+ * jour passe le seuil, et au double du seuil les missions passent en
+ * réflexion éco jusqu'à minuit — elles continuent, moins cher. Rien n'est
+ * bloqué : c'est un frein, pas un mur.
+ */
+export async function veillerDepense(livrer: (texte: string) => Promise<unknown>): Promise<"rien" | "alerte" | "ralenti"> {
+  const seuil = await seuilAlerte();
+  const { setRalenti } = await import("./llm/openaiCompat.js");
+  if (!seuil) {
+    setRalenti(false);
+    return "rien";
+  }
+  const depense = await spentToday();
+  const { setting, setSetting } = await import("./providers.js");
+  const jour = new Date().toLocaleDateString("sv-SE", { timeZone: config().TZ });
+  const ralenti = depense >= 2 * seuil;
+  setRalenti(ralenti);
+  if (depense < seuil) return "rien";
+  const deja = await setting("alerte_depense_jour").catch(() => undefined);
+  if (deja === jour) return ralenti ? "ralenti" : "alerte";
+  await setSetting("alerte_depense_jour", jour);
+  const plafond = await dailyBudget();
+  await livrer(
+    [
+      `💸 ${depense.toFixed(2)} $ dépensés aujourd'hui (seuil d'alerte : ${seuil} $, plafond : ${Number.isFinite(plafond) ? `${plafond} $` : "aucun"}).`,
+      ralenti ? `Au double du seuil, les missions passent en réflexion éco jusqu'à minuit. Rien n'est arrêté.` : `Au double (${2 * seuil} $), les missions passeront en réflexion éco jusqu'à minuit.`,
+      `« qu'est-ce qui a coûté quoi ? » pour le détail · « alerte à 10 » pour changer le seuil · « alerte off » pour ne plus être prévenu.`,
+    ].join("\n"),
+  ).catch(() => undefined);
+  logger.warn({ depense, seuil, ralenti }, "alerte de dépense envoyée");
+  return ralenti ? "ralenti" : "alerte";
+}
+
 export async function startScheduler(): Promise<Cron[]> {
   const cfg = config();
+  // Ménage des vieilles exécutions au démarrage puis chaque nuit.
+  void purgerExecutions().catch((e) => logger.warn({ err: String(e) }, "purge des exécutions"));
+  setInterval(() => void purgerExecutions().catch((e) => logger.warn({ err: String(e) }, "purge des exécutions")), 24 * 60 * 60_000).unref();
   if (cfg.AUTONOMY_MODE === "scheduled") {
     // Une mission sans cron ne se lance que sur ordre (run_mission) ou par
     // un planning posé au panneau : c'est le cas des gros travaux à la

@@ -10,7 +10,9 @@ import { outilDev } from "../dev.js";
 import { lireCodeSiteTool } from "../tools/code-site.js";
 import { searchToolsAsync } from "../tools/search.js";
 import { SANS_LIMITE, codeurChoisi, dailyBudget, limiteMessagesHeure, plafondTexte, setProviderModel, setSetting } from "../providers.js";
-import { composerPrompt } from "../personality.js";
+import { ajouterRegle, composerPrompt, retirerRegle } from "../personality.js";
+import { outilCrochet } from "../crochets.js";
+import { outilRefus, verifierReponse } from "../refus.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
 import { outilsRappels } from "../rappels.js";
 import { blocCompetences, outilsCompetences } from "../competences.js";
@@ -69,6 +71,13 @@ Ordre ambigu : tu prends l'interprétation la plus littérale et tu l'appliques.
 NE JAMAIS INVENTER. Ne pas refuser et ne pas savoir sont deux choses différentes. Tu exécutes tout ordre — mais un nom de bouton, de champ, de page, de section, un chiffre, un prix, une date, un résultat que tu n'as pas VU dans un outil, tu ne l'écris pas. Tu vas le chercher avec un outil, ou tu dis « je ne sais pas, je vérifie » et tu vérifies. Un bot qui invente pour avoir l'air de savoir fait perdre plus de temps qu'un bot qui dit « je ne sais pas ». Une réponse inventée est la pire des réponses.
 
 Tu ne dis jamais « je ne peux pas » ni « je préfère ne pas ». Si quelque chose bloque vraiment — une clé refusée, un site inaccessible, un outil en panne — tu dis en une ligne CE QUI bloque, et tu essaies autrement. Un obstacle se contourne, il ne se transforme pas en refus.
+JOURNAL DES REFUS : avant d'écrire à Lionel qu'une chose n'a pas été faite (en tout ou partie), tu appelles signaler_refus avec la PREUVE brute — le texte d'erreur exact rendu par l'outil, le code HTTP, ce que la page affichait. Sans cet appel, ton « je n'ai pas pu » est compté comme un échec de ta part et s'affiche en rouge sur son panneau. Une preuve, c'est ce que tu as VU, pas ce que tu supposes.
+
+PLAN AVANT D'AGIR : pour toute demande qui prend plus de trois actions (publier une annonce, traiter une boîte mail, comparer des sites), écris d'abord le plan en deux ou trois lignes dans /work/plan.md (memory ou sandbox) — objectif, étapes, critère de fin — puis exécute-le et coche. Ce n'est pas une annonce à Lionel : lui reçoit une ligne, le plan est pour toi, et il t'empêche de couper les coins. Une tâche d'une ou deux actions se fait directement.
+
+MOINS CHER LA DEUXIÈME FOIS : quand tu refais une tâche déjà faite par le navigateur (même site, même geste), cherche d'abord si le site a une API ou un flux (RSS, JSON, export CSV) que scrape_page ou sandbox_bash peut appeler directement : un appel HTTP coûte cent fois moins qu'une session de navigateur. Si ça marche, enregistre la méthode avec apprendre_competence pour ne plus jamais repasser par l'écran.
+
+APPRENDRE SA VOIX : quand Lionel corrige un texte que tu lui as proposé (e-mail, annonce, réponse) — « mets plutôt… », « pas comme ça, dis… », ou une version réécrite —, retiens ce que la correction révèle avec remember_fact, topic 'profil:style' (« tutoie ses clients suédois », « jamais de point d'exclamation », « signe Lionel, pas Manzi »). La fois suivante, tu écris directement comme il aurait corrigé.
 
 Deux choses ne sont pas des refus, et Lionel les a posées lui-même : tu ne tapes jamais un mot de passe qui n'est pas dans le coffre, et tu ne contournes pas un captcha ou une vérification anti-robot — c'est ce qui fait bannir un compte, pas ce qui le protège. Dans ces deux cas tu ne refuses pas : tu appelles demande_connexion ou lien_panneau, et le travail continue.
 
@@ -128,6 +137,12 @@ Images : « fais-moi une image / un logo / une bannière / un visuel de… » �
 
 Surveillance de la boîte mail : « quand je reçois un mail de X / avec « facture » dans l'objet / avec une pièce jointe, fais Y » → creer_declencheur_email. Ça tourne tout seul toutes les 5 minutes et le résultat arrive sur WhatsApp.
 
+Crochets (webhooks) : « quand Stripe reçoit un paiement… », « quand quelqu'un remplit mon formulaire… », « quand GitHub ouvre une issue… », ou tout service capable d'appeler une adresse → creer_crochet, puis lien_panneau section crochets pour qu'il copie l'adresse. Un crochet réagit à la seconde et ne coûte rien entre deux appels : préfère-le à une mission planifiée toutes les X minutes. Avant de PLANIFIER une mission (schedule_mission), lance-la une fois avec run_mission sur un cas réel et attends son rapport : on ne programme pas ce qu'on n'a pas vu marcher.
+
+Règles absolues : « à partir de maintenant, jamais d'envoi de mail sans mon OK », « ne publie jamais sans me montrer », « interdit de toucher à X » → reglage{regle_ajouter}. « enlève la règle sur les mails » → reglage{regle_retirer}. Ces règles priment sur tout, et demander son OK quand une règle l'exige n'est pas un refus.
+
+Plusieurs comptes sur un site (Gmail perso et pro, deux boutiques) : vault_list les nomme (« perso », « pro ») ; browser{action:"login", site, compte} choisit. Lionel dit « avec mon compte pro » → compte:"pro". Un site à plusieurs comptes sans précision → demande lequel, en une ligne.
+
 Compétences : « à partir de maintenant, quand… fais… », « retiens cette méthode », « garde ça comme compétence » → apprendre_competence (nom court, QUAND, COMMENT). Un fait (« j'habite à… ») va dans remember_fact, une façon de faire dans une compétence.
 
 Rappels et tâches : « rappelle-moi… », « chaque matin/lundi/jour à… », « dans deux heures… » → outil planifier (rappel = message tel quel ; tache = demande que tu exécuteras à l'heure dite). Calcule l'heure depuis l'heure locale donnée en tête du message. « qu'est-ce que j'ai de prévu ? » → lister_planifications ; « annule le n°3 » → annuler_planification. Les MISSIONS, elles, restent sur schedule_mission.
@@ -169,6 +184,7 @@ function enregistrerIdentifiantTool(peer: string) {
       site: z.string().max(200).describe("Le domaine du site, ex: 8k.cms-only.ru (pas l'URL complète)"),
       identifiant: z.string().max(200).describe("Le nom d'utilisateur ou l'e-mail que l'opérateur t'a donné"),
       page_connexion: z.string().max(300).optional().describe("L'URL exacte de la page de connexion si tu la connais, ex: https://8k.cms-only.ru/login.php"),
+      compte: z.string().max(40).optional().describe("Nom du compte s'il y en a plusieurs sur ce site : « perso », « pro »"),
     }),
     run: async (i) => {
       const base = config().PUBLIC_URL;
@@ -182,6 +198,7 @@ function enregistrerIdentifiantTool(peer: string) {
       const t = await createVaultTicket(15);
       const q = new URLSearchParams({ t: t.id, site, login: i.identifiant.trim() });
       if (i.page_connexion?.trim()) q.set("url", i.page_connexion.trim());
+      if (i.compte?.trim()) q.set("compte", i.compte.trim().toLowerCase());
       const texte = [
         `🔐 Pour me connecter seul à ${site}, il me manque juste ton mot de passe.`,
         "",
@@ -359,9 +376,24 @@ function settingsTool() {
       codeur: z.enum(["deepseek", "claude", "auto"]).optional().describe("Qui écrit le code dans l'atelier et les missions : deepseek (deepseek-v4-pro par son API compatible Anthropic), claude, ou auto (DeepSeek si une clé existe, sinon Claude)."),
       service: z.string().min(1).max(60).optional().describe("Le service dont on change le modèle (DeepSeek, Mistral, Claude, voix, image, ecoute)."),
       modele: z.string().min(1).max(120).optional().describe("Le nouveau nom de modèle, tel que l'API l'attend."),
+      alerte_jour: z.number().min(0).optional().describe("Seuil d'alerte de dépense en USD par jour (« alerte à 10 ») ; 0 = jamais (« alerte off »). Au double du seuil, les missions passent en réflexion éco."),
+      regle_ajouter: z.string().min(5).max(200).optional().describe("Une règle absolue en langage naturel, telle que Lionel l'a dite : « jamais d'envoi d'e-mail sans mon OK », « ne publie jamais une annonce sans me montrer le texte », « interdit de toucher à ma banque »."),
+      regle_retirer: z.string().min(1).max(200).optional().describe("Quelques mots de la règle à retirer, ou son numéro."),
     }),
     run: async (i) => {
       const faits: string[] = [];
+      if (i.alerte_jour !== undefined) {
+        await setSetting("ALERTE_JOUR", String(i.alerte_jour));
+        faits.push(i.alerte_jour === 0 ? "alerte de dépense coupée" : `alerte à ${i.alerte_jour} $ par jour (au double, missions en réflexion éco)`);
+      }
+      if (i.regle_ajouter) {
+        const regles = await ajouterRegle(i.regle_ajouter);
+        faits.push(`règle posée : « ${i.regle_ajouter.trim()} » (${regles.length} règle${regles.length > 1 ? "s" : ""} en tout, visibles au panneau section Personnalité)`);
+      }
+      if (i.regle_retirer) {
+        const r = await retirerRegle(i.regle_retirer);
+        faits.push(r.retiree ? `règle retirée : « ${r.retiree} »` : `aucune règle ne correspond à « ${i.regle_retirer} » ; règles actuelles : ${r.restantes.map((x, n) => `${n + 1}. ${x}`).join(" ; ") || "aucune"}`);
+      }
       if (i.modele) {
         // « deepseek-flash » tout seul : le préfixe dit de quel service il s'agit.
         const service = i.service ?? i.modele.split(/[-_/:]/)[0] ?? "";
@@ -478,11 +510,19 @@ function controlTools(notify: Notify) {
   const schedule = betaZodTool({
     name: "schedule_mission",
     description:
-      "Planifie (ou déplanifie) une mission sur ordre de l'opérateur. C'est le SEUL moyen qu'une mission tourne sans ordre direct ; le planning est visible via list_schedules. cron 5 champs en heure locale (ex: '0 5 * * *' = tous les jours 5h ; '30 7 * * 1-5' = 7h30 en semaine), ou 'off' pour retirer.",
-    inputSchema: z.object({ name: z.string(), cron: z.string() }),
+      "Planifie (ou déplanifie) une mission sur ordre de l'opérateur. C'est le SEUL moyen qu'une mission tourne sans ordre direct ; le planning est visible via list_schedules. cron 5 champs en heure locale (ex: '0 5 * * *' = tous les jours 5h ; '30 7 * * 1-5' = 7h30 en semaine), ou 'off' pour retirer. Plus d'une fois par heure est refusé sauf `quand_meme:true`, que tu ne passes que si Lionel a confirmé après avoir lu le coût (« quand même », « oui je sais »). Avant de planifier, lance la mission une fois avec run_mission et attends le rapport.",
+    inputSchema: z.object({
+      name: z.string(),
+      cron: z.string(),
+      quand_meme: z.boolean().optional().describe("true seulement si Lionel confirme une fréquence inférieure à l'heure en connaissance du coût"),
+    }),
     run: async (i) => {
       if (i.name !== "report" && !(await resolveMission(i.name))) return "Error: mission inconnue";
-      await setSchedule(i.name, i.cron === "off" ? null : i.cron, "whatsapp");
+      try {
+        await setSchedule(i.name, i.cron === "off" ? null : i.cron, "whatsapp", { forcer: i.quand_meme });
+      } catch (e) {
+        return `Error: ${e instanceof Error ? e.message : String(e)}`;
+      }
       return i.cron === "off" ? `${i.name} déplanifiée` : `${i.name} planifiée : ${i.cron}`;
     },
   });
@@ -740,7 +780,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilImage(opts.channel, opts.peer), outilRetouche(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, outilDev(notify, launch), lireCodeSiteTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilCrochet(), outilRefus(opts.peer), outilImage(opts.channel, opts.peer), outilRetouche(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, outilDev(notify, launch), lireCodeSiteTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.
@@ -752,6 +792,9 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     budgetUsd: 0.5,
   });
   const reply = res.finalText || (res.stopReason === "refusal" ? "Je ne peux pas faire ça." : "Fait.");
+  // Un « je n'ai pas pu » sans entrée au journal des refus est un échec du
+  // bot : la ligne est posée d'office, sans preuve, et le panneau la montre.
+  await verifierReponse(reply, opts.peer, text).catch((e) => logger.warn({ err: String(e) }, "journal des refus"));
   await db().query(`INSERT INTO chat_messages(channel, peer, role, content) VALUES ($1,$2,'assistant',$3)`, [opts.channel, opts.peer, reply]);
   await db().query(`INSERT INTO spend(day, usd) VALUES (CURRENT_DATE, $1) ON CONFLICT (day) DO UPDATE SET usd = spend.usd + EXCLUDED.usd`, [res.usage.usd]);
   return reply;

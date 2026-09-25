@@ -5,6 +5,9 @@ import { heureLocale, listerRappels, type Rappel } from "./rappels.js";
 import { INSTRUCTIONS_MAX, listerCompetences, type Competence } from "./competences.js";
 import { decrire, listerDeclencheurs, type Declencheur } from "./declencheurs.js";
 import { googleConfigured } from "./tools/google.js";
+import { listerCrochets, type Crochet } from "./crochets.js";
+import { listerRefus, type Refus } from "./refus.js";
+import { seuilAlerte } from "./scheduler.js";
 
 /**
  * Les sections du panneau qui répondent aux fonctions de Grok : mémoire
@@ -21,13 +24,16 @@ export type PlusState = {
   rappels: Rappel[];
   competences: Competence[];
   declencheurs: Declencheur[];
+  crochets: Crochet[];
+  refus: Refus[];
+  alerte: number;
   gmail: boolean;
   image: boolean;
   tz: string;
 };
 
 export async function plusState(): Promise<PlusState> {
-  const [memoire, faits, profil, rappels, competences, declencheurs, services] = await Promise.all([
+  const [memoire, faits, profil, rappels, competences, declencheurs, services, crochets, refus, alerte] = await Promise.all([
     memoireActive().catch(() => true),
     listerFaits(150).catch(() => [] as Fait[]),
     listerProfil().catch(() => [] as FichierProfil[]),
@@ -35,6 +41,9 @@ export async function plusState(): Promise<PlusState> {
     listerCompetences().catch(() => [] as Competence[]),
     listerDeclencheurs().catch(() => [] as Declencheur[]),
     listProviders().catch(() => []),
+    listerCrochets().catch(() => [] as Crochet[]),
+    listerRefus(40).catch(() => [] as Refus[]),
+    seuilAlerte().catch(() => 5),
   ]);
   return {
     memoire,
@@ -43,6 +52,9 @@ export async function plusState(): Promise<PlusState> {
     rappels,
     competences,
     declencheurs,
+    crochets,
+    refus,
+    alerte,
     gmail: googleConfigured(),
     image: services.some((x) => x.id === "image" && x.enabled && x.has_key),
     tz: config().TZ,
@@ -167,6 +179,43 @@ ${liste}
   <label>Consigne<textarea name="consigne" maxlength="1500" required placeholder="Extrais le montant, la date d'échéance et le fournisseur. Dis-moi en une ligne si c'est urgent."></textarea></label>
   <button class="principal">Créer le déclencheur</button>
 </form>`;
+}
+
+const quand = (ts: string | null, tz: string): string => (ts ? new Date(ts).toLocaleString("fr-FR", { timeZone: tz, dateStyle: "short", timeStyle: "short" }) : "jamais");
+
+export function sectionCrochets(p: PlusState): string {
+  const liste = p.crochets.length
+    ? `<table><tr><th>Nom</th><th>Mode</th><th>Consigne</th><th class="n">Appels</th><th>Dernier</th><th></th></tr>${p.crochets
+        .map((c) => `<tr${c.actif ? "" : ' style="opacity:.55"'}><td><code>/hook/${esc(c.nom)}</code></td><td class="det">${c.mode === "mission" ? `mission ${esc(c.mission)}` : "notifier"}</td><td class="det">${esc(c.consigne.slice(0, 120))}</td><td class="n">${c.declenches}</td><td class="det">${esc(quand(c.dernier, p.tz))}</td>
+          <td>${action("crochet_secret", { cid: c.id }, "Nouveau secret", "", `Régénérer le secret de « ${c.nom} » ? L'ancienne adresse cessera de marcher.`)} ${action("crochet_basculer", { cid: c.id, etat: c.actif ? "off" : "on" }, c.actif ? "Pause" : "Reprendre")} ${action("crochet_supprimer", { cid: c.id }, "Supprimer", "danger", `Supprimer « ${c.nom} » ?`)}</td></tr>`)
+        .join("")}</table>`
+    : `<p class="vide">Aucun crochet.</p>`;
+  return `<h2 id="crochets">Crochets (webhooks entrants)</h2>
+<p class="aide">Une adresse que d'autres services appellent pour le réveiller à la seconde : Stripe, GitHub, Zapier, un formulaire de site. En mode <b>notifier</b>, il applique ta consigne au contenu reçu et t'écrit sur WhatsApp, sans aucun outil (un message piégé ne peut rien lui faire faire). En mode <b>mission</b>, il lance la mission choisie avec le contenu en consigne. L'adresse complète, avec son secret, s'affiche une seule fois à la création : colle-la dans le service appelant. Appel : <code>POST</code> sur l'adresse, corps JSON ou texte, 64 Ko max, 60 par heure.</p>
+${liste}
+<form class="ajout" method="post">
+  <input type="hidden" name="op" value="crochet_creer">
+  <div class="grille">
+    <label>Nom<input name="nom" maxlength="40" required placeholder="stripe-paiement" pattern="[A-Za-z0-9_-]{2,40}"></label>
+    <label>Mode<select name="mode"><option value="notifier">Notifier sur WhatsApp</option><option value="mission">Lancer une mission</option></select></label>
+    <label>Mission <span class="det">(mode mission seulement)</span><input name="mission" maxlength="60" placeholder="seo_daily"></label>
+  </div>
+  <label>Consigne<textarea name="consigne" maxlength="1500" placeholder="Dis-moi qui a payé, combien, et pour quel produit. Si le montant dépasse 1 000 kr, dis-le en premier."></textarea></label>
+  <button class="principal">Créer le crochet</button>
+</form>`;
+}
+
+export function sectionRefus(p: PlusState): string {
+  const sansPreuve = p.refus.filter((r) => !r.preuve.trim()).length;
+  const liste = p.refus.length
+    ? `<table><tr><th>Quand</th><th>Quoi</th><th>Raison</th><th>Preuve</th><th></th></tr>${p.refus
+        .map((r) => `<tr${r.preuve.trim() ? "" : ' class="bad"'}><td class="det">${esc(quand(r.ts, p.tz))}</td><td>${esc(r.quoi)}</td><td class="det">${esc(r.raison.slice(0, 200))}</td><td class="det">${r.preuve.trim() ? `<details><summary>voir</summary><pre style="white-space:pre-wrap;font-size:.8rem">${esc(r.preuve.slice(0, 1200))}</pre></details>` : `<b style="color:var(--bad,#c0392b)">aucune — échec du bot</b>`}${r.trace_id ? ` <a href="/panel?trace=${esc(r.trace_id)}#boitenoire">trace</a>` : ""}</td>
+          <td>${action("refus_supprimer", { rid: r.id }, "Retirer")}</td></tr>`)
+        .join("")}</table>`
+    : `<p class="vide">Aucun refus enregistré.</p>`;
+  return `<h2 id="refus">Journal des refus</h2>
+<p class="aide">Chaque chose qu'il n'a pas faite, avec la preuve (le message d'erreur exact, ce que la page affichait). Une ligne sans preuve est en rouge : il a lâché sans obstacle démontré, c'est un échec du bot, pas un refus. ${sansPreuve ? `<b>${sansPreuve} sans preuve.</b>` : "Tout est justifié."}</p>
+${liste}`;
 }
 
 export function sectionImages(p: PlusState): string {

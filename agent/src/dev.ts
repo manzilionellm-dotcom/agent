@@ -2,6 +2,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { SAVOIR_SEO_2026 } from "./seo-geo.js";
 import type { Mission } from "./missions/index.js";
 import { memoryTool, rememberFact, recallFacts, taskTool } from "./memory/store.js";
 import { bashTool, readFileTool, writeFileTool } from "./tools/sandbox.js";
@@ -69,6 +70,7 @@ export async function missionDev(d: DemandeDev): Promise<Mission> {
       `MÉTHODE :`,
       `1. Comprendre avant d'agir. Pour chaque site cité : lire_code_site (pile, services, SEO, structure, signaux commerciaux), puis site_audit sur la page d'accueil (mobile) si les scores comptent pour la demande, et scrape_page ou browser pour les pages qui se construisent en JavaScript. Note ce qu'ils font mieux que nous et ce qu'ils font moins bien, en faits observés (balises, chiffres, textes), jamais en impressions.`,
       `2. Chercher quand il manque une référence : bonnes pratiques, documentation d'un framework, règles d'une plateforme. Une affirmation technique s'appuie sur une source lue.`,
+      /seo|référencement|google|vitesse|performance|page|site|landing|blog|contenu|index/i.test(d.tache) ? `\n${SAVOIR_SEO_2026}\n` : "",
       resolu
         ? [
             `3. Coder. git_ensure_repo{repo:"${resolu}", branch:"${branche}"} (la branche est créée depuis la branche par défaut). Lis AGENTS.md / CLAUDE.md / README s'ils existent, repère où vit ce qu'il faut changer (sandbox_bash : grep, ls, cat). Puis delegate_coding_task avec un cahier des charges précis : objectif, fichiers, critères d'acceptation, commandes de test. Un changement à la fois, petit, testé. Pas de refonte non demandée. Jamais de secret dans le code.`,

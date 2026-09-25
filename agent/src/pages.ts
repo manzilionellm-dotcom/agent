@@ -168,7 +168,7 @@ et aucun humain ne les lit — à l'exception du propriétaire du compte lui-mê
  * une page qui peut réafficher un secret est une page dont la fuite le
  * révèle. Pour changer une valeur, on la ressaisit.
  */
-export function vaultPage(entries: { site: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null }[], notice = "", enabled = true, prefill: { site?: string; login?: string; url?: string } = {}): string {
+export function vaultPage(entries: { site: string; compte?: string; login: string; url: string; has_totp: boolean; note: string; uses: number; last_used_at: string | null }[], notice = "", enabled = true, prefill: { site?: string; login?: string; url?: string; compte?: string } = {}): string {
   // Quand le bot a envoyé le lien avec un site et un identifiant déjà connus,
   // on les pose dans le formulaire et on met le curseur sur le mot de passe :
   // l'opérateur n'a plus qu'à taper le mot de passe et enregistrer. Le mot de
@@ -177,9 +177,9 @@ export function vaultPage(entries: { site: string; login: string; url: string; h
   const rows = entries.length
     ? entries
         .map(
-          (e) => `<tr><td><strong>${esc(e.site)}</strong>${e.has_totp ? ' <span class="tag">2FA</span>' : ""}<br><span class="muted">${esc(e.login)}</span></td>
+          (e) => `<tr><td><strong>${esc(e.site)}</strong>${e.compte ? ` <span class="tag">${esc(e.compte)}</span>` : ""}${e.has_totp ? ' <span class="tag">2FA</span>' : ""}<br><span class="muted">${esc(e.login)}</span></td>
 <td class="muted">${e.last_used_at ? esc(new Date(e.last_used_at).toLocaleDateString("fr-FR")) : "jamais"}<br>${e.uses} usage${e.uses > 1 ? "s" : ""}</td>
-<td><form method="post" onsubmit="return confirm('Supprimer ${esc(e.site)} ?')"><input type="hidden" name="op" value="delete"><input type="hidden" name="site" value="${esc(e.site)}"><button class="danger">Supprimer</button></form></td></tr>`,
+<td><form method="post" onsubmit="return confirm('Supprimer ${esc(e.site)}${e.compte ? ` (${esc(e.compte)})` : ""} ?')"><input type="hidden" name="op" value="delete"><input type="hidden" name="site" value="${esc(e.site)}"><input type="hidden" name="compte" value="${esc(e.compte ?? "")}"><button class="danger">Supprimer</button></form></td></tr>`,
         )
         .join("")
     : `<tr><td colspan="3" class="muted">Aucun identifiant enregistré.</td></tr>`;
@@ -229,6 +229,7 @@ ${pre ? `<p class="notice">Le bot a rempli le site et l'identifiant. Tape seulem
 <input type="hidden" name="op" value="put">
 <label>Site<input name="site" placeholder="linkedin.com" required value="${esc(prefill.site ?? "")}"${prefill.site ? " readonly" : ""} ${enabled ? "" : "disabled"}></label>
 <label>Identifiant ou e-mail<input name="login" placeholder="lionel@exemple.com" required value="${esc(prefill.login ?? "")}" ${enabled ? "" : "disabled"}></label>
+<label>Nom du compte <span class="muted">(facultatif — « perso », « pro » : pour avoir plusieurs comptes sur le même site ; vide = compte par défaut)</span><input name="compte" placeholder="perso" maxlength="40" value="${esc(prefill.compte ?? "")}" ${enabled ? "" : "disabled"}></label>
 <label>Mot de passe<input name="secret" type="password" required ${pre ? "autofocus" : ""} ${enabled ? "" : "disabled"}></label>
 <label>Clé de double authentification <span class="muted">(facultatif — la chaîne sous le QR code, pas le code à 6 chiffres)</span>
 <input name="totp" placeholder="JBSWY3DPEHPK3PXP" ${enabled ? "" : "disabled"}></label>

@@ -34,7 +34,7 @@ export function makeBrowserTool(container?: string) {
     name: "browser",
     description:
       "Navigateur réel persistant (Chrome). Actions : goto{url} · text{max_chars} (contenu lisible, arbre d'accessibilité) · click{selector|text|role+name|label} · type{selector|label|placeholder, value, enter?} · press{key} · scroll{dy} · screenshot{full?} · links{max} · eval{js} · wait{selector|ms} · tabs{op:list|new|switch|close, index?, url?} · back · cookies{url} · status · " +
-      "login{site} : se connecte au site avec l'identifiant enregistré dans le coffre de l'opérateur (tu ne vois jamais le mot de passe, tu ne le demandes jamais, tu ne le tapes jamais toi-même ; utilise `vault_list` pour savoir quels sites sont disponibles) · " +
+      "login{site, compte?} : se connecte au site avec l'identifiant enregistré dans le coffre de l'opérateur (tu ne vois jamais le mot de passe, tu ne le demandes jamais, tu ne le tapes jamais toi-même ; utilise `vault_list` pour savoir quels sites et quels comptes sont disponibles — « perso », « pro » — et passe compte quand Lionel précise lequel) · " +
       "session{op:save|load} : sauvegarde ou restaure les sessions ouvertes · " +
       "form{selector?} : liste les champs d'un formulaire (nom, type, étiquette, options) — appelle-le plutôt que de deviner un sélecteur · " +
       "select{selector|label, value|name|index} : liste déroulante (type ne marche pas sur un <select>) · " +
@@ -66,6 +66,7 @@ export function makeBrowserTool(container?: string) {
       ms: z.number().int().optional(),
       timeout_ms: z.number().int().optional(),
       site: z.string().optional().describe("Site du coffre pour l'action login, ex: linkedin.com, blocket.se"),
+      compte: z.string().optional().describe("login : quel compte du site quand il y en a plusieurs (« perso », « pro », ou l'e-mail) — vault_list les liste"),
       op: z.enum(["list", "new", "switch", "close", "save", "load", "inbox", "search", "read"]).optional(),
       query: z.string().optional().describe("gmail search : requête Gmail (from:, subject:, is:unread, newer_than:2d)"),
       file: z.string().optional().describe("Chemin absolu sous /work, pour upload"),
@@ -93,8 +94,13 @@ export function makeBrowserTool(container?: string) {
         const site = await findCredentialSite(asked);
         if (!site) return `Error: aucun identifiant enregistré pour « ${asked} ». Dis à l'opérateur d'aller l'ajouter sur la page /vault de son serveur — il ne doit surtout pas te l'écrire dans la conversation.`;
         if (isDenied(`https://${site}/`)) return `Error: domaine interdit par BROWSER_DENY_DOMAINS (${site})`;
-        const cred = await getCredential(site);
-        if (!cred) return `Error: identifiant « ${site} » introuvable`;
+        let cred;
+        try {
+          cred = await getCredential(site, i.compte);
+        } catch (e) {
+          return `Error: ${e instanceof Error ? e.message : String(e)} — passe compte:"perso" ou compte:"pro" (vault_list donne les noms).`;
+        }
+        if (!cred) return `Error: identifiant « ${site} »${i.compte ? ` compte « ${i.compte} »` : ""} introuvable (vault_list donne les comptes disponibles)`;
 
         // Un code TOTP change toutes les 30 s et la connexion prend une
         // dizaine de secondes. En calculer un qui expire pendant la
@@ -114,9 +120,9 @@ export function makeBrowserTool(container?: string) {
         const out = await runBctl("login", payload, container, cfg.BROWSER_CDP_URL, true);
         if (typeof out === "string") return out;
         if (!out.ok) return `Error: ${String(out.error ?? "échec de connexion")}`;
-        if (out.signed_in) await touchCredential(site);
+        if (out.signed_in) await touchCredential(site, cred.compte);
         delete out.base64;
-        return redactSecrets(JSON.stringify({ site, compte: cred.login, ...out }, null, 1).slice(0, 8_000));
+        return redactSecrets(JSON.stringify({ site, compte: cred.compte || "défaut", identifiant: cred.login, ...out }, null, 1).slice(0, 8_000));
       }
 
       logger.info({ container, action, url: i.url, selector: i.selector, text: i.text }, "browser");
@@ -210,7 +216,7 @@ export const vaultListTool = betaZodTool({
     const rows = await listCredentials();
     if (!rows.length) return "Coffre vide. L'opérateur ajoute un site sur la page /vault de son serveur.";
     return rows
-      .map((c) => `${c.site} — compte ${c.login}${c.has_totp ? " (double authentification gérée)" : ""}${c.note ? ` — ${c.note}` : ""}${c.last_used_at ? ` — dernier usage ${c.last_used_at}` : " — jamais utilisé"}`)
+      .map((c) => `${c.site}${c.compte ? ` [compte « ${c.compte} »]` : ""} — identifiant ${c.login}${c.has_totp ? " (double authentification gérée)" : ""}${c.note ? ` — ${c.note}` : ""}${c.last_used_at ? ` — dernier usage ${c.last_used_at}` : " — jamais utilisé"}`)
       .join("\n");
   },
 });
