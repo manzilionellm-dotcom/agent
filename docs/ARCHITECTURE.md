@@ -1,6 +1,6 @@
 # Manzi Junior — Architecture
 
-Agent autonome 24/7 pour un opérateur solo : veille web + X, comparateur IPTV, contenu SEO/GEO quotidien, code → GitHub → Vercel, Gmail/agenda, audit de site, surveillance des concurrents, essaim de 15 sous-agents (dont grok_bot_mirror + flotte de création : forum_builder, landing_crafter, scrape_factory, automation_smith), couche vocale Jarvis, rapport chaque matin, synchronisation quotidienne avec les Grok Bots de Lionel.
+Agent autonome 24/7 pour un opérateur solo : veille web + X, comparateur IPTV, contenu SEO/GEO quotidien, code → GitHub → Vercel, Gmail/agenda, audit de site, surveillance des concurrents, essaim de 18 sous-agents (dont grok_bot_mirror + flotte de création : forum_builder, landing_crafter, scrape_factory, automation_smith + surveillance flotte : seo_crawl_flotte, gsc_schema_fix), couche vocale Jarvis, rapport chaque matin, synchronisation quotidienne avec les Grok Bots de Lionel.
 
 Ce document explique les choix. Le code est la référence : `agent/src/`.
 
@@ -24,7 +24,7 @@ Ce document explique les choix. Le code est la référence : `agent/src/`.
                  │       │      MCP: github, gmail, gcal, vercel (allowlist + gating)  │
                  │       │                                                             │
                  │       ├── swarm/coordinator ── plan (DAG) → vagues // → fusion       │
-                 │       │      15 rôles, mémoire par rôle, pool de sandboxes          │
+                 │       │      18 rôles, mémoire par rôle, pool de sandboxes          │
                  │       │                                                             │
                  │       └── memory/ ── Postgres : memory_files, facts, tasks,          │
                  │                       episodes, spend, reports                      │
@@ -40,9 +40,9 @@ Trois principes qui font la différence entre un démo et un système qui tient 
 2. **Tout effet de bord passe par un outil typé et audité** (`git_push_and_deploy`, `send_alert`, `remember_fact`), jamais par du bash libre quand un outil existe. C'est ce qui permet le gating (dry-run), la journalisation et le cache.
 3. **La mémoire est le produit.** Le modèle est jetable ; ce qui s'accumule dans Postgres (faits sourcés, playbooks, décisions, épisodes) est ce qui rend l'agent meilleur chaque semaine.
 
-## 7. Essaim (15 sous-agents)
+## 7. Essaim (18 sous-agents)
 
-Voir `docs/SWARM.md`. Résumé : plan structuré (DAG de sous-tâches typées par rôle) → exécution par vagues parallèles (concurrence bornée, pool de sandboxes, budget global) → fusion par le coordinateur (livrable + actions humaines + points ouverts). Rôles : researcher, scraper, competitor_watch, seo_writer, coder, qa, publisher, deployer, inbox, analyst, **grok_bot_mirror**, **forum_builder**, **landing_crafter**, **scrape_factory**, **automation_smith**.
+Voir `docs/SWARM.md`. Résumé : plan structuré (DAG de sous-tâches typées par rôle) → exécution par vagues parallèles (concurrence bornée, pool de sandboxes, budget global) → fusion par le coordinateur (livrable + actions humaines + points ouverts). Rôles : researcher, scraper, competitor_watch, seo_writer, coder, qa, publisher, deployer, inbox, analyst, **grok_bot_mirror**, **forum_builder**, **landing_crafter**, **scrape_factory**, **automation_smith**, **seo_crawl_flotte**, **gsc_schema_fix**, **self_healer**.
 
 ### Intégration Grok Bots
 
@@ -57,5 +57,11 @@ Quatre rôles spécialisés dans la création de produits web :
 - **landing_crafter** : landings de conversion (copy, tracking, Lighthouse > 90).
 - **scrape_factory** : outils de scraping réutilisables (parsers, schedulers, alertes).
 - **automation_smith** : workflows self-healing (triggers, actions, retry, logs).
+
+### Surveillance flotte
+
+Deux rôles dédiés à la santé de la flotte IPTV :
+- **seo_crawl_flotte** : crawl technique quotidien (HTTP, canonical, hreflang, schema, pages 404/minces, Lighthouse, CTA WA).
+- **gsc_schema_fix** : correction des données structurées + signalement Search Console.
 
 Pourquoi pas LangGraph : la logique (plan → DAG → fusion) tient en 250 lignes lisibles dans `swarm/coordinator.ts`, sans dépendance ni abstraction à apprendre, avec le tool runner officiel qui gère déjà la boucle d'outils, la compaction et le streaming. LangGraph apporte de la valeur pour des graphes cycliques complexes à état partagé ; ici, le graphe est un DAG planifié par le modèle, et l'ajout d'un framework coûterait plus qu'il ne rapporte. Si tu veux LangGraph malgré tout, `runSwarm()` se réécrit en un `StateGraph` de trois nœuds ; rien d'autre ne change.
