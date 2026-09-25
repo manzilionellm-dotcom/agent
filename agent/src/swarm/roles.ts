@@ -39,7 +39,9 @@ export type RoleName =
   | "forum_builder"
   | "landing_crafter"
   | "scrape_factory"
-  | "automation_smith";
+  | "automation_smith"
+  | "seo_crawl_flotte"
+  | "gsc_schema_fix";
 
 export type Role = {
   name: RoleName;
@@ -271,6 +273,30 @@ export const ROLES: Record<RoleName, Role> = {
     mcpServers: ["github"],
     system: `${BASE_RULES}\nRôle : automation_smith. Triggers webhook/cron/event, actions API/git/deploy/notify, retry backoff, logs, détection d'échec → correction → relance. Livrable : workflow + code + test de run + doc. ${ANTI}`,
     tools: (c) => [...core("automation_smith"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), alertTool],
+  },
+  seo_crawl_flotte: {
+    name: "seo_crawl_flotte",
+    description: "Crawl technique de tous les sites IPTV de la flotte : statuts HTTP, canonical, hreflang, schema, pages 404/minces, Lighthouse.",
+    model: "worker",
+    effort: "high",
+    budgetUsd: 2.5,
+    maxIterations: 60,
+    needsSandbox: true,
+    mcpServers: ["github"],
+    system: `${BASE_RULES}\nRôle : crawl SEO de la flotte IPTV. Sites cibles : testiptv24h.com, latinoiptvbox.com, iptvpremiumpolska.com, iptvnyc.us, nigeriaiptv.com, worldiptv1.com, iptv-sport.com, premiumlatinoiptv.us, iptv-toronto.ca, stableiptv.ca, iptvusastream.com, meilleuriptv.ca, iptv-france.fr, meilleuriptv.fr, iptvpremium.fr, bestiptv.fr, bestiptvapps.com, iptvpremiumdeutschland.de, testiptv24h.com/en|/es|/ar, latinoiptvbox.com/iptv-firestick-espana, iptvpremiumpolska.com/firestick, iptvnyc.us/setup/firestick, nigeriaiptv.com/firestick. Pour chaque URL : curl HTTP status, canonical, hreflang, JSON-LD (FAQPage/HowTo/Product/Offer/Organization), pages 404/minces (<300 mots), Lighthouse score, présence CTA WhatsApp +44 7307 410512. Écris le rapport dans /memories/seo-crawl/flotte-<date>.md et ouvre une issue GitHub pour chaque régression (page 404, canonical manquant, schema invalide, CTA absent). ${ANTI}`,
+    tools: (c) => [...core("seo_crawl_flotte"), ...makeSandboxTools(c).all, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool, makeGitTools(c).ensureRepo],
+  },
+  gsc_schema_fix: {
+    name: "gsc_schema_fix",
+    description: "Corrige les données structurées (FAQPage, HowTo, Product/Offer, Organization) et signale les problèmes Search Console.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 2.5,
+    maxIterations: 50,
+    needsSandbox: true,
+    mcpServers: ["github"],
+    system: `${BASE_RULES}\nRôle : fix schema + GSC. 1) Audite les JSON-LD existants sur les pages money/compare/blog (FAQPage, HowTo, Product/Offer, Organization, Article). 2) Corrige les invalides : champs manquants, types incorrects, dates non ISO, AggregateRating inventé (interdit), reviewCount inventé (interdit). 3) Ajoute les schémas manquants sur les pages P0 (firestick, faq, trial, pricing). 4) Vérifie via Google Rich Results Test (web_fetch) ou schema validator. 5) Commit sur branche fix/schema-<date>, typecheck vert. 6) Signale dans /memories/gsc/erreurs.md les erreurs GSC récurrentes (coverage, enhancements) avec plan de correction. ${ANTI}`,
+    tools: (c) => [...core("gsc_schema_fix"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
   },
 };
 
