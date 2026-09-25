@@ -28,8 +28,9 @@
 #   4. onglet « Public Hostname » → Add a public hostname :
 #        Subdomain : manzi          Domain : ton-domaine.com
 #        Type : HTTP                URL : orchestrator:8787
-#   5. copie le JETON affiché à l'étape « Install and run a connector »
-#      (la longue chaîne après `--token`, pas la commande entière)
+#   5. à l'étape « Install and run a connector », bouton Docker : copie la
+#      commande affichée (le script en extrait le jeton, la chaîne après
+#      `--token`)
 set -euo pipefail
 
 DIR="${MANZI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -53,25 +54,29 @@ Dans Cloudflare, avant de continuer :
        Subdomain : manzi     Domain : ton-domaine.com
        Type : HTTP           URL : orchestrator:8787
 
-Puis copie le JETON (la longue chaîne après --token).
+Puis, étape « Install and run a connector » → bouton Docker :
+copie la commande affichée. La coller entière ici convient.
 ────────────────────────────────────────────────────────────────
 
 EOF
 
-printf 'Colle le jeton du tunnel (rien ne s'"'"'affiche, c'"'"'est normal) : '
-IFS= read -rs JETON || true
+printf 'Colle le jeton du tunnel, ou la commande Docker entière (rien ne s'"'"'affiche, c'"'"'est normal) : '
+IFS= read -rs SAISIE || true
 printf '\n\n'
-JETON=${JETON%$'\r'}
-JETON=$(printf '%s' "$JETON" | tr -d '[:space:]')
+SAISIE=${SAISIE%$'\r'}
 
-[ -n "$JETON" ] || die "aucun jeton saisi"
+[ -n "$(printf '%s' "$SAISIE" | tr -d '[:space:]')" ] || die "aucun jeton saisi"
 
-# Une erreur de copier-coller fréquente : coller la COMMANDE entière au lieu
-# du seul jeton. Le tunnel démarrerait puis s'arrêterait, avec un message que
-# personne ne relie au collage.
+# Cloudflare affiche « docker run cloudflare/cloudflared:latest tunnel
+# --no-autoupdate run --token eyJ… ». Coller la commande entière est l'erreur
+# la plus fréquente ; plutôt que de la refuser, on en extrait le jeton.
+JETON=$(printf '%s' "$SAISIE" | sed -n 's/.*--token[[:space:]]*\([A-Za-z0-9_=.-]\{1,\}\).*/\1/p' | head -1)
+[ -n "$JETON" ] || JETON=$(printf '%s' "$SAISIE" | tr -d '[:space:]')
+unset SAISIE
+
 case "$JETON" in
-  *cloudflared*|*--token*|*docker*)
-    die "on dirait la commande entière, pas le jeton. Ne garde que la longue chaîne qui suit « --token »." ;;
+  eyJ*) ;;
+  *) die "ceci ne ressemble pas à un jeton de tunnel (il commence par « eyJ »). Dans Cloudflare : tunnel manzi → Docker → copie la commande affichée." ;;
 esac
 [ "${#JETON}" -ge 60 ] || die "jeton trop court (${#JETON} caractères) — un jeton de tunnel en fait plusieurs centaines"
 
