@@ -74,6 +74,16 @@ export async function launch(m: Mission, opts: { brief?: string } = {}) {
       return undefined;
     }
   }
+  // Même logique pour Gmail : une mission de courrier ne part pas sur un
+  // jeton révoqué.
+  if (m.name === "inbox_calendar") {
+    const { prevolGoogle } = await import("./tools/google.js");
+    const err = await prevolGoogle();
+    if (err) {
+      logger.error({ mission: m.name, err }, "mission non lancée : Google inutilisable (refais deploy/google-auth.ps1)");
+      return undefined;
+    }
+  }
   const borne = { ...m, budgetUsd: Math.min(m.budgetUsd, reste) };
   if (borne.budgetUsd < m.budgetUsd) logger.warn({ mission: m.name, budget: m.budgetUsd, reste: reste.toFixed(2) }, "budget de mission réduit au reste de la journée");
   const first = await withLock(m.name, () => runMission(borne, { brief: opts.brief }));

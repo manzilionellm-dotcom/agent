@@ -77,6 +77,23 @@ export function declarerPanne(raison: string): void {
   logger.warn({ raison }, "API Google en panne : e-mails par le navigateur pendant 10 minutes");
 }
 
+/**
+ * Pré-vol avant une mission qui vit de Gmail : le jeton se rafraîchit-il ?
+ * Sans ça, inbox_calendar est partie six fois de suite sur un jeton révoqué,
+ * a payé six fois, et rendu six fois « accès refusé ».
+ */
+export async function prevolGoogle(): Promise<string | undefined> {
+  if (!googleConfigured()) return "Google non configuré (client, secret ou jeton absent du .env)";
+  const p = panneGoogle();
+  if (p) return p;
+  try {
+    await accessToken();
+    return undefined;
+  } catch (e) {
+    return String(e).slice(0, 200);
+  }
+}
+
 export function panneGoogle(): string | undefined {
   if (panne && Date.now() < panne.jusqua) return panne.raison;
   panne = undefined;

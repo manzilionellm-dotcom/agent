@@ -4,6 +4,7 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import type { AgentRunOptions, AgentRunResult, Usage } from "../llm.js";
+import { DetecteurBoucle } from "./boucle.js";
 
 /**
  * Boucle agentique pour tout endpoint compatible OpenAI (DeepSeek, Moonshot/Kimi,
@@ -191,7 +192,7 @@ export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunRe
   ];
   let finalText = "";
   let stop: AgentRunResult["stopReason"] = "end_turn";
-  const callCounts = new Map<string, number>();
+  const boucle = new DetecteurBoucle();
 
   for (let iter = 0; iter < (opts.maxIterations ?? 60); iter++) {
     if (opts.signal?.aborted) {
@@ -238,14 +239,7 @@ export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunRe
       if (choice.finish_reason === "length") stop = "max_tokens";
       break;
     }
-    let looping = false;
-    for (const call of msg.tool_calls) {
-      if (call.type !== "function") continue;
-      const key = call.function.name + call.function.arguments;
-      const n = (callCounts.get(key) ?? 0) + 1;
-      callCounts.set(key, n);
-      if (n >= 3) looping = true;
-    }
+    const looping = boucle.ajouterTour(msg.tool_calls.filter((c) => c.type === "function").map((c) => c.function.name + c.function.arguments));
     if (looping) {
       logger.warn("boucle détectée (openai_compat) — arrêt");
       stop = "loop_detected";

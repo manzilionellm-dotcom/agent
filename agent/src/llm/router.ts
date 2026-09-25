@@ -150,6 +150,45 @@ const ZERO: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cache
 export type RoutedResult = AgentRunResult & { backend: BackendName; attempts: BackendName[] };
 
 /**
+ * Disjoncteur par cerveau. Mistral a échoué 18 fois sur 19 en une journée :
+ * chaque message le tentait d'abord, attendait son échec, puis passait à
+ * DeepSeek. Après ÉCHECS_MAX échecs d'affilée, un cerveau sort de la chaîne
+ * pour PANNE_MS, sauf s'il est le seul qui reste. Un succès le réarme.
+ */
+export const ECHECS_MAX = 3;
+export const PANNE_MS = 10 * 60_000;
+const pannes = new Map<string, { echecs: number; jusqua: number; raison: string }>();
+
+export function noterEchec(name: string, raison: string): void {
+  const p = pannes.get(name) ?? { echecs: 0, jusqua: 0, raison: "" };
+  p.echecs += 1;
+  p.raison = raison.slice(0, 160);
+  if (p.echecs >= ECHECS_MAX) {
+    p.jusqua = Date.now() + PANNE_MS;
+    logger.warn({ backend: name, echecs: p.echecs, raison: p.raison }, "cerveau écarté du routage pour 10 minutes");
+  }
+  pannes.set(name, p);
+}
+
+export function noterSucces(name: string): void {
+  pannes.delete(name);
+}
+
+export function enPanne(name: string): boolean {
+  const p = pannes.get(name);
+  return Boolean(p && p.jusqua > Date.now());
+}
+
+/** Pour le diagnostic : qui est écarté, pourquoi, jusqu'à quand. */
+export function etatCerveaux(): Array<{ name: string; echecs: number; ecarte: boolean; raison: string }> {
+  return [...pannes.entries()].map(([name, p]) => ({ name, echecs: p.echecs, ecarte: p.jusqua > Date.now(), raison: p.raison }));
+}
+
+export function reinitialiserPannes(): void {
+  pannes.clear();
+}
+
+/**
  * Exécute une tâche sur la chaîne du type demandé, en montant d'un cran à
  * chaque échec. L'usage renvoyé est CUMULÉ sur toutes les tentatives : une
  * cascade qui ne compterait que la dernière mentirait sur son coût, et c'est
@@ -163,8 +202,11 @@ export async function runRouted(
   // exécution de la suite.
   run: (o: AgentRunOptions) => Promise<AgentRunResult> = runAgent,
 ): Promise<RoutedResult> {
-  const chain = await routeAsync(kind);
-  if (!chain.length) throw new Error(`aucun modèle configuré pour « ${kind} » — renseigne au moins une clé (MISTRAL_API_KEY, OPENAI_COMPAT_API_KEY, ANTHROPIC_API_KEY)`);
+  const complete = await routeAsync(kind);
+  if (!complete.length) throw new Error(`aucun modèle configuré pour « ${kind} » — renseigne au moins une clé (MISTRAL_API_KEY, OPENAI_COMPAT_API_KEY, ANTHROPIC_API_KEY)`);
+  const valides = complete.filter((b) => !enPanne(b.name));
+  const chain = valides.length ? valides : complete;
+  if (valides.length < complete.length) logger.info({ kind, ecartes: complete.filter((b) => enPanne(b.name)).map((b) => b.name) }, "cerveaux en panne écartés");
 
   const attempts: BackendName[] = [];
   let total = ZERO;
@@ -180,12 +222,15 @@ export async function runRouted(
       recordUsage({ provider: b.name, model: b.model, kind, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, usd: r.usage.usd, ok: true });
       last = r;
       if (dernier || !shouldEscalate(r)) {
+        noterSucces(b.name);
         if (i > 0) logger.info({ kind, backend: b.name, attempts, usd: total.usd.toFixed(4) }, "cascade : repris par le cerveau suivant");
         return { ...r, usage: total, backend: b.name, attempts };
       }
+      noterEchec(b.name, `arrêt ${r.stopReason}`);
       logger.warn({ kind, backend: b.name, stop: r.stopReason, suivant: chain[i + 1]?.name }, "cascade : échec, on monte d'un cran");
     } catch (e) {
       recordUsage({ provider: b.name, model: b.model, kind, usd: 0, ok: false });
+      noterEchec(b.name, String(e));
       logger.warn({ kind, backend: b.name, err: String(e).slice(0, 200), suivant: chain[i + 1]?.name }, "cascade : exception, on monte d'un cran");
       // Le dernier de la chaîne : plus personne derrière, l'erreur remonte.
       if (dernier) throw e;

@@ -799,10 +799,27 @@ const Defaut = z.object({ titre: z.string().min(3).max(140), citation: z.string(
 
 const pourComparer = (s: string): string => s.toLowerCase().normalize("NFKC").replace(/[«»"'’`]/g, "").replace(/\s+/g, " ").trim();
 
-function extraireJson(t: string): Record<string, unknown> {
-  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+/**
+ * Le JSON d'un modèle, tel qu'il arrive vraiment : parfois entre ```json,
+ * parfois avec une virgule de trop avant un crochet, parfois précédé d'une
+ * phrase. On nettoie avant d'abandonner : un diagnostic perdu pour une
+ * virgule, c'est une santé à 0/100 pour rien.
+ */
+export function extraireJson(t: string): Record<string, unknown> {
+  const sans = t.replace(/```(?:json)?/gi, "");
+  const a = sans.indexOf("{"), b = sans.lastIndexOf("}");
   if (a < 0 || b <= a) throw new Error("réponse sans JSON");
-  return JSON.parse(t.slice(a, b + 1)) as Record<string, unknown>;
+  const brut = sans.slice(a, b + 1);
+  try {
+    return JSON.parse(brut) as Record<string, unknown>;
+  } catch {
+    const repare = brut.replace(/,\s*([}\]])/g, "$1").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
+    try {
+      return JSON.parse(repare) as Record<string, unknown>;
+    } catch (e) {
+      throw new Error(`JSON illisible (${String(e).slice(0, 80)}) : ${brut.slice(0, 120)}`);
+    }
+  }
 }
 
 async function transcription(maxCar = 18_000): Promise<string> {
@@ -846,9 +863,19 @@ export async function analyser(inspectionId: number, constats: Constat[], execut
   const episode = await openEpisode("inspecteur", { model: "worker" });
   let usd = 0;
   try {
-    const r = await executeur(SYSTEME_ANALYSE, tache);
+    let r = await executeur(SYSTEME_ANALYSE, tache);
     usd = r.usd;
-    const j = extraireJson(r.texte);
+    let j: Record<string, unknown>;
+    try {
+      j = extraireJson(r.texte);
+    } catch (e) {
+      // Une seule reprise, avec la consigne redite : un modèle qui a bavardé
+      // autour du JSON le rend propre au second essai neuf fois sur dix.
+      logger.warn({ err: String(e).slice(0, 160) }, "analyse : JSON illisible, seconde tentative");
+      r = await executeur(`${SYSTEME_ANALYSE}\n\nRAPPEL : réponds UNIQUEMENT par l'objet JSON, sans texte avant ni après, sans balises de code.`, tache);
+      usd += r.usd;
+      j = extraireJson(r.texte);
+    }
     const connues = new Set(tri.map((c) => c.signature));
     let ecartes = 0;
     for (const brut of Array.isArray(j.diagnostics) ? j.diagnostics : []) {

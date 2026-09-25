@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "./config.js";
 import { claudeActifSync } from "./providers.js";
+import { DetecteurBoucle } from "./llm/boucle.js";
 import { logger } from "./logger.js";
 import { enregistrer, instrumenter } from "./boite-noire.js";
 
@@ -211,24 +212,17 @@ async function runAgentBrut(opts: AgentRunOptions): Promise<AgentRunResult> {
 
   let last: Anthropic.Beta.Messages.BetaMessage | undefined;
   let stop: AgentRunResult["stopReason"] = "end_turn";
-  const callCounts = new Map<string, number>();
+  const boucle = new DetecteurBoucle();
 
   try {
     for await (const stream of runner) {
       const message = await stream.finalMessage();
       last = message;
-      // Détection de boucle : le même appel d'outil (nom + arguments) 3 fois → on arrête.
-      let looping = false;
-      for (const b of message.content) {
-        if (b.type === "tool_use") {
-          const key = b.name + JSON.stringify(b.input);
-          const n = (callCounts.get(key) ?? 0) + 1;
-          callCounts.set(key, n);
-          if (n >= 3) looping = true;
-        }
-      }
+      // Détection de boucle : le même appel d'outil (nom + arguments) trois
+      // fois d'affilée, ou six fois en tout → on arrête (voir llm/boucle.ts).
+      const looping = boucle.ajouterTour(message.content.filter((b) => b.type === "tool_use").map((b) => b.name + JSON.stringify(b.input)));
       if (looping) {
-        logger.warn("boucle détectée : même appel d'outil répété 3 fois — arrêt");
+        logger.warn("boucle détectée : même appel d'outil répété — arrêt");
         stop = "loop_detected";
         break;
       }
