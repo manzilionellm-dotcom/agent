@@ -1,4 +1,4 @@
-# Essaim — 15 sous-agents parallèles
+# Essaim — 19 sous-agents parallèles
 
 ## Lancer
 
@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 2. **Vagues parallèles** — tout ce dont les dépendances sont satisfaites part en même temps, jusqu'à `SWARM_CONCURRENCY` (10). Un rôle qui touche du code prend un conteneur dans `SANDBOX_POOL` (attend s'il n'y en a plus). Chaque sous-agent : son prompt système, sa mémoire (`/memories/agents/<rôle>`), ses outils, son budget ; il reçoit les `<result>` de ses dépendances, rien d'autre.
 3. **Fusion** — le coordinateur relit tous les résultats, tranche les contradictions, produit le livrable, la liste des actions humaines et les points ouverts. Tout est journalisé (`episodes` : `swarm` + `swarm:<rôle>`), avec durée mur et estimation séquentielle pour mesurer le gain.
 
-## Les 15 rôles
+## Les 19 rôles
 
 | Rôle | Modèle | Sandbox | Outils clés | Livrable |
 |---|---|---|---|---|
@@ -38,10 +38,14 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 | inbox | Sonnet 5 | non | gmail, gcal (dry-run) | tri, brouillons, créneaux |
 | analyst | Opus 5 | oui | sandbox (python/node), site_audit | chiffres calculés par code, méthode visible |
 | grok_bot_mirror | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | réflexe Grok Bot natif : intuition, vitesse <30s, mémoire vive du profil Lionel, anti-jobs, coordination Versel/GitHub, rapports au Premier Ministre |
+| fleet_builder | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | coordination de la flotte de création (forum_builder, landing_crafter, scrape_factory, automation_smith) |
+| self_healer | Opus 5 (critical) | oui | sandbox, coder, git, audit, alert | auto-réparation : détecte, diagnostique, corrige, relance |
 | forum_builder | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | communauté complète : DB, API, UI, modération, déploiement Vercel |
 | landing_crafter | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | landing de conversion : copy, tracking, Lighthouse > 90, preview Vercel |
 | scrape_factory | Sonnet 5 | oui | sandbox, coder, git, scrape, browser, search, alert | module de scraping réutilisable : parser, scheduler, stockage, alertes |
 | automation_smith | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | workflow self-healing : triggers, actions, retry, logs, doc |
+| seo_crawl_flotte | Sonnet 5 | oui | sandbox, audit, browser, search, alert, git | crawl technique de tous les sites IPTV : HTTP, canonical, hreflang, schema, 404, Lighthouse, issues GitHub par régression |
+| gsc_schema_fix | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | JSON-LD corrigés (FAQPage/HowTo/Product/Offer/Organization), erreurs GSC signalées, commit sur branche fix/schema |
 
 Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effort, budget, outils, prompt). Le planificateur le voit immédiatement.
 
@@ -53,13 +57,19 @@ La mission quotidienne `grok_bots_sync` (cron 04:00) synchronise les rôles/miss
 
 ## Flotte de création
 
-Quatre rôles spécialisés dans la création de produits web à la demande :
+Quatre rôles spécialisés dans la création de produits web à la demande, coordonnés par `fleet_builder` :
 - **forum_builder** : crée des forums et communautés (schéma DB, routes API, UI Next.js, règles de modération, anti-spam, soft-sell). Livrable : repo branché + preview Vercel + README d'exploitation.
 - **landing_crafter** : crée des landings de conversion (hero, proposition de valeur, preuve sociale sourcée, CTA unique, tracking Plausible/Umami, responsive, Lighthouse > 90). Livrable : branche + preview Vercel + curl HTTP 200.
 - **scrape_factory** : fabrique des outils de scraping réutilisables (parsers modulaires, scheduler cron, stockage Postgres, alertes sur delta). Livrable : module testé + doc d'usage + preuve de run.
 - **automation_smith** : crée des workflows self-healing (triggers webhook/cron/event, actions API/git/deploy/notify, conditions, retry backoff, logs, détection d'échec → correction → relance). Livrable : workflow JSON/YAML + code + test de run + doc.
 
 Ces rôles peuvent aussi créer d'autres bots spécialisés (forums, communautés, landings, scrapers, automatisations) à la demande de Lionel, coordonnés par grok_bot_mirror.
+
+## Rôles de santé de flotte
+
+Deux rôles dédiés à la santé SEO de la flotte IPTV :
+- **seo_crawl_flotte** : crawl technique de tous les sites IPTV (testiptv24h.com, latinoiptvbox.com, iptvpremiumpolska.com, iptvnyc.us, nigeriaiptv.com, worldiptv1.com, iptv-sport.com, premiumlatinoiptv.us, iptv-toronto.ca, stableiptv.ca, iptvusastream.com, meilleuriptv.ca, iptv-france.fr, meilleuriptv.fr, iptvpremium.fr, bestiptv.fr, bestiptvapps.com, iptvpremiumdeutschland.de + variantes géo). Vérifie HTTP 200, canonical, hreflang, JSON-LD, pages 404/minces, Lighthouse, présence CTA WhatsApp +44 7307 410512. Ouvre une issue GitHub par régression. Mission cron `fleet_health` (01:00).
+- **gsc_schema_fix** : corrige les données structurées (FAQPage, HowTo, Product/Offer, Organization, Article) sur les pages money/compare/blog, ajoute les schémas manquants sur les pages P0, signale les erreurs GSC récurrentes. Commit sur branche `fix/schema-<date>`.
 
 ## Ce que « diviser le temps par dix » veut dire vraiment
 
