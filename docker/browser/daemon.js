@@ -259,7 +259,31 @@ async function followPopup(fn) {
   return false;
 }
 
+/**
+ * Cherche une clé d'API affichée dans la page (texte, champs, iframes).
+ *
+ * Appelée UNIQUEMENT par le code de l'orchestrateur (outil
+ * enregistrer_cle_affichee), jamais par un modèle : le résultat contient la
+ * clé en clair, et il va directement dans la base, chiffré. Le motif est
+ * imposé par l'orchestrateur, qui vérifie aussi le domaine de la page.
+ */
+async function chercherCles(a) {
+  const re = new RegExp(a.motif, "g");
+  const trouvees = new Set();
+  for (const f of page.frames()) {
+    const textes = await f.evaluate(() => {
+      const t = [document.body ? document.body.innerText : ""];
+      for (const el of document.querySelectorAll("input, textarea")) t.push(el.value || "");
+      for (const el of document.querySelectorAll("[value], [data-value], code, pre")) t.push(el.getAttribute("value") || el.getAttribute("data-value") || el.textContent || "");
+      return t;
+    }).catch(() => []);
+    for (const t of textes) for (const m of String(t).matchAll(re)) trouvees.add(m[0]);
+  }
+  return { url: page.url(), cles: [...trouvees] };
+}
+
 const handlers = {
+  async cles(a) { return chercherCles(a); },
   async goto(a) { const r = await page.goto(a.url, { waitUntil: a.wait || "domcontentloaded", timeout: 45_000 }); await page.waitForTimeout(a.settle_ms ?? 800); return { status: r ? r.status() : null, url: page.url(), title: await page.title(), text: await text(a.max_chars ?? 6_000) }; },
   async text(a) { return { url: page.url(), title: await page.title(), text: await text(a.max_chars) }; },
   async html(a) { const h = await (a.selector ? page.locator(a.selector).first().innerHTML() : page.content()); return { html: h.slice(0, a.max_chars || 20_000) }; },

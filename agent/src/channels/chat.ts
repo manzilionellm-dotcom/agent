@@ -12,6 +12,7 @@ import { searchToolsAsync } from "../tools/search.js";
 import { SANS_LIMITE, codeurChoisi, dailyBudget, limiteMessagesHeure, plafondTexte, setProviderModel, setSetting, setting } from "../providers.js";
 import { ajouterRegle, composerPrompt, retirerRegle } from "../personality.js";
 import { outilCrochet } from "../crochets.js";
+import { outilCle } from "../tools/cles.js";
 import { outilRefus, verifierReponse } from "../refus.js";
 import { memoireActive, oublierTool } from "../souvenirs.js";
 import { outilsRappels } from "../rappels.js";
@@ -139,7 +140,7 @@ Surveillance de la boîte mail : « quand je reçois un mail de X / avec « fact
 
 Crochets (webhooks) : « quand Stripe reçoit un paiement… », « quand quelqu'un remplit mon formulaire… », « quand GitHub ouvre une issue… », ou tout service capable d'appeler une adresse → creer_crochet, puis lien_panneau section crochets pour qu'il copie l'adresse. Un crochet réagit à la seconde et ne coûte rien entre deux appels : préfère-le à une mission planifiée toutes les X minutes. Avant de PLANIFIER une mission (schedule_mission), lance-la une fois avec run_mission sur un cas réel et attends son rapport : on ne programme pas ce qu'on n'a pas vu marcher.
 
-Modèles : tu choisis déjà le modèle selon le type de travail (code, raisonnement, écriture, traduction, analyse), gratuits d'abord, et tu passes au suivant si l'un échoue ; la ligne « 🧠 … » sous tes réponses le dit. « utilise les modèles gratuits » → reglage{gratuit:"dabord"} ; « uniquement les gratuits » → reglage{gratuit:"seulement"} ; « arrête de dire le modèle » → reglage{expliquer_modele:"off"}. « ajoute Gemini / OpenRouter gratuit » → lien_panneau section formulaire : la clé se colle au panneau, jamais ici.
+Modèles : tu choisis déjà le modèle selon le type de travail (code, raisonnement, écriture, traduction, analyse), gratuits d'abord, et tu passes au suivant si l'un échoue ; la ligne « 🧠 … » sous tes réponses le dit. « utilise les modèles gratuits » → reglage{gratuit:"dabord"} ; « uniquement les gratuits » → reglage{gratuit:"seulement"} ; « arrête de dire le modèle » → reglage{expliquer_modele:"off"}. « va créer ta clé Gemini / OpenRouter / Groq / DeepSeek », « crée tes applis » → fais-le TOI-MÊME dans le navigateur (le compte Google de Lionel y est connecté) en suivant les étapes de enregistrer_cle_affichee, puis appelle cet outil : il lit et range la clé sans que tu la voies. Tu ne lis jamais une clé, tu ne la recopies jamais, tu ne la tapes jamais, et tu ne la demandes jamais à Lionel. Captcha ou code SMS : demande_connexion.
 
 Règles absolues : « à partir de maintenant, jamais d'envoi de mail sans mon OK », « ne publie jamais sans me montrer », « interdit de toucher à X » → reglage{regle_ajouter}. « enlève la règle sur les mails » → reglage{regle_retirer}. Ces règles priment sur tout, et demander son OK quand une règle l'exige n'est pas un refus.
 
@@ -802,7 +803,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     // Le navigateur était réservé aux missions : demander « ouvre Gmail » dans
     // la conversation obtenait « je n'ai pas accès à ton navigateur », ce qui
     // était vrai de la conversation et faux du système. Il est ici aussi.
-    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilCrochet(), outilRefus(opts.peer), outilImage(opts.channel, opts.peer), outilRetouche(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, outilDev(notify, launch), lireCodeSiteTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
+    tools: [memoryTool, ...(memoire ? [rememberFact] : []), recallFacts, oublierTool, taskTool, episodesTool, feedbackTool, ...controlTools(notify), screenshotTool(opts.channel, opts.peer), enregistrerIdentifiantTool(opts.peer), loginRequestTool(opts.peer), panelLinkTool(opts.peer), settingsTool(), fichiersRecusTool, ...outilsRappels(opts.peer), ...outilsCompetences, ...outilsDeclencheurs, outilCrochet(), outilRefus(opts.peer), outilCle(), outilImage(opts.channel, opts.peer), outilRetouche(opts.channel, opts.peer), outilDiagnostic, outilRecherche(notify), dernieresRecherchesTool, outilDev(notify, launch), lireCodeSiteTool, ...(await searchToolsAsync()), scrapePageTool, browserTool, vaultListTool, ...marketTools, ...googleTools()],
     effort: "low",
     // Un appel navigateur = une action : ouvrir une page, lire, cliquer, relire.
     // Huit tours suffisaient à une conversation, pas à une navigation.

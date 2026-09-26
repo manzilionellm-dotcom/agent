@@ -3,6 +3,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { masquerCles } from "./masque-cles.js";
 import { sandboxExec, shellQuote } from "./sandbox.js";
 import { untrusted, redactSecrets } from "../safety.js";
 import { findCredentialSite, getCredential, listCredentials, touchCredential, totpCode, totpRemaining, vaultEnabled } from "../vault.js";
@@ -135,7 +136,7 @@ export function makeBrowserTool(container?: string) {
       try {
         out = JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}");
       } catch {
-        return `Error: réponse navigateur illisible\n${r.stdout.slice(-1500)}\n${r.stderr.slice(-800)}`;
+        return masquerCles(`Error: réponse navigateur illisible\n${r.stdout.slice(-1500)}\n${r.stderr.slice(-800)}`);
       }
       if (!out.ok) return `Error: ${out.error ?? "échec"}`;
       if (action === "screenshot" && out.file) {
@@ -162,7 +163,9 @@ export function makeBrowserTool(container?: string) {
         return voit && img ? [{ type: "text", text: suite }, img] : `${suite} (tu ne peux pas la regarder toi-même avec ce modèle ; pour LIRE la page, utilise text ou links)`;
       }
       delete out.base64;
-      const body = JSON.stringify(out, null, 1).slice(0, 30_000);
+      // Une clé d'API affichée dans la page (création de clé, tableau de
+      // bord) ne doit jamais entrer dans le contexte du modèle.
+      const body = masquerCles(JSON.stringify(out, null, 1)).slice(0, 30_000);
       return ["goto", "text", "html", "click", "links", "eval"].includes(action) ? untrusted(String(out.url ?? i.url ?? "navigateur"), body) : body;
     },
   });

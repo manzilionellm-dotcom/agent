@@ -3,6 +3,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { config } from "../config.js";
 import { sandboxExec, formatExec, shellQuote } from "./sandbox.js";
+import { masquerCles } from "./masque-cles.js";
 import { untrusted } from "../safety.js";
 
 /**
@@ -56,7 +57,7 @@ const { chromium } = require('playwright');
 })().catch(e => { console.error(String(e)); process.exit(2); });
 `;
     const r = await sandboxExec(`cd ${config().SANDBOX_WORKDIR} && node -e ${shellQuote(script)}`, { timeoutMs: 90_000, container });
-    return r.code === 0 ? untrusted(i.url, r.stdout || "(page vide)") : formatExec(r);
+    return r.code === 0 ? untrusted(i.url, masquerCles(r.stdout) || "(page vide)") : formatExec(r);
   },
   });
 }
