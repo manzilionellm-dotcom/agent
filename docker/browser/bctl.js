@@ -3,6 +3,9 @@
  * Client du démon navigateur : `bctl <action> '<json args>'`.
  * Démarre le démon s'il ne tourne pas (détaché), attend qu'il réponde, envoie la commande,
  * imprime la réponse JSON sur stdout. Utilisé par l'outil `browser` de l'orchestrateur.
+ *
+ * Les variables BROWSER_* (CDP_URL, STEALTH, LOCALE, TIMEZONE…) doivent être dans
+ * process.env au démarrage du démon (passées par docker exec -e depuis browser.ts).
  */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
