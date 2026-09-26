@@ -134,11 +134,15 @@ Pourquoi ne pas exposer les 80 outils du serveur GitHub : chaque schéma d'outil
 
 Niveau supérieur si tu héberges du code tiers non fiable : gVisor (`runsc`) ou Firecracker. Pour ton propre dépôt, l'isolation Docker durcie suffit.
 
-## 7. Essaim (10 sous-agents)
+## 7. Essaim (19 sous-agents)
 
 Voir `docs/SWARM.md`. Résumé : plan structuré (DAG de sous-tâches typées par rôle) → exécution par vagues parallèles (concurrence bornée, pool de sandboxes, budget global) → fusion par le coordinateur (livrable + actions humaines + points ouverts). Rôles : researcher, scraper, competitor_watch, seo_writer, coder, qa, publisher, deployer, inbox, analyst.
 
 Pourquoi pas LangGraph : la logique (plan → DAG → fusion) tient en 250 lignes lisibles dans `swarm/coordinator.ts`, sans dépendance ni abstraction à apprendre, avec le tool runner officiel qui gère déjà la boucle d'outils, la compaction et le streaming. LangGraph apporte de la valeur pour des graphes cycliques complexes à état partagé ; ici, le graphe est un DAG planifié par le modèle, et l'ajout d'un framework coûterait plus qu'il ne rapporte. Si tu veux LangGraph malgré tout, `runSwarm()` se réécrit en un `StateGraph` de trois nœuds ; rien d'autre ne change.
+
+### Intégration Grok Bots et flotte de création
+
+Neuf rôles s'ajoutent aux dix d'origine : `grok_bot_mirror` (réflexes des Grok Bots de Lionel), `fleet_builder` qui coordonne `forum_builder`, `landing_crafter`, `scrape_factory` et `automation_smith`, `self_healer`, et pour la flotte IPTV `seo_crawl_flotte` et `gsc_schema_fix`. La mission `grok_bots_sync`, sur demande, propose des ajouts de rôles par pull request. Détail et règles : `docs/SWARM.md`.
 
 ## 8. Couche vocale Jarvis
 

@@ -284,6 +284,26 @@ Mission RÉFLEXION QUOTIDIENNE — c'est ainsi que tu évolues. Tu n'es pas ré-
 Critère de succès : playbooks à jour avec preuves, métriques 7 jours, aucun enseignement inventé.`,
 });
 
+MISSIONS.push({
+  name: "grok_bots_sync",
+  cron: "", // sur demande : « lance grok_bots_sync », ou « planifie grok_bots_sync chaque jour à 4h »
+  model: "critical",
+  effort: "high",
+  budgetUsd: 3,
+  maxIterations: 50,
+  mcpServers: ["github"],
+  tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool, pushDeployTool, alertTool],
+  task: ({ now, repo }) => `Date: ${now.toISOString()}. Dépôt de l'agent: ${repo}.
+Mission GROK BOTS SYNC — synchronisation quotidienne avec les Grok Bots de Lionel.
+1. Lis /memories/grok-bots/liste.md (crée-le à la première exécution : liste des Grok Bots actifs de Lionel avec leur nom, description, règles, anti-jobs, CTA WhatsApp +44 7307 410512 si IPTV). Si la liste est vide, cherche via github__search_code / github__search_repositories les dépôts liés à Lionel (manzilionellm-dotcom) et note les bots trouvés.
+2. Pour chaque bot actif : vérifie que son rôle/mission dans agent/src/swarm/roles.ts et agent/src/missions/index.ts reflète fidèlement sa description Grok Bot (spécialisation stricte, règles, anti-jobs, soft-sell white-hat, preuves curl, 0 M3U, 0 AggregateRating inventé). Note les écarts dans /memories/grok-bots/ecarts.md.
+3. Propose des ajouts de missions/rôles/playbooks manquants SANS toucher à l'existant : ouvre une branche feature/grok-bots-sync-<date>, délègue au codeur les ajouts uniquement, typecheck vert, commit. Ne pousse pas sur main.
+4. Ouvre une pull request vers main avec description claire des ajouts uniquement (titre: "sync(grok-bots): <date>").
+5. Rapport dans /memories/grok-bots/rapport-<date>.md : bots synchronisés, écarts trouvés, PR URL ou « rien à faire », coût.
+Critère de succès : rapport listant bots synchronisés + écarts + PR ouverte ou « rien à faire » justifié. Zéro modification de l'existant hors ajouts.
+Règles : français, concis, ne rien casser, compatible mode manuel et profil éco. Si tu bloques sur une clé ou un outil, dis-le dans le rapport.`,
+});
+
 export function findMission(name: string): Mission | undefined {
   return MISSIONS.find((m) => m.name === name);
 }

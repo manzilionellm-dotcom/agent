@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/manzilionellm-dotcom/agent/main/ins
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | multi-agents, boucle de raisonnement, mémoire, MCP, sandbox, sécurité, évolution quotidienne |
 | [docs/HOSTING.md](docs/HOSTING.md) | Docker, VPS, clés API, coûts réels, fonctionnement continu, sauvegardes |
-| [docs/SWARM.md](docs/SWARM.md) | les 10 rôles, plan → vagues parallèles → fusion, ce que « ÷10 » veut dire |
+| [docs/SWARM.md](docs/SWARM.md) | les 19 rôles, plan → vagues parallèles → fusion, ce que « ÷10 » veut dire |
 | [docs/JARVIS.md](docs/JARVIS.md) | installation, voix, modes d'éveil, mémoire SQLite, MCP |
 | [docs/MODELS.md](docs/MODELS.md) | choix des modèles, DeepSeek/Kimi/Qwen, corrections de prémisses |
 | [docs/ECO.md](docs/ECO.md) | mode économique : diff de config, variables, WhatsApp (Meta/Twilio), Chrome via tunnel, redéploiement |
@@ -32,6 +32,10 @@ docker compose exec orchestrator node dist/cli.js veille | seo_daily | competito
 docker compose exec orchestrator node dist/cli.js swarm "objectif complet…"
 curl -s http://127.0.0.1:8787/healthz | jq
 ```
+
+## Grok Bots
+
+Le rôle `grok_bot_mirror` reproduit les réflexes des Grok Bots de Lionel. Flotte de création : `forum_builder`, `landing_crafter`, `scrape_factory`, `automation_smith`, coordonnés par `fleet_builder` ; santé de la flotte IPTV : `seo_crawl_flotte`, `gsc_schema_fix` ; `self_healer` pour l'auto-réparation. La mission `grok_bots_sync` (sur demande) compare les rôles du dépôt aux Grok Bots actifs et ouvre une pull request d'ajouts. Détail : [docs/SWARM.md](docs/SWARM.md).
 
 ## Site Next.js (`app/`)
 
