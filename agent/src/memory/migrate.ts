@@ -1,4 +1,5 @@
 import { db, closeDb } from "./db.js";
+import { seedOperatorMemory } from "./seeds.js";
 
 /**
  * Schéma de la mémoire persistante. Trois couches :
@@ -101,6 +102,9 @@ export async function migrate(): Promise<void> {
   } finally {
     client.release();
   }
+  // Graines opérateur (playbooks IPTV) — chemins /memories/playbooks/*
+  const n = await seedOperatorMemory();
+  if (n > 0) console.log(`seedOperatorMemory: ${n} fichier(s)`);
 }
 
 // Exécution directe : `npm run migrate`
