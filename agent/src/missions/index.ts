@@ -304,6 +304,59 @@ Critère de succès : rapport listant bots synchronisés + écarts + PR ouverte 
 Règles : français, concis, ne rien casser, compatible mode manuel et profil éco. Si tu bloques sur une clé ou un outil, dis-le dans le rapport.`,
 });
 
+/**
+ * Prospection IPTV : trouver les gens qui CHERCHENT un service, là où ils en
+ * parlent (Reddit, forums comme Flashback, canaux Telegram publics, X), et
+ * les dernières pratiques du marché — avec la citation exacte et le lien,
+ * jamais une supposition.
+ *
+ * Ce qu'elle ne fait PAS, volontairement : publier, rejoindre un groupe,
+ * écrire en privé. Un compte qui poste des liens dans des groupes se fait
+ * bannir en quelques jours, et la réputation des sites avec lui ; un message
+ * que Lionel relit et poste lui-même, en disant qui il est, convertit mieux
+ * et ne coûte rien. Telegram : seulement les canaux publics, par leur aperçu
+ * web (t.me/s/<canal>), sans compte ni connexion.
+ */
+export const SITES_IPTV = ["testiptv24h.com", "latinoiptvbox.com", "iptvpremiumpolska.com", "iptvnyc.us", "nigeriaiptv.com", "worldiptv1.com", "iptv-sport.com", "premiumlatinoiptv.us", "iptv-toronto.ca", "stableiptv.ca", "iptvusastream.com", "meilleuriptv.ca", "iptv-france.fr", "meilleuriptv.fr", "iptvpremium.fr", "bestiptv.fr", "bestiptvapps.com", "iptvpremiumdeutschland.de"];
+
+MISSIONS.push({
+  name: "prospects_iptv",
+  cron: "", // sur demande ; « chaque matin » → schedule_mission
+  model: "planner",
+  effort: "medium",
+  budgetUsd: 1,
+  maxIterations: 60,
+  mcpServers: [],
+  tools: [...CORE_TOOLS, ...CLAUDE_WEB(), ...searchTools(), scrapePageTool, lireCodeSiteTool, xProfileTool],
+  task: ({ now }) => `Date: ${now.toISOString()}.
+Mission PROSPECTS IPTV. Trouver des personnes qui cherchent un service IPTV ou posent une question à laquelle un des sites de Lionel répond, et relever les pratiques récentes du marché. La consigne de Lionel (marché, pays, langue, appareil) prime sur ce qui suit.
+
+Sites de Lionel (et seulement eux) : ${SITES_IPTV.join(", ")}. Chacun vise un pays ou une langue : on ne propose un site que s'il correspond à la personne (pays, langue, appareil).
+
+SOURCES (web public seulement, jamais derrière une connexion) :
+1. Reddit : tavily_search « site:reddit.com iptv <pays/appareil> recommendation », r/IPTV, subreddits du pays ; scrape_page sur les fils prometteurs.
+2. Forums : Flashback (Suède), SweClockers, forums français et canadiens d'IPTV / Firestick / Kodi ; tavily_search avec le nom du forum.
+3. Telegram : canaux PUBLICS uniquement, par leur aperçu web https://t.me/s/<nom_du_canal> (scrape_page). Trouve les canaux par recherche web (« t.me iptv sverige », « t.me iptv france »). Pas de groupe privé, pas de compte.
+4. X : x_profile sur 2 ou 3 comptes du sujet ; questions récentes.
+5. Pratiques récentes : prix affichés, essais gratuits, appareils et applis mis en avant, arguments qui reviennent — relevés sur les pages des concurrents (lire_code_site) et les discussions, datés.
+
+RÈGLES — NE RIEN INVENTER :
+- Chaque prospect = une citation COPIÉE mot pour mot depuis la page, son lien exact, sa date (« date inconnue » si la page ne la montre pas), la langue. Pas de citation reformulée, pas de lien reconstruit. Page illisible = prospect écarté.
+- Moins de 30 jours seulement ; au-delà, la personne a trouvé.
+- Aucun chiffre de marché sans sa source.
+- Tu ne publies RIEN, tu ne rejoins aucun groupe, tu n'écris à personne. Lionel poste lui-même.
+
+POUR CHAQUE PROSPECT, UN BROUILLON DE RÉPONSE (dans la langue de la personne) :
+- D'abord la réponse utile à SA question (appareil, appli, qualité, légalité du boîtier, etc.), en 2 à 4 phrases.
+- Puis, seulement si un site de Lionel correspond : une phrase qui le mentionne en disant qui parle (« je gère X »), avec le lien. Jamais de faux avis, jamais « un ami m'a conseillé », jamais de lien M3U ni d'identifiants, jamais de promesse de chaînes précises.
+- Si aucun site ne correspond : le brouillon aide sans lien.
+
+SORTIE :
+- /memories/prospects/${now.toISOString().slice(0, 10)}.md : tableau prospect par prospect (source, lien, date, langue, citation, site proposé ou « aucun », brouillon), puis « pratiques récentes » avec sources.
+- Rapport final pour WhatsApp (15 lignes max) : les 8 meilleurs prospects, chacun en une ligne (source · lien · 8 mots de la citation · site proposé), puis les 3 pratiques de marché les plus utiles, puis « brouillons complets : /memories/prospects/<date>.md ».
+Critère de succès : au moins 5 prospects vérifiables (citation + lien + date), ou la liste des sources fouillées et pourquoi rien n'a été retenu.`,
+});
+
 export function findMission(name: string): Mission | undefined {
   return MISSIONS.find((m) => m.name === name);
 }
