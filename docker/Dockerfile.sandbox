@@ -15,7 +15,8 @@ RUN apt-get update \
 # Outils globaux du sandbox.
 RUN npm install -g --no-audit --no-fund @anthropic-ai/claude-code vercel playwright@1.55.0 lighthouse
 
-# Démon navigateur (persistant, CDP ou profil local) + client. NODE_PATH → playwright global.
+# Démon navigateur (persistant, CDP ou profil local + stealth.js) + client.
+# NODE_PATH → playwright global. Pas de playwright-extra : patches manuels dans stealth.js.
 COPY docker/browser /opt/browser
 ENV NODE_PATH=/usr/lib/node_modules:/work/node_modules
 

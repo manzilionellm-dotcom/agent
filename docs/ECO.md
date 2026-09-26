@@ -61,8 +61,11 @@ WHATSAPP_VERIFY_TOKEN=...
 PUBLIC_URL=https://manzi.votre-domaine.fr
 CLOUDFLARE_TUNNEL_TOKEN=...
 
-# Navigateur : ton Chrome via tunnel
+# Navigateur : ton Chrome via tunnel (préféré) ; sinon stealth sandbox
 BROWSER_CDP_URL=http://host.docker.internal:9222
+BROWSER_STEALTH=true
+BROWSER_LOCALE=sv-SE
+BROWSER_TIMEZONE=Europe/Stockholm
 ```
 
 Variables supprimées : `X_BEARER_TOKEN`. Variables devenues optionnelles : `TELEGRAM_*` (secours), `REPORT_TO_EMAIL`.
@@ -119,6 +122,22 @@ ssh -N -R 0.0.0.0:9222:127.0.0.1:9222 manzi@<vps>
 FAIT : Chrome ≥ 136 refuse le débogage distant sur ton profil quotidien ; `--user-data-dir` crée un profil dédié. Connecte-toi une fois aux sites voulus dans ce profil : les sessions persistent. Le VPS a `GatewayPorts clientspecified` (fait par `vps-bootstrap.sh`) et `ufw` bloque le port 9222 depuis l'extérieur. `BROWSER_CDP_URL=http://host.docker.internal:9222` dans `.env`. Tunnel fermé = le bot bascule sur son Chromium de sandbox (profil persistant dans `/work/browser-profile`).
 
 Risque, une ligne : en mode tunnel, le bot agit dans tes comptes connectés ; c'est pour ça que le mode manuel existe.
+
+### Stealth : priorité Chrome réel, sandbox en second
+
+| Priorité | Mode | Config |
+|---|---|---|
+| **1 — meilleur** | Ton Chrome via CDP (tunnel ci-dessus) | `BROWSER_CDP_URL=http://host.docker.internal:9222` |
+| **2 — correct** | Chromium sandbox + stealth | laisse `BROWSER_CDP_URL` vide ; `BROWSER_STEALTH=true` (défaut) |
+
+Le stealth sandbox (`docker/browser/stealth.js`) masque les signaux évidents (`navigator.webdriver`, `--enable-automation`, UA/locale/timezone, WebGL léger, délais humanisés). **Ce n’est jamais 100 % indétectable** : Cloudflare Turnstile, Google bot protection avancée, et les IP datacenter restent des obstacles. Pour ces cas, ouvre le tunnel Chrome — ou abandonne la page. Détails : `docs/STEALTH.md`.
+
+```env
+BROWSER_STEALTH=true
+BROWSER_LOCALE=sv-SE
+BROWSER_TIMEZONE=Europe/Stockholm
+# BROWSER_DENY_DOMAINS=paypal.com,stripe.com   # inchangé : pas de banque/paiement
+```
 
 ## 6. Budget mensuel réaliste (profil éco)
 

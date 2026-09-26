@@ -5,8 +5,10 @@
  * Deux modes :
  *   - BROWSER_CDP_URL défini  → se connecte à TON Chrome (Chrome DevTools Protocol) via
  *     tunnel SSH : toutes tes sessions connectées, exactement comme « Claude dans Chrome ».
+ *     = meilleur anti-détection (navigateur réel). Voir docs/STEALTH.md.
  *   - sinon                   → Chromium persistant dans /work/browser-profile : les
  *     connexions faites une fois (cookies, localStorage) survivent entre missions.
+ *     Avec BROWSER_STEALTH=true (défaut) : patches fingerprint + drapeaux Chromium.
  *
  * Un seul onglet actif à la fois par défaut (tabs: list/switch/new/close).
  * Auto-arrêt après 15 min sans commande. Le client est bctl.js.
@@ -15,6 +17,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const dns = require("node:dns").promises;
 const { chromium } = require("playwright");
+const stealth = require("./stealth.js");
 
 const PORT = 9333;
 const IDLE_MS = 15 * 60_000;
@@ -22,11 +25,22 @@ const PROFILE = "/work/browser-profile";
 const SHOTS = "/work/browser-shots";
 
 let browser, context, page, idleTimer;
+let bootMeta = { mode: "profile", stealth: false, locale: null, timezone: null };
+
+async function applyStealthInit(ctx, meta) {
+  if (!meta.stealth) return;
+  const src = stealth.initScriptSource({
+    languages: meta.languages,
+    platform: process.env.BROWSER_PLATFORM || "Linux x86_64",
+    hardwareConcurrency: Number(process.env.BROWSER_HW_CONCURRENCY || 8) || 8,
+    deviceMemory: Number(process.env.BROWSER_DEVICE_MEMORY || 8) || 8,
+  });
+  await ctx.addInitScript(src);
+}
 
 async function boot() {
   let cdp = process.env.BROWSER_CDP_URL;
   if (cdp) {
-    // Chrome refuse un en-tête Host qui n'est ni une IP ni localhost : on résout le nom en IP.
     const u = new URL(cdp);
     if (!/^(\d+\.){3}\d+$|^localhost$|^\[/.test(u.hostname)) {
       const { address } = await dns.lookup(u.hostname);
@@ -36,17 +50,14 @@ async function boot() {
     browser = await chromium.connectOverCDP(cdp, { timeout: 15_000 });
     context = browser.contexts()[0] || (await browser.newContext());
     page = context.pages()[0] || (await context.newPage());
+    bootMeta = { mode: "cdp", stealth: false, locale: null, timezone: null, note: "real Chrome via CDP — preferred; sandbox stealth not applied" };
   } else {
     fs.mkdirSync(PROFILE, { recursive: true });
-    context = await chromium.launchPersistentContext(PROFILE, {
-      headless: true,
-      args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
-      viewport: { width: 1280, height: 900 },
-      locale: "fr-FR",
-      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    });
+    const { opts, stealth: steOn, locale, timezoneId, languages, viewport, chromeVersion } = stealth.persistentLaunchOptions();
+    context = await chromium.launchPersistentContext(PROFILE, opts);
+    bootMeta = { mode: "profile", stealth: steOn, locale, timezone: timezoneId, languages, viewport, chromeVersion };
+    await applyStealthInit(context, bootMeta);
     page = context.pages()[0] || (await context.newPage());
-    // Import optionnel de cookies exportés depuis ton navigateur (format Playwright/EditThisCookie).
     if (fs.existsSync("/work/cookies.json")) {
       try {
         const raw = JSON.parse(fs.readFileSync("/work/cookies.json", "utf8"));
@@ -61,12 +72,15 @@ async function boot() {
     }
   }
   fs.mkdirSync(SHOTS, { recursive: true });
+  console.log("browser boot:", JSON.stringify(bootMeta));
 }
 
 function touch() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(async () => { try { await (browser ? browser.close() : context.close()); } finally { process.exit(0); } }, IDLE_MS);
 }
+
+function defaultSettle(base) { return stealth.settleMs(base, 220); }
 
 async function text(maxChars) {
   const snap = await page.locator("body").ariaSnapshot().catch(() => null);
@@ -84,13 +98,13 @@ function locator(a) {
 }
 
 const handlers = {
-  async goto(a) { const r = await page.goto(a.url, { waitUntil: a.wait || "domcontentloaded", timeout: 45_000 }); await page.waitForTimeout(a.settle_ms ?? 800); return { status: r ? r.status() : null, url: page.url(), title: await page.title(), text: await text(a.max_chars ?? 6_000) }; },
+  async goto(a) { const r = await page.goto(a.url, { waitUntil: a.wait || "domcontentloaded", timeout: 45_000 }); await page.waitForTimeout(a.settle_ms ?? defaultSettle(800)); return { status: r ? r.status() : null, url: page.url(), title: await page.title(), text: await text(a.max_chars ?? 6_000) }; },
   async text(a) { return { url: page.url(), title: await page.title(), text: await text(a.max_chars) }; },
   async html(a) { const h = await (a.selector ? page.locator(a.selector).first().innerHTML() : page.content()); return { html: h.slice(0, a.max_chars || 20_000) }; },
-  async click(a) { await locator(a).click({ timeout: 10_000 }); await page.waitForTimeout(a.settle_ms ?? 800); return { url: page.url(), title: await page.title(), text: await text(3_000) }; },
-  async type(a) { const l = locator(a); await l.click({ timeout: 10_000 }); if (a.clear !== false) await l.fill(""); await l.type(a.value, { delay: 20 }); if (a.enter) await page.keyboard.press("Enter"); await page.waitForTimeout(a.settle_ms ?? 600); return { ok: true, url: page.url() }; },
-  async press(a) { await page.keyboard.press(a.key); await page.waitForTimeout(400); return { ok: true, url: page.url() }; },
-  async scroll(a) { await page.mouse.wheel(0, a.dy ?? 1200); await page.waitForTimeout(400); return { ok: true }; },
+  async click(a) { await locator(a).click({ timeout: 10_000 }); await page.waitForTimeout(a.settle_ms ?? defaultSettle(800)); return { url: page.url(), title: await page.title(), text: await text(3_000) }; },
+  async type(a) { const l = locator(a); await l.click({ timeout: 10_000 }); if (a.clear !== false) await l.fill(""); await l.type(a.value, { delay: a.delay ?? (15 + Math.floor(Math.random() * 35)) }); if (a.enter) await page.keyboard.press("Enter"); await page.waitForTimeout(a.settle_ms ?? defaultSettle(600)); return { ok: true, url: page.url() }; },
+  async press(a) { await page.keyboard.press(a.key); await page.waitForTimeout(defaultSettle(400)); return { ok: true, url: page.url() }; },
+  async scroll(a) { await page.mouse.wheel(0, a.dy ?? 1200); await page.waitForTimeout(defaultSettle(400)); return { ok: true }; },
   async screenshot(a) { const file = `${SHOTS}/${Date.now()}.png`; await page.screenshot({ path: file, fullPage: !!a.full }); return { file, base64: fs.readFileSync(file).toString("base64") }; },
   async links(a) { const links = await page.$$eval("a[href]", (els) => els.map((e) => ({ text: (e.innerText || "").trim().slice(0, 80), href: e.href })).filter((l) => l.text)); return { links: links.slice(0, a.max ?? 100) }; },
   async eval(a) { const v = await page.evaluate(a.js); return { value: typeof v === "string" ? v.slice(0, 20_000) : v }; },
@@ -104,7 +118,13 @@ const handlers = {
   },
   async back() { await page.goBack({ waitUntil: "domcontentloaded" }); return { url: page.url(), title: await page.title() }; },
   async cookies(a) { const c = await context.cookies(a.url ? [a.url] : undefined); return { count: c.length, domains: [...new Set(c.map((x) => x.domain))] }; },
-  async status() { return { mode: process.env.BROWSER_CDP_URL ? "cdp" : "profile", url: page.url(), tabs: context.pages().length }; },
+  async status() {
+    return {
+      mode: bootMeta.mode, stealth: bootMeta.stealth, locale: bootMeta.locale, timezone: bootMeta.timezone,
+      chromeVersion: bootMeta.chromeVersion || null, url: page.url(), tabs: context.pages().length,
+      cdpPreferred: !!process.env.BROWSER_CDP_URL,
+    };
+  },
 };
 
 boot().then(() => {

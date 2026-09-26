@@ -10,6 +10,7 @@ import { untrusted } from "../safety.js";
  * Navigateur complet, piloté pas à pas (comme « Claude dans Chrome ») :
  *   - BROWSER_CDP_URL défini → TON Chrome, avec toutes tes sessions (via tunnel SSH) ;
  *   - sinon → Chromium persistant dans le sandbox (connexions conservées entre missions).
+ *     Avec BROWSER_STEALTH=true (défaut) : patches fingerprint (voir docs/STEALTH.md).
  * L'état (onglets, page courante) persiste entre les appels d'une même mission grâce au
  * démon (docker/browser/daemon.js). Les captures reviennent en image quand le modèle
  * les accepte (Claude), en fichier sinon.
@@ -20,11 +21,23 @@ import { untrusted } from "../safety.js";
 
 const Action = z.enum(["goto", "text", "html", "click", "type", "press", "scroll", "screenshot", "links", "eval", "wait", "tabs", "back", "cookies", "status"]);
 
+/** Env BROWSER_* transmis au sandbox pour le démon (CDP + stealth). */
+function browserEnv(): Record<string, string> {
+  const cfg = config();
+  const env: Record<string, string> = {
+    BROWSER_STEALTH: cfg.BROWSER_STEALTH ? "true" : "false",
+    BROWSER_LOCALE: cfg.BROWSER_LOCALE,
+    BROWSER_TIMEZONE: cfg.BROWSER_TIMEZONE,
+  };
+  if (cfg.BROWSER_CDP_URL) env.BROWSER_CDP_URL = cfg.BROWSER_CDP_URL;
+  return env;
+}
+
 export function makeBrowserTool(container?: string) {
   return betaZodTool({
     name: "browser",
     description:
-      "Navigateur réel persistant (Chrome). Actions : goto{url} · text{max_chars} (contenu lisible, arbre d'accessibilité) · click{selector|text|role+name|label} · type{selector|label|placeholder, value, enter?} · press{key} · scroll{dy} · screenshot{full?} · links{max} · eval{js} · wait{selector|ms} · tabs{op:list|new|switch|close, index?, url?} · back · cookies{url} · status. Un appel = une action ; lis le résultat avant la suivante. Ne saisis jamais un mot de passe que l'opérateur n'a pas fourni dans la mission.",
+      "Navigateur réel persistant (Chrome). Actions : goto{url} · text{max_chars} (contenu lisible, arbre d'accessibilité) · click{selector|text|role+name|label} · type{selector|label|placeholder, value, enter?} · press{key} · scroll{dy} · screenshot{full?} · links{max} · eval{js} · wait{selector|ms} · tabs{op:list|new|switch|close, index?, url?} · back · cookies{url} · status. Un appel = une action ; lis le résultat avant la suivante. Ne saisis jamais un mot de passe que l'opérateur n'a pas fourni dans la mission. Préfère BROWSER_CDP_URL (Chrome réel) ; sinon Chromium stealth sandbox.",
     inputSchema: z.object({
       action: Action,
       url: z.string().url().optional(),
@@ -60,7 +73,7 @@ export function makeBrowserTool(container?: string) {
       const r = await sandboxExec(`node /opt/browser/bctl.js ${shellQuote(action)} ${shellQuote(JSON.stringify(args))}`, {
         timeoutMs: 150_000,
         container,
-        env: cfg.BROWSER_CDP_URL ? { BROWSER_CDP_URL: cfg.BROWSER_CDP_URL } : {},
+        env: browserEnv(),
       });
       let out: { ok?: boolean; error?: string; base64?: string; file?: string } & Record<string, unknown>;
       try {
