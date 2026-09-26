@@ -13,6 +13,7 @@ import { menuPanneau } from "./panel-sections.js";
 import { SITES } from "./browsing/sites.js";
 import { listCredentials, vaultEnabled, type PublicCredential } from "./vault.js";
 import { CSS_DIAG, diagState, lireVue, sectionBoiteNoire, sectionDiagnostic, type DiagState, type VueBN } from "./panel-diagnostic.js";
+import { PRESETS } from "./llm/aiguillage.js";
 import { plusState, sectionCompetences, sectionCrochets, sectionDeclencheurs, sectionImages, sectionMemoire, sectionRappels, sectionRefus, type PlusState } from "./panel-plus.js";
 
 /**
@@ -369,7 +370,12 @@ ${st.mdp ? `<form method="post" style="margin-top:.5rem"><input type="hidden" na
  */
 export function panelPage(st: PanelState, notice = "", edit = "", ton: "" | "bon" | "bad" = ""): string {
   const tous = st.categories.flatMap((c) => c.services);
-  const e = edit ? tous.find((s) => s.id === edit) : undefined;
+  // « preset:gemini » : formulaire d'ajout prérempli pour une offre gratuite.
+  // Ce n'est pas une modification — l'identifiant reste modifiable et rien
+  // n'existe tant que Lionel n'a pas collé sa clé et enregistré.
+  const preset = edit.startsWith("preset:") ? PRESETS[edit.slice(7)] : undefined;
+  const e = edit && !preset ? tous.find((s) => s.id === edit) : undefined;
+  const pf = e ?? (preset ? { id: preset.id, label: preset.label, category: "modele", kind: "openai_compat", base_url: preset.baseUrl, model: preset.model, priority: preset.priority, daily_cap_usd: 0, note: preset.note, has_key: false, roles: "chat,worker" } : undefined);
   const rolesEdit = e ? e.roles.split(",").map((r) => r.trim()) : [];
   const sel = (a: string, b: string): string => (a === b ? " selected" : "");
   const part = Number.isFinite(st.depense.plafond) && st.depense.plafond ? Math.min(100, (st.depense.jour / st.depense.plafond) * 100) : 0;
@@ -454,22 +460,24 @@ ${cats}
 <p class="aide">${e
   ? `Les champs portent les valeurs actuelles : ce que tu ne touches pas reste tel quel. La clé, elle, n'est jamais réaffichée — laisse-la vide pour garder celle qui est en place.`
   : `Pour en modifier un existant, clique « Modifier » sur sa carte plutôt que de retaper son identifiant ici : ce formulaire-ci part des valeurs par défaut et les écraserait.`}</p>
+${preset ? `<p class="notice bon">Offre gratuite préremplie. Crée ta clé sur <b>${esc(preset.ou)}</b>, colle-la dans « Clé d'API », puis « Enregistrer » et « Tester la clé » sur sa carte. La clé ne se colle qu'ici, jamais dans WhatsApp.</p>` : ""}
+<p class="aide">Modèles gratuits en un clic : ${Object.entries(PRESETS).map(([k, v]) => `<a class="b" href="/panel?edit=preset:${k}#formulaire">${esc(v.label)}</a>`).join(" ")} — l'aiguillage les fait passer devant pour la conversation, et garde les payants en secours. Limites : Gemini gratuit ≈ quelques centaines de requêtes par jour, OpenRouter gratuit 50 par jour (1 000 après un seul achat de 10 $ de crédit). Sur les offres gratuites, Google et Mistral peuvent utiliser les échanges pour entraîner leurs modèles.</p>
 <form class="ajout" method="post" autocomplete="off">
   <input type="hidden" name="op" value="put">
   <div class="grille">
-    <label>Identifiant<input name="id" placeholder="groq" required value="${esc(e?.id ?? "")}"${e ? " readonly" : ""} ${st.coffre ? "" : "disabled"}></label>
-    <label>Nom affiché<input name="label" placeholder="Groq" value="${esc(e?.label ?? "")}" ${st.coffre ? "" : "disabled"}></label>
+    <label>Identifiant<input name="id" placeholder="groq" required value="${esc(pf?.id ?? "")}"${e ? " readonly" : ""} ${st.coffre ? "" : "disabled"}></label>
+    <label>Nom affiché<input name="label" placeholder="Groq" value="${esc(pf?.label ?? "")}" ${st.coffre ? "" : "disabled"}></label>
     <label>Catégorie<select name="category" ${st.coffre ? "" : "disabled"}>
-      <option value="modele"${sel(e?.category ?? "modele", "modele")}>Modèle</option><option value="dev"${sel(e?.category ?? "", "dev")}>Développement</option>
-      <option value="recherche"${sel(e?.category ?? "", "recherche")}>Recherche</option><option value="autre"${sel(e?.category ?? "", "autre")}>Autre</option></select></label>
+      <option value="modele"${sel(pf?.category ?? "modele", "modele")}>Modèle</option><option value="dev"${sel(pf?.category ?? "", "dev")}>Développement</option>
+      <option value="recherche"${sel(pf?.category ?? "", "recherche")}>Recherche</option><option value="autre"${sel(pf?.category ?? "", "autre")}>Autre</option></select></label>
     <label>Type d'API<select name="kind" ${st.coffre ? "" : "disabled"}>
-      <option value="openai_compat"${sel(e?.kind ?? "openai_compat", "openai_compat")}>Compatible OpenAI</option><option value="anthropic"${sel(e?.kind ?? "", "anthropic")}>Anthropic</option></select></label>
-    <label>Adresse de l'API<input name="baseUrl" placeholder="https://api.groq.com/openai/v1" value="${esc(e?.base_url ?? "")}" ${st.coffre ? "" : "disabled"}></label>
-    <label>Modèle<input name="model" placeholder="llama-3.3-70b-versatile" value="${esc(e?.model ?? "")}" ${st.coffre ? "" : "disabled"}></label>
+      <option value="openai_compat"${sel(pf?.kind ?? "openai_compat", "openai_compat")}>Compatible OpenAI</option><option value="anthropic"${sel(pf?.kind ?? "", "anthropic")}>Anthropic</option></select></label>
+    <label>Adresse de l'API<input name="baseUrl" placeholder="https://api.groq.com/openai/v1" value="${esc(pf?.base_url ?? "")}" ${st.coffre ? "" : "disabled"}></label>
+    <label>Modèle<input name="model" placeholder="llama-3.3-70b-versatile" value="${esc(pf?.model ?? "")}" ${st.coffre ? "" : "disabled"}></label>
     <label>Clé d'API<input name="apiKey" type="password" placeholder="${e?.has_key ? "(enregistrée — inchangée si vide)" : "colle-la ici"}" ${st.coffre ? "" : "disabled"}></label>
-    <label>Priorité <span class="det">(1 = essayé en premier)</span><input name="priority" type="number" min="1" max="99" value="${e?.priority ?? 50}" ${st.coffre ? "" : "disabled"}></label>
-    <label>Plafond 24 h en $ <span class="det">(0 = aucun)</span><input name="dailyCap" type="number" min="0" step="0.5" value="${e?.daily_cap_usd ?? 0}" ${st.coffre ? "" : "disabled"}></label>
-    <label>Note<input name="note" placeholder="à quoi il sert" value="${esc(e?.note ?? "")}" ${st.coffre ? "" : "disabled"}></label>
+    <label>Priorité <span class="det">(1 = essayé en premier)</span><input name="priority" type="number" min="1" max="99" value="${pf?.priority ?? 50}" ${st.coffre ? "" : "disabled"}></label>
+    <label>Plafond 24 h en $ <span class="det">(0 = aucun)</span><input name="dailyCap" type="number" min="0" step="0.5" value="${pf?.daily_cap_usd ?? 0}" ${st.coffre ? "" : "disabled"}></label>
+    <label>Note<input name="note" placeholder="à quoi il sert" value="${esc(pf?.note ?? "")}" ${st.coffre ? "" : "disabled"}></label>
   </div>
   <label>Rôles <span class="det">(modèles seulement)</span>
     <span class="roles">${st.roles.map((r) => `<label><input type="checkbox" name="roles" value="${r}"${(e ? rolesEdit.includes(r) : r === "chat" || r === "worker") ? " checked" : ""} ${st.coffre ? "" : "disabled"}> ${r}</label>`).join("")}</span>

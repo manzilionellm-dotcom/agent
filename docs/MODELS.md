@@ -78,3 +78,16 @@ Protocole en une semaine, coût < 30 $ :
 | qwen3 (DashScope) | variable selon taille | | vérifier |
 
 Les prix non-Anthropic sont donnés à titre indicatif (UNVERIFIED au jour de lecture) : renseigne `MODEL_PRICES` avec la grille courante, sinon le compteur de budget est faux.
+
+## Aiguillage : le bon modèle pour chaque tâche, gratuits d'abord
+
+Code : `agent/src/llm/aiguillage.ts`, branché dans `router.runRouted`.
+
+1. **Type de travail**, deviné par mots-clés, sans appel de modèle : code, raisonnement, écriture, traduction, analyse, ou conversation.
+2. **Forces du modèle**, lues dans son nom (gemini → traduction, analyse, écriture ; deepseek → code, raisonnement ; codestral → code…) ou dans sa note au panneau (`forces : code, traduction`), qui prime.
+3. **Gratuit** : note « gratuit », modèles `:free` et `openrouter/free` d'OpenRouter, Gemini par Google AI Studio. Mistral n'est pas présumé gratuit : l'offre Experiment existe, mais rien ne dit que le compte branché y est.
+4. **Ordre d'essai** : gratuits avant payants, puis forts pour ce type, puis priorité du panneau. Les payants restent en secours. Mode `GRATUIT` : `dabord` (défaut, conversation et petites tâches), `seulement` (jamais de payant, même pour les missions), `off`.
+5. **Échec** : on passe au suivant. Un 429 écarte le modèle 2 minutes ; un 402 (compte vide) 6 heures avec une alerte WhatsApp.
+6. **Explication** : une ligne « 🧠 Gemini Flash (gratuit) · fort en traduction » sous chaque réponse. « arrête de dire le modèle » la coupe.
+
+Offres gratuites vérifiées le 26/09/2026 (limites susceptibles de changer) : Gemini Flash par AI Studio (limites par minute et par jour, données utilisées pour l'entraînement sur l'offre gratuite) ; OpenRouter (50 requêtes gratuites par jour, 1 000 après un achat unique de 10 $) ; Mistral Experiment (entraînement par défaut, désactivable dans la console) ; Groq (gratuit, mais 6 000 à 12 000 jetons par minute : trop petit pour une conversation avec tous les outils). Pas gratuits : DeepSeek (payant, bon marché), Grok (payant pour les nouveaux comptes en 2026). Préréglages au panneau : Services → formulaire → « Gemini Flash (gratuit) », « OpenRouter (gratuit) ».

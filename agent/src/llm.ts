@@ -126,6 +126,8 @@ export type AgentRunOptions = {
   effort?: Effort;
   /** Nature du travail (chat, worker, planner, critical) : règle l'effort de réflexion des modèles qui en ont un. */
   kind?: ModelKind;
+  /** Le message de Lionel, brut : l'aiguillage en déduit le type de travail (code, traduction…). */
+  aiguillage?: string;
   maxIterations?: number;
   budgetUsd?: number;
   /** Appelé après chaque tour ; permet journalisation / arrêt anticipé. */

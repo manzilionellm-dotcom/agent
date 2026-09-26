@@ -9,7 +9,7 @@ import { outilRecherche, dernieresRecherches } from "../recherche.js";
 import { outilDev } from "../dev.js";
 import { lireCodeSiteTool } from "../tools/code-site.js";
 import { searchToolsAsync } from "../tools/search.js";
-import { SANS_LIMITE, codeurChoisi, dailyBudget, limiteMessagesHeure, plafondTexte, setProviderModel, setSetting } from "../providers.js";
+import { SANS_LIMITE, codeurChoisi, dailyBudget, limiteMessagesHeure, plafondTexte, setProviderModel, setSetting, setting } from "../providers.js";
 import { ajouterRegle, composerPrompt, retirerRegle } from "../personality.js";
 import { outilCrochet } from "../crochets.js";
 import { outilRefus, verifierReponse } from "../refus.js";
@@ -138,6 +138,8 @@ Images : « fais-moi une image / un logo / une bannière / un visuel de… » �
 Surveillance de la boîte mail : « quand je reçois un mail de X / avec « facture » dans l'objet / avec une pièce jointe, fais Y » → creer_declencheur_email. Ça tourne tout seul toutes les 5 minutes et le résultat arrive sur WhatsApp.
 
 Crochets (webhooks) : « quand Stripe reçoit un paiement… », « quand quelqu'un remplit mon formulaire… », « quand GitHub ouvre une issue… », ou tout service capable d'appeler une adresse → creer_crochet, puis lien_panneau section crochets pour qu'il copie l'adresse. Un crochet réagit à la seconde et ne coûte rien entre deux appels : préfère-le à une mission planifiée toutes les X minutes. Avant de PLANIFIER une mission (schedule_mission), lance-la une fois avec run_mission sur un cas réel et attends son rapport : on ne programme pas ce qu'on n'a pas vu marcher.
+
+Modèles : tu choisis déjà le modèle selon le type de travail (code, raisonnement, écriture, traduction, analyse), gratuits d'abord, et tu passes au suivant si l'un échoue ; la ligne « 🧠 … » sous tes réponses le dit. « utilise les modèles gratuits » → reglage{gratuit:"dabord"} ; « uniquement les gratuits » → reglage{gratuit:"seulement"} ; « arrête de dire le modèle » → reglage{expliquer_modele:"off"}. « ajoute Gemini / OpenRouter gratuit » → lien_panneau section formulaire : la clé se colle au panneau, jamais ici.
 
 Règles absolues : « à partir de maintenant, jamais d'envoi de mail sans mon OK », « ne publie jamais sans me montrer », « interdit de toucher à X » → reglage{regle_ajouter}. « enlève la règle sur les mails » → reglage{regle_retirer}. Ces règles priment sur tout, et demander son OK quand une règle l'exige n'est pas un refus.
 
@@ -379,12 +381,22 @@ function settingsTool() {
       codeur: z.enum(["deepseek", "claude", "auto"]).optional().describe("Qui écrit le code dans l'atelier et les missions : deepseek (deepseek-v4-pro par son API compatible Anthropic), claude, ou auto (DeepSeek si une clé existe, sinon Claude)."),
       service: z.string().min(1).max(60).optional().describe("Le service dont on change le modèle (DeepSeek, Mistral, Claude, voix, image, ecoute)."),
       modele: z.string().min(1).max(120).optional().describe("Le nouveau nom de modèle, tel que l'API l'attend."),
+      gratuit: z.enum(["dabord", "seulement", "off"]).optional().describe("Modèles gratuits : dabord (défaut : les gratuits passent devant pour la conversation, les payants restent en secours), seulement (jamais de modèle payant), off (ordre du panneau). « utilise les modèles gratuits » → dabord ; « uniquement les gratuits » → seulement."),
+      expliquer_modele: z.enum(["on", "off"]).optional().describe("on = une ligne « 🧠 modèle · type » sous chaque réponse ; off = plus de ligne (« arrête de dire le modèle »)."),
       alerte_jour: z.number().min(0).optional().describe("Seuil d'alerte de dépense en USD par jour (« alerte à 10 ») ; 0 = jamais (« alerte off »). Au double du seuil, les missions passent en réflexion éco."),
       regle_ajouter: z.string().min(5).max(200).optional().describe("Une règle absolue en langage naturel, telle que Lionel l'a dite : « jamais d'envoi d'e-mail sans mon OK », « ne publie jamais une annonce sans me montrer le texte », « interdit de toucher à ma banque »."),
       regle_retirer: z.string().min(1).max(200).optional().describe("Quelques mots de la règle à retirer, ou son numéro."),
     }),
     run: async (i) => {
       const faits: string[] = [];
+      if (i.gratuit) {
+        await setSetting("GRATUIT", i.gratuit);
+        faits.push(i.gratuit === "seulement" ? "modèles gratuits seulement — aucun modèle payant, même en secours" : i.gratuit === "dabord" ? "modèles gratuits d'abord, les payants en secours" : "ordre du panneau, sans préférence pour les gratuits");
+      }
+      if (i.expliquer_modele) {
+        await setSetting("EXPLIQUER_MODELE", i.expliquer_modele);
+        faits.push(i.expliquer_modele === "off" ? "je ne dis plus quel modèle a répondu" : "je dis sous chaque réponse quel modèle a répondu et pourquoi");
+      }
       if (i.alerte_jour !== undefined) {
         await setSetting("ALERTE_JOUR", String(i.alerte_jour));
         faits.push(i.alerte_jour === 0 ? "alerte de dépense coupée" : `alerte à ${i.alerte_jour} $ par jour (au double, missions en réflexion éco)`);
@@ -782,6 +794,7 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   // Claude en dernier recours. `runRouted` ne monte d'un cran que sur un
   // échec constaté, jamais sur une impression de qualité.
   const res = await runRouted("chat", {
+    aiguillage: text,
     // La personnalité se relit à chaque message : un réglage changé au
     // panneau se voit à la réponse suivante, sans redémarrage.
     system: [await composerPrompt(CHAT_SYSTEM), await blocCompetences()].filter(Boolean).join("\n\n"),
@@ -807,7 +820,10 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
   // Un « je n'ai pas pu » sans entrée au journal des refus est un échec du
   // bot : la ligne est posée d'office, sans preuve, et le panneau la montre.
   await verifierReponse(reply, opts.peer, text).catch((e) => logger.warn({ err: String(e) }, "journal des refus"));
+  // Le choix du modèle, en une ligne, comme Lionel l'a demandé (« explique
+  // brièvement ton choix »). Coupable : « arrête de dire le modèle ».
+  const avecChoix = res.choix && (await setting("EXPLIQUER_MODELE").catch(() => undefined)) !== "off" ? `${reply}\n\n${res.choix}` : reply;
   await db().query(`INSERT INTO chat_messages(channel, peer, role, content) VALUES ($1,$2,'assistant',$3)`, [opts.channel, opts.peer, reply]);
   await db().query(`INSERT INTO spend(day, usd) VALUES (CURRENT_DATE, $1) ON CONFLICT (day) DO UPDATE SET usd = spend.usd + EXCLUDED.usd`, [res.usage.usd]);
-  return reply;
+  return avecChoix;
 }

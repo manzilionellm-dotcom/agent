@@ -290,7 +290,7 @@ export async function deleteProvider(id: string): Promise<boolean> {
 
 /* --- Résolution pour le routeur ------------------------------------------ */
 
-export type ResolvedProvider = { id: string; kind: ProviderRow["kind"]; model: string; baseUrl?: string; apiKey?: string; priority: number; roles: Role[] };
+export type ResolvedProvider = { id: string; kind: ProviderRow["kind"]; model: string; baseUrl?: string; apiKey?: string; priority: number; roles: Role[]; label?: string; note?: string };
 
 let cache: { at: number; rows: ResolvedProvider[] } | undefined;
 /** 15 s : assez court pour qu'une pause depuis le panneau se voie tout de suite, assez long pour ne pas interroger la base à chaque appel. */
@@ -332,6 +332,8 @@ export async function activeProviders(role?: Role): Promise<ResolvedProvider[]> 
               apiKey: x.api_key ? decryptSecret(x.api_key) : undefined,
               priority: Number(x.priority),
               roles: x.roles.split(",").map((s) => s.trim()).filter((s) => (ROLES as readonly string[]).includes(s)) as Role[],
+              label: x.label || undefined,
+              note: x.note || undefined,
             };
           } catch (e) {
             // Une clé illisible (VAULT_KEY changée) ne doit pas faire tomber

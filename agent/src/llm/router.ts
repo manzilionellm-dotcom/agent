@@ -1,7 +1,8 @@
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult, type ModelKind, type Provider, type Usage } from "../llm.js";
-import { activeProviders, claudeActifSync, recordUsage, type Role } from "../providers.js";
+import { activeProviders, claudeActifSync, recordUsage, setting, type Role } from "../providers.js";
+import { classer, explication, ordonner, type ModeGratuit, type TypeTache } from "./aiguillage.js";
 
 /**
  * Routeur à trois cerveaux.
@@ -35,6 +36,9 @@ export type Backend = {
   model: string;
   baseUrl?: string;
   apiKey?: string;
+  /** Nom affiché et note du panneau : l'aiguillage y lit « gratuit » et les forces. */
+  label?: string;
+  note?: string;
 };
 
 /** Les cerveaux réellement utilisables : une clé absente retire le backend du routage. */
@@ -95,6 +99,8 @@ export async function routeAsync(kind: ModelKind): Promise<Backend[]> {
       model: p.model,
       baseUrl: p.baseUrl,
       apiKey: p.apiKey,
+      label: p.label,
+      note: p.note,
     }));
   }
   return route(kind);
@@ -147,7 +153,13 @@ function addUsage(a: Usage, b: Usage): Usage {
 
 const ZERO: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, usd: 0, iterations: 0 };
 
-export type RoutedResult = AgentRunResult & { backend: BackendName; attempts: BackendName[] };
+export type RoutedResult = AgentRunResult & { backend: BackendName; attempts: BackendName[]; choix?: string };
+
+/** Le mode « gratuits » réglé par Lionel : dabord (défaut), seulement, off. */
+export async function modeGratuit(): Promise<ModeGratuit> {
+  const v = (await setting("GRATUIT").catch(() => undefined))?.trim();
+  return v === "off" || v === "seulement" ? v : "dabord";
+}
 
 /**
  * Disjoncteur par cerveau. Mistral a échoué 18 fois sur 19 en une journée :
@@ -179,10 +191,25 @@ export function quandSansCredit(cb: AlerteCredit): void {
   surSansCredit = cb;
 }
 
+/** Limite de débit (offres gratuites surtout) : 429, « rate limit », « too many requests ». */
+export function estLimite(err: string): boolean {
+  return /\b429\b|rate[ _-]?limit|too many requests|quota exceeded|resource[ _]exhausted/i.test(err);
+}
+/** Deux minutes : le quota par minute d'une offre gratuite s'est rechargé, celui du jour se verra au prochain 429. */
+export const LIMITE_MS = 2 * 60_000;
+
 export function noterEchec(name: string, raison: string): void {
   const p = pannes.get(name) ?? { echecs: 0, jusqua: 0, raison: "" };
   p.echecs += 1;
   p.raison = raison.slice(0, 160);
+  if (!estSansCredit(raison) && estLimite(raison)) {
+    // Une offre gratuite à sa limite : inutile de la retenter au message
+    // suivant, et inutile d'attendre trois échecs pour le savoir.
+    p.jusqua = Date.now() + LIMITE_MS;
+    pannes.set(name, p);
+    logger.warn({ backend: name, raison: p.raison }, "limite de débit — cerveau écarté 2 min");
+    return;
+  }
   if (estSansCredit(raison)) {
     // Pas besoin d'attendre trois échecs : le quatrième ne trouvera pas plus
     // d'argent sur le compte que le premier.
@@ -234,10 +261,19 @@ export async function runRouted(
   // exécution de la suite.
   run: (o: AgentRunOptions) => Promise<AgentRunResult> = runAgent,
 ): Promise<RoutedResult> {
-  const complete = await routeAsync(kind);
-  if (!complete.length) throw new Error(`aucun modèle configuré pour « ${kind} » — renseigne au moins une clé (MISTRAL_API_KEY, OPENAI_COMPAT_API_KEY, ANTHROPIC_API_KEY)`);
+  const brute = await routeAsync(kind);
+  if (!brute.length) throw new Error(`aucun modèle configuré pour « ${kind} » — renseigne au moins une clé (MISTRAL_API_KEY, OPENAI_COMPAT_API_KEY, ANTHROPIC_API_KEY)`);
+  // Aiguillage : le type du message (s'il est donné) et les gratuits d'abord.
+  // Les gratuits ne passent devant que pour la conversation et les petites
+  // tâches : un travail « critical » (écrire du code et le publier) garde
+  // l'ordre du panneau, sauf si Lionel a demandé « seulement les gratuits ».
+  const type: TypeTache = opts.aiguillage ? classer(opts.aiguillage) : "general";
+  const mode = await modeGratuit();
+  const modeIci: ModeGratuit = kind === "chat" || kind === "worker" || mode === "seulement" ? mode : "off";
+  const complete = ordonner(brute, type, modeIci);
   const valides = complete.filter((b) => !enPanne(b.name));
   const chain = valides.length ? valides : complete;
+  const expliquer = (r: Backend) => explication(chain.slice(0, attempts.length).filter((b) => b.name !== r.name), r, type);
   if (valides.length < complete.length) logger.info({ kind, ecartes: complete.filter((b) => enPanne(b.name)).map((b) => b.name) }, "cerveaux en panne écartés");
 
   const attempts: BackendName[] = [];
@@ -256,7 +292,7 @@ export async function runRouted(
       if (dernier || !shouldEscalate(r)) {
         noterSucces(b.name);
         if (i > 0) logger.info({ kind, backend: b.name, attempts, usd: total.usd.toFixed(4) }, "cascade : repris par le cerveau suivant");
-        return { ...r, usage: total, backend: b.name, attempts };
+        return { ...r, usage: total, backend: b.name, attempts, choix: expliquer(b) };
       }
       noterEchec(b.name, `arrêt ${r.stopReason}`);
       logger.warn({ kind, backend: b.name, stop: r.stopReason, suivant: chain[i + 1]?.name }, "cascade : échec, on monte d'un cran");
