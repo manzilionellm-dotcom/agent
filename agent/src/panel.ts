@@ -251,7 +251,7 @@ function sectionPersonnalite(st: PanelState): string {
 function sectionVoix(st: PanelState): string {
   const v = st.voix;
   const manque = !v.service
-    ? `<p class="notice warn">Aucun service « voix » actif. Ajoute-le dans le formulaire plus bas : identifiant <code>voix</code>, type « Compatible OpenAI », adresse <code>https://api.openai.com/v1</code>, modèle <code>gpt-4o-mini-tts</code>, et ta clé OpenAI. Il se range tout seul dans « Autres services ».</p>`
+    ? `<p class="notice warn">Aucun service « voix » actif. <b>Gratuit :</b> sur le serveur, <code>bash deploy/voix-gratuite.sh</code> installe une voix française qui tourne chez toi (aucune clé, aucun coût par message, ~400 Mo de mémoire). <b>Payant :</b> ajoute-le dans le formulaire plus bas — identifiant <code>voix</code>, type « Compatible OpenAI », adresse <code>https://api.openai.com/v1</code>, modèle <code>gpt-4o-mini-tts</code>, et ta clé OpenAI.</p>`
     : "";
   return `<h2 id="voix">Voix</h2>
 <p class="aide">Il te répond en note vocale sur WhatsApp. Si la voix échoue, le texte part quand même — tu ne perds jamais une réponse. Un lien part toujours aussi par écrit : un lien lu à voix haute ne se clique pas. Le coût de la synthèse n'est pas compté dans les tableaux de cette page : il se lit chez le fournisseur.</p>
@@ -260,7 +260,7 @@ ${manque}
   <input type="hidden" name="op" value="voix">
   <div class="grille">
     <label>Quand parler<select name="mode">${Object.entries(VOIX_MODES).map(([k, t]) => `<option value="${k}"${k === v.mode ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
-    <label>Voix <span class="det">(OpenAI : alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse)</span><input name="nom" value="${esc(v.nom)}" maxlength="30"></label>
+    <label>Voix <span class="det">(voix gratuite : ff_siwis, la seule en français ; OpenAI : alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer…)</span><input name="nom" value="${esc(v.nom)}" maxlength="30"></label>
     <label style="display:flex;gap:.5rem;align-items:center;color:var(--fg);margin-top:1.4rem"><input type="checkbox" name="texte" value="on"${v.texteAussi ? " checked" : ""} style="width:auto;margin:0"> Envoyer aussi le texte</label>
   </div>
   <label>Comment il parle <span class="det">(ton, débit, accent — pris en compte par les modèles gpt-4o-mini-tts)</span>

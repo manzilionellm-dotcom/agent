@@ -78,8 +78,12 @@ export async function synthese(texte: string, r?: VoixReglages): Promise<Buffer>
   // l'envoyer à un ancien modèle risque un refus pour paramètre inconnu.
   if (reg.consignes && /gpt-4o/.test(model)) corps.instructions = reg.consignes;
 
+  // La voix locale (Kokoro sur le serveur) calcule à peu près en temps réel :
+  // une réponse d'une minute prend une minute. 45 s la coupaient en plein
+  // milieu ; un service en ligne, lui, répond en quelques secondes.
+  const locale = /^http:\/\/(voix|localhost|127\.0\.0\.1)(:\d+)?\//.test(base + "/");
   const ctl = new AbortController();
-  const minuterie = setTimeout(() => ctl.abort(), 45_000);
+  const minuterie = setTimeout(() => ctl.abort(), locale ? 150_000 : 45_000);
   try {
     const res = await fetch(`${base}/audio/speech`, {
       method: "POST",

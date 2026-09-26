@@ -106,6 +106,25 @@ services:
       retries: 5
       start_period: 40s
 
+  # Voix gratuite (Kokoro ONNX) : les notes vocales du bot sans clé ni coût
+  # par message. Profil « voix » : elle ne démarre que si on la demande
+  # (deploy/voix-gratuite.sh), parce qu'elle prend ~400 Mo de mémoire.
+  # Réseau interne seulement : rien ne sort, rien n'entre de l'extérieur.
+  voix:
+    build:
+      context: .
+      dockerfile: docker/voix/Dockerfile
+    container_name: manzi-voix
+    profiles: ["voix"]
+    restart: unless-stopped
+    init: true
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp:size=64m]
+    mem_limit: 700m
+    cpus: 1
+    networks: [internal]
+
   # Sauvegarde quotidienne de la mémoire (dump gzip, rotation 14 jours).
   backup:
     image: postgres:16-alpine
