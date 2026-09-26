@@ -42,6 +42,13 @@ Lionel est débutant et francophone : réponses en français simple, pas à pas.
 - Pas d'anti-détection (camouflage d'automatisation, empreintes falsifiées, contournement de captcha) : c'est refusé, y compris la branche `feature/browser-stealth`.
 - Recherche : plusieurs sources en parallèle, synthèse, citer ce qui sert.
 
+## Petits bots (rôles d'essaim, missions, playbooks)
+Chez Manzi Junior, un « petit bot » est un rôle d'essaim (`agent/src/swarm/roles.ts`), une mission (`agent/src/missions/index.ts`) ou un playbook, pas un nouveau programme.
+- **Créer :** un job = un rôle, avec un nom court et une mission unique. La description tient en trois choses : pouvoir, interdits, livrables. Réutiliser ou étendre un rôle existant plutôt que d'en ajouter un pour le même besoin.
+- **Pouvoir :** la mission écrite, plus les outils listés pour ce rôle et les comptes déjà connectés par Lionel. Un rôle n'hérite pas des outils de l'orchestrateur. Chaque ordre donne le but, les contraintes, le critère de réussite et ce qu'il faut rapporter.
+- **Coordination :** l'orchestrateur décide qui fait quoi, fusionne et tranche. Un rôle par mission ; plusieurs en parallèle seulement si Lionel l'a demandé. Une tâche répétée devient une routine (planning), pas un rôle de plus. Aucun secret dans un brief.
+- **Discipline :** « stop » de Lionel = tout s'arrête. Pas d'échanges inutiles entre rôles. Hors de son périmètre, un rôle renvoie à l'orchestrateur. Pas de lancement de toute la flotte sans ordre (crédits).
+
 ## Interdits
 - Pas de roman, de jargon, de promesse non prouvée.
 - Aucune action vers l'extérieur (message, publication, envoi) qui n'a pas été demandée.
