@@ -7,7 +7,7 @@ import { logger } from "./logger.js";
 import { closeEpisode, openEpisode, spentToday } from "./memory/store.js";
 import { dailyBudget, plafondTexte, secretFor, setting, setSetting } from "./providers.js";
 import { approbationsActives } from "./channels/approvals.js";
-import { runRouted } from "./llm/router.js";
+import { estSansCredit, runRouted } from "./llm/router.js";
 import { untrusted } from "./safety.js";
 import { SECTIONS, SECTION_IDS, type SectionId } from "./panel-sections.js";
 import {
@@ -341,7 +341,20 @@ const plantages: Detecteur = {
        FROM boite_noire WHERE type='erreur' AND ts > now() - interval '${FENETRE}'`,
     );
     const n = Number(p.rows[0]?.n ?? 0);
-    if (n) {
+    // Un « plantage » qui n'est qu'un compte de modèle vide n'est pas un bug :
+    // le 26 septembre, les 4 plantages étaient des « 402 Insufficient
+    // Balance » de DeepSeek, et le panneau conseillait d'envoyer un rapport
+    // au développeur. Le remède est de recharger le compte.
+    const exemples = (p.rows[0]?.ex ?? []).map((e) => court(e.split("\n")[0]));
+    if (n && exemples.length && exemples.every((e) => estSansCredit(e))) {
+      out.push({
+        signature: "sans-credit", source: "modèles", gravite: "critique",
+        titre: `Compte de modèle sans crédit : ${n} travail(aux) arrêté(s)`, detail: "Le fournisseur a répondu 402 (compte vide). Tant qu'il n'est pas rechargé, le bot passe par les autres modèles ; s'il n'en reste aucun, il ne peut plus répondre.",
+        occurrences: n, usd: 0, exemples, traces: p.rows[0]!.traces ?? [],
+        correction: "Recharge le compte : DeepSeek sur platform.deepseek.com (menu Top up). Puis « C'est réglé ».",
+        section: "services",
+      });
+    } else if (n) {
       out.push({
         signature: "plantage", source: "boîte noire", gravite: n >= 3 ? "critique" : "haute",
         titre: `${n} travail(aux) ont planté en cours de route`, detail: "Une exception a traversé tout le travail : tu as reçu « Je bute sur une erreur interne » ou rien du tout.",
