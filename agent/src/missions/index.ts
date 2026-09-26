@@ -16,17 +16,10 @@ import { auditTool } from "../tools/audit.js";
 import { alertTool } from "../tools/notify.js";
 import { browserTool } from "../tools/browser.js";
 
-/**
- * Une mission = un cahier des charges + un jeu d'outils + un budget.
- * Le planificateur (Opus 5) reçoit TOUT d'un coup : mémoire, date, consignes.
- * Les missions « bulk » (veille, SEO) tournent sur Sonnet 5 : 2,5× moins cher,
- * largement suffisant quand le cadre est précis.
- */
+/** Une mission = un cahier des charges + un jeu d'outils + un budget. */
 export type Mission = {
   name: string;
-  /** cron 5 champs, dans le fuseau TZ de la config. */
   cron: string;
-  /** critical = écrit du code et/ou déploie → fournisseur/modèle critiques (Claude en mode éco). */
   model: "planner" | "worker" | "critical";
   effort: Effort;
   budgetUsd: number;
@@ -204,6 +197,26 @@ Mission RÉFLEXION QUOTIDIENNE — c'est ainsi que tu évolues. Tu n'es pas ré-
 Critère de succès : playbooks à jour avec preuves, métriques 7 jours, aucun enseignement inventé.`,
 });
 
+MISSIONS.push({
+  name: "grok_bots_sync",
+  cron: "0 4 * * *",
+  model: "critical",
+  effort: "high",
+  budgetUsd: 3,
+  maxIterations: 50,
+  mcpServers: ["github"],
+  tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), ensureRepoTool, coderTool, pushDeployTool, alertTool],
+  task: ({ now, repo }) => `Date: ${now.toISOString()}. Dépôt de l'agent: ${repo}.
+Mission GROK BOTS SYNC — synchronisation quotidienne avec les Grok Bots de Lionel.
+1. Lis /memories/grok-bots/liste.md (crée-le à la première exécution : liste des Grok Bots actifs de Lionel avec leur nom, description, règles, anti-jobs, CTA WhatsApp +44 7307 410512 si IPTV). Si la liste est vide, cherche via github__search_code / github__search_repositories les dépôts liés à Lionel (manzilionellm-dotcom) et note les bots trouvés.
+2. Pour chaque bot actif : vérifie que son rôle/mission dans agent/src/swarm/roles.ts et agent/src/missions/index.ts reflète fidèlement sa description Grok Bot (spécialisation stricte, règles, anti-jobs, soft-sell white-hat, preuves curl, 0 M3U, 0 AggregateRating inventé). Note les écarts dans /memories/grok-bots/ecarts.md.
+3. Propose des ajouts de missions/rôles/playbooks manquants SANS toucher à l'existant : ouvre une branche feature/grok-bots-sync-<date>, délègue au codeur les ajouts uniquement, typecheck vert, commit. Ne pousse pas sur main.
+4. Ouvre une pull request vers main avec description claire des ajouts uniquement (titre: "sync(grok-bots): <date>").
+5. Rapport dans /memories/grok-bots/rapport-<date>.md : bots synchronisés, écarts trouvés, PR URL ou « rien à faire », coût.
+Critère de succès : rapport listant bots synchronisés + écarts + PR ouverte ou « rien à faire » justifié. Zéro modification de l'existant hors ajouts.
+Règles : français, concis, ne rien casser, compatible mode manuel et profil éco. Si tu bloques sur une clé ou un outil, dis-le dans le rapport.`,
+});
+
 export function findMission(name: string): Mission | undefined {
   return MISSIONS.find((m) => m.name === name);
 }
@@ -226,7 +239,6 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
   const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${m.task(ctx)}\n\n<memoire>\n${ctx.memory}\n</memoire>`;
   const tools = [...m.tools, ...mcpToolsFor(m.mcpServers, { allowIrreversible: m.allowIrreversible })];
 
-  // Timeout mural : une mission qui traîne (site qui ne répond pas, build infini) est arrêtée proprement.
   const timeout = AbortSignal.timeout(cfg.MISSION_TIMEOUT_MIN * 60_000);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
   try {
@@ -245,9 +257,6 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
     let status: "ok" | "failed" | "budget" = res.stopReason === "budget_exceeded" ? "budget" : ["refusal", "loop_detected", "timeout"].includes(res.stopReason ?? "") ? "failed" : "ok";
     let text = res.finalText;
 
-    // Vérification indépendante : un « juge » relit le résumé final contre le cahier des charges.
-    // Il ne peut pas voir ce que l'agent n'a pas rapporté, mais il attrape les missions qui
-    // déclarent « fait » sans preuve (URL, sortie de commande, chiffre). Coût ≈ 0,01 $.
     if (cfg.VERIFY_MISSIONS && status === "ok") {
       const verdict = await verify(m, text).catch((e) => (log.warn({ err: String(e) }, "juge indisponible"), undefined));
       if (verdict) {
@@ -272,7 +281,6 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
 
 type Verdict = { score: number; pass: boolean; issues: string[]; usd: number };
 
-/** Juge indépendant (modèle worker, effort bas) : preuves présentes ? critères de succès atteints ? rien d'inventé ? */
 async function verify(m: Mission, finalText: string): Promise<Verdict> {
   const spec = m.task({ now: new Date(), memory: "", siteUrl: config().SITE_URL ?? "", repo: config().GITHUB_REPO });
   const { value, usd } = await structured<{ score: number; pass: boolean; issues: string[] }>({
@@ -281,15 +289,15 @@ async function verify(m: Mission, finalText: string): Promise<Verdict> {
     system:
       "Tu es un vérificateur sévère mais juste. On te donne le cahier des charges d'une mission et le compte rendu final de l'agent. Note de 0 à 10 : le critère de succès est-il atteint avec des PREUVES concrètes (URL, sortie de commande, chiffres sourcés, fichiers nommés) ? Un compte rendu qui affirme sans preuve, contredit le cahier des charges, ou contient des chiffres non sourcés est pénalisé. pass = score ≥ 6. Liste les problèmes en une ligne chacun (max 6). Ne juge pas le style.",
     schema: {
-      type: "json_schema",
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["score", "pass", "issues"],
-        properties: { score: { type: "integer", minimum: 0, maximum: 10 }, pass: { type: "boolean" }, issues: { type: "array", items: { type: "string" }, maxItems: 6 } },
+      type: "object",
+      properties: {
+        score: { type: "number" },
+        pass: { type: "boolean" },
+        issues: { type: "array", items: { type: "string" } },
       },
+      required: ["score", "pass", "issues"],
     },
-    prompt: `<cahier_des_charges>\n${spec.slice(0, 6000)}\n</cahier_des_charges>\n\n<compte_rendu>\n${finalText.slice(0, 12_000) || "(vide)"}\n</compte_rendu>`,
+    prompt: `Cahier des charges:\n${spec}\n\nCompte rendu final:\n${finalText}`,
   });
   return { ...value, usd };
 }

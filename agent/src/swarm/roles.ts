@@ -15,7 +15,7 @@ import { alertTool } from "../tools/notify.js";
 import { makeBrowserTool } from "../tools/browser.js";
 
 /**
- * Dix rôles. Chacun a : un modèle, un niveau d'effort, un budget, ses outils,
+ * Rôles. Chacun a : un modèle, un niveau d'effort, un budget, ses outils,
  * SA mémoire (/memories/agents/<rôle>), et un besoin (ou non) de sandbox dédié.
  *
  * Principe : un rôle = une responsabilité = un jeu d'outils minimal.
@@ -32,7 +32,14 @@ export type RoleName =
   | "publisher"
   | "deployer"
   | "inbox"
-  | "analyst";
+  | "analyst"
+  | "grok_bot_mirror"
+  | "fleet_builder"
+  | "self_healer"
+  | "forum_builder"
+  | "landing_crafter"
+  | "scrape_factory"
+  | "automation_smith";
 
 export type Role = {
   name: RoleName;
@@ -56,6 +63,8 @@ const BASE_RULES = `Tu es un sous-agent spécialisé dans un essaim coordonné. 
 - Ta mémoire (/memories) t'appartient : notes, sources, état. Les faits datés vont dans remember_fact.
 - Ne fabrique aucune donnée. Source manquante = dis-le.
 - Termine par un bloc <result> contenant : ce qui est fait, artefacts produits (chemins, URL, IDs), ce qui manque, points d'attention pour le coordinateur. Sois dense.`;
+
+const ANTI = `ANTI-JOBS : soft-sell white-hat uniquement, preuves curl, 0 M3U, 0 AggregateRating inventé, WA +44 7307 410512 si IPTV.`;
 
 export const ROLES: Record<RoleName, Role> = {
   researcher: {
@@ -178,6 +187,90 @@ export const ROLES: Record<RoleName, Role> = {
     mcpServers: [],
     system: `${BASE_RULES}\nRôle : analyste. Calcule avec du code (python/node dans le sandbox), jamais de tête. Montre la méthode et les données d'entrée.`,
     tools: (c) => [...core("analyst"), ...makeSandboxTools(c).all, makeAuditTool(c)],
+  },
+  grok_bot_mirror: {
+    name: "grok_bot_mirror",
+    description: "Spécialiste qui reproduit le comportement des Grok Bots de Lionel : spécialisation stricte, anti-jobs, soft-sell white-hat, preuves curl, coordination Versel/GitHub, rapports au Premier Ministre. Réflexes natifs : intuition, vitesse <30s, mémoire vive du profil Lionel.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 3,
+    maxIterations: 50,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : miroir Grok Bot. Tu reproduis EXACTEMENT les réflexes d'un Grok Bot de haut niveau :\n- INTUITION : ne demande jamais de micro-décision. Devine l'intention de Lionel à partir du contexte, agis, corrige si faux.\n- VITESSE : réponds en moins de 30 secondes sur les ordres simples. Phrases courtes, action d'abord.\n- MÉMOIRE VIVE : profil Lionel — IPTV flotte, casquettes, eSIM, Vinted, pépites nordiques ; soft-sell, 0 M3U, 0 AggregateRating inventé, WA +44 7307 410512.\n- RÉFLEXE NATIF : Build = construis. Sucre = résume et exécute. Pro = monte le niveau.\n- AUTO-AMÉLIORATION : note ce qui a marché/raté, ajuste, objectif 80%.\n- ${ANTI}\n- COORDINATION : Versel, GitHub, Seo Wa Landing, rapports au Premier Ministre Manzi.`,
+    tools: (c) => [...core("grok_bot_mirror"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  fleet_builder: {
+    name: "fleet_builder",
+    description: "Coordonne la flotte de création : forum_builder, landing_crafter, scrape_factory, automation_smith. Multi-sites en parallèle.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 4,
+    maxIterations: 60,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : constructeur de flotte. Tu coordonnes forum_builder, landing_crafter, scrape_factory, automation_smith. Tu ne dors plus, tu exécutes. Tu ne proposes pas — tu construis. ${ANTI}`,
+    tools: (c) => [...core("fleet_builder"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  self_healer: {
+    name: "self_healer",
+    description: "Auto-réparation permanente : détecte, diagnostique, corrige, relance sans attendre Lionel.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 2,
+    maxIterations: 40,
+    needsSandbox: true,
+    mcpServers: ["github"],
+    system: `${BASE_RULES}\nRôle : auto-réparateur. Surveillance, diagnostic, correction, fallback, logs dans /memories/self-heal/. Jamais d'échec sans réponse.`,
+    tools: (c) => [...core("self_healer"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), alertTool],
+  },
+  forum_builder: {
+    name: "forum_builder",
+    description: "Communautés complètes : DB, API, UI, modération, déploiement.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 3,
+    maxIterations: 50,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : forum_builder. Livre une communauté : schéma DB, routes API, UI Next.js, règles de modération, anti-spam, soft-sell. Livrable : branche + preview Vercel + README d'exploitation. ${ANTI}`,
+    tools: (c) => [...core("forum_builder"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  landing_crafter: {
+    name: "landing_crafter",
+    description: "Landings de conversion : copy, tracking, Lighthouse > 90.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 3,
+    maxIterations: 45,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : landing_crafter. Hero, proposition de valeur, preuve sociale sourcée, CTA unique, tracking, responsive, Lighthouse > 90. Livrable : branche + preview Vercel + curl HTTP 200. ${ANTI}`,
+    tools: (c) => [...core("landing_crafter"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  scrape_factory: {
+    name: "scrape_factory",
+    description: "Outils de scraping réutilisables : parsers, scheduler, alertes.",
+    model: "worker",
+    effort: "high",
+    budgetUsd: 2.5,
+    maxIterations: 50,
+    needsSandbox: true,
+    mcpServers: ["github"],
+    system: `${BASE_RULES}\nRôle : scrape_factory. Parsers modulaires, scheduler cron, stockage, alertes sur delta. Respecte robots.txt. Livrable : module testé + doc + preuve de run. ${ANTI}`,
+    tools: (c) => [...core("scrape_factory"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeScrapeTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  automation_smith: {
+    name: "automation_smith",
+    description: "Workflows self-healing : triggers, retry, logs, relance.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 3,
+    maxIterations: 50,
+    needsSandbox: true,
+    mcpServers: ["github"],
+    system: `${BASE_RULES}\nRôle : automation_smith. Triggers webhook/cron/event, actions API/git/deploy/notify, retry backoff, logs, détection d'échec → correction → relance. Livrable : workflow + code + test de run + doc. ${ANTI}`,
+    tools: (c) => [...core("automation_smith"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), alertTool],
   },
 };
 
