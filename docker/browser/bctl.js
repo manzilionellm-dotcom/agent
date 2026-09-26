@@ -3,6 +3,8 @@
  * Client du démon navigateur : `bctl <action> '<json args>'`.
  * Démarre le démon s'il ne tourne pas (détaché), attend qu'il réponde, envoie la commande,
  * imprime la réponse JSON sur stdout. Utilisé par l'outil `browser` de l'orchestrateur.
+ *
+ * Stealth : charge stealth-preload.js avant daemon.js (fingerprint + locale/tz).
  */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
@@ -44,7 +46,8 @@ function post(payload) {
 async function ensureDaemon() {
   try { await post({ action: "status" }); return; } catch {}
   const log = fs.openSync("/work/browser-daemon.log", "a");
-  const child = spawn(process.execPath, [__dirname + "/daemon.js"], { detached: true, stdio: ["ignore", log, log], env: process.env, cwd: "/work" });
+  // -r stealth-preload : patches Playwright avant que daemon.js ne le require
+  const child = spawn(process.execPath, ["-r", __dirname + "/stealth-preload.js", __dirname + "/daemon.js"], { detached: true, stdio: ["ignore", log, log], env: process.env, cwd: "/work" });
   child.unref();
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 500));

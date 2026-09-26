@@ -1,0 +1,21 @@
+{
+  "name": "manzi-browser-daemon",
+  "private": true,
+  "version": "1.1.0",
+  "description": "Manzi Junior browser daemon (bctl + stealth). Uses global playwright from sandbox image; no local node_modules required.",
+  "main": "daemon.js",
+  "scripts": {
+    "start": "node daemon.js",
+    "bctl": "node bctl.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "playwright": "1.55.0"
+  },
+  "notes": {
+    "stealth": "Manual patches in stealth.js (equivalent to puppeteer-extra-plugin-stealth subset). Prefer BROWSER_CDP_URL → real Chrome.",
+    "chromeVersion": "140.0.7339.16 matches playwright@1.55 Chromium"
+  }
+}
