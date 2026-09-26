@@ -39,8 +39,8 @@ export function makeBrowserTool(container?: string) {
       "form{selector?} : liste les champs d'un formulaire (nom, type, étiquette, options) — appelle-le plutôt que de deviner un sélecteur · " +
       "select{selector|label, value|name|index} : liste déroulante (type ne marche pas sur un <select>) · " +
       "check{selector|label, uncheck?} : case à cocher · " +
-      "upload{selector|label, file | files:[…]} : envoie un ou plusieurs fichiers de /work dans un champ de fichier (les photos reçues sur WhatsApp sont dans /work/whatsapp/) · " +
-      "download{selector|text|url} : clique et récupère le fichier dans /work/downloads (factures PDF, exports) · " +
+      "upload{file | files:[…], selector|label|text ?} : envoie un ou plusieurs fichiers de /work dans un champ de fichier (les photos reçues sur WhatsApp sont dans /work/whatsapp/) ; sans cible, le premier champ fichier de la page ; la cible peut aussi être le bouton « Ajouter des photos » · " +
+      "download{url} : récupère directement un fichier ou une IMAGE par son adresse (photo d'annonce : trouve son src avec eval) ; download{selector|text} : clique un lien de téléchargement (facture PDF, export) ; le fichier va dans /work/downloads · " +
       "gmail{op:inbox|search|read, query?, index?, max?} : la boîte Gmail de l'opérateur, telle qu'elle est ouverte dans ce navigateur — inbox liste les derniers messages, search cherche (« from:ionos », « is:unread »), read{index} ouvre le n-ième de la liste et rend son texte. C'est le chemin des e-mails quand les outils gmail_* sont absents ou en panne. " +
       "Les cibles sont cherchées aussi dans les iframes, et un clic qui ouvre un onglet le suit tout seul. " +
       "Un appel = une action ; lis le résultat avant la suivante. Ne saisis JAMAIS un mot de passe avec `type` — si un site en demande un, utilise `login`.",
@@ -138,20 +138,28 @@ export function makeBrowserTool(container?: string) {
         return `Error: réponse navigateur illisible\n${r.stdout.slice(-1500)}\n${r.stderr.slice(-800)}`;
       }
       if (!out.ok) return `Error: ${out.error ?? "échec"}`;
-      if (action === "screenshot" && out.base64) {
+      if (action === "screenshot" && out.file) {
         // Mémorisée pour que `send_screenshot` puisse l'envoyer sans que le
         // modèle ait à recopier le chemin exactement — une capture qui
         // n'arrive pas parce qu'un caractère du chemin a été mal recopié est
         // une capture perdue pour rien.
-        if (out.file) lastShot.set(container ?? "", String(out.file));
-        const img: Anthropic.Beta.Messages.BetaImageBlockParam = { type: "image", source: { type: "base64", media_type: "image/png", data: out.base64 } };
+        lastShot.set(container ?? "", String(out.file));
         const voit = cfg.LLM_PROVIDER_CRITICAL === "anthropic" || cfg.LLM_PROVIDER === "anthropic";
+        // Les octets ne passent plus par la réponse du démon (coupée à
+        // 40 000 caractères) : on ne lit le fichier que pour un modèle qui
+        // sait regarder une image, avec une sortie assez large pour elle.
+        let data = out.base64;
+        if (voit && !data) {
+          const lu = await sandboxExec(`base64 -w0 ${shellQuote(String(out.file))}`, { timeoutMs: 30_000, container, maxOutput: 12_000_000 });
+          data = lu.code === 0 ? lu.stdout.trim() : undefined;
+        }
+        const img: Anthropic.Beta.Messages.BetaImageBlockParam | undefined = data ? { type: "image", source: { type: "base64", media_type: "image/png", data } } : undefined;
         // Le modèle qui ne VOIT pas l'image peut parfaitement l'ENVOYER.
         // L'ancien texte disait « utilise text/links » : lu comme « laisse
         // tomber la capture », il expliquait à lui seul pourquoi Lionel ne
         // recevait jamais rien. Dans les deux cas on redit quoi en faire.
         const suite = `capture prise : ${out.file}. Envoie-la à Lionel avec send_screenshot pour qu'il la voie.`;
-        return voit ? [{ type: "text", text: suite }, img] : `${suite} (tu ne peux pas la regarder toi-même avec ce modèle ; pour LIRE la page, utilise text ou links)`;
+        return voit && img ? [{ type: "text", text: suite }, img] : `${suite} (tu ne peux pas la regarder toi-même avec ce modèle ; pour LIRE la page, utilise text ou links)`;
       }
       delete out.base64;
       const body = JSON.stringify(out, null, 1).slice(0, 30_000);

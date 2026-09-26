@@ -494,10 +494,16 @@ async function probe(url: string, headers: Record<string, string>): Promise<{ st
   const t = setTimeout(() => ctl.abort(), TEST_TIMEOUT_MS);
   try {
     const r = await fetch(url, { headers, signal: ctl.signal });
-    const texte = (await r.text()).slice(0, 600);
+    // On lit la réponse ENTIÈRE, et on ne coupe que le texte affiché. Couper
+    // avant de lire rendait illisible toute réponse de plus de 600
+    // caractères — celles de GitHub en font 1 500 à 6 000 : le test ne
+    // trouvait ni le nom du compte (« Connecté en tant que ? ») ni le droit
+    // d'écriture, et déclarait « lecture seule » une clé parfaitement bonne.
+    // Les missions de code s'arrêtaient alors au pré-vol, pour rien.
+    const complet = await r.text();
     let body: unknown;
-    try { body = JSON.parse(texte); } catch { body = undefined; }
-    return { status: r.status, body, texte };
+    try { body = JSON.parse(complet); } catch { body = undefined; }
+    return { status: r.status, body, texte: complet.slice(0, 600) };
   } finally {
     clearTimeout(t);
   }

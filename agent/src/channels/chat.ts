@@ -19,7 +19,7 @@ import { blocCompetences, outilsCompetences } from "../competences.js";
 import { outilsDeclencheurs } from "../declencheurs.js";
 import { outilImage, outilRetouche } from "../images.js";
 import { SECTIONS, SECTION_IDS, type SectionId } from "../panel-sections.js";
-import { runRouted } from "../llm/router.js";
+import { estSansCredit, runRouted } from "../llm/router.js";
 import { REFLEXIONS } from "../llm/openaiCompat.js";
 import { logger } from "../logger.js";
 import { db } from "../memory/db.js";
@@ -727,6 +727,12 @@ export async function handleChat(opts: { channel: "whatsapp" | "api"; peer: stri
     }),
   ).catch((e) => {
     logger.error({ err: String(e) }, "chat");
+    // Tous les cerveaux ont échoué et le dernier faute d'argent : c'est ça
+    // qu'il faut dire, pas « erreur interne » — la seule réparation est de
+    // recharger un compte, et Lionel ne peut pas le deviner.
+    if (estSansCredit(String(e))) {
+      return "💳 Mes cerveaux n'ont plus de crédit (erreur 402 : compte vide). Recharge DeepSeek sur platform.deepseek.com, ou écris « active Claude » pour que je passe par Claude en attendant.";
+    }
     return "Je bute sur une erreur interne, réessaie dans une minute.";
   });
   queues.set(opts.peer, next);

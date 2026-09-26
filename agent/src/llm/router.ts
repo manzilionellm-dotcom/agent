@@ -157,12 +157,44 @@ export type RoutedResult = AgentRunResult & { backend: BackendName; attempts: Ba
  */
 export const ECHECS_MAX = 3;
 export const PANNE_MS = 10 * 60_000;
+/** Un compte à sec ne se remplit pas en dix minutes : on l'écarte six heures. */
+export const SANS_CREDIT_MS = 6 * 60 * 60_000;
 const pannes = new Map<string, { echecs: number; jusqua: number; raison: string }>();
+
+/**
+ * « 402 Insufficient Balance » (DeepSeek), « insufficient_quota » (OpenAI),
+ * « credit balance is too low » (Anthropic) : le compte n'a plus d'argent.
+ * Le 25 septembre, quatre conversations ont planté là-dessus, et Lionel a
+ * reçu « Je bute sur une erreur interne » au lieu de « recharge DeepSeek ».
+ */
+export function estSansCredit(err: string): boolean {
+  return /\b402\b|insufficient[ _-]?balance|insufficient_quota|credit balance is too low|payment required|exceeded your current quota|billing/i.test(err);
+}
+
+type AlerteCredit = (cerveau: string, raison: string) => void | Promise<void>;
+let surSansCredit: AlerteCredit | undefined;
+
+/** Branché par index.ts : prévenir Lionel sur WhatsApp. Le routeur ne connaît pas WhatsApp. */
+export function quandSansCredit(cb: AlerteCredit): void {
+  surSansCredit = cb;
+}
 
 export function noterEchec(name: string, raison: string): void {
   const p = pannes.get(name) ?? { echecs: 0, jusqua: 0, raison: "" };
   p.echecs += 1;
   p.raison = raison.slice(0, 160);
+  if (estSansCredit(raison)) {
+    // Pas besoin d'attendre trois échecs : le quatrième ne trouvera pas plus
+    // d'argent sur le compte que le premier.
+    const deja = p.jusqua > Date.now();
+    p.jusqua = Date.now() + SANS_CREDIT_MS;
+    pannes.set(name, p);
+    if (!deja) {
+      logger.error({ backend: name, raison: p.raison }, "compte sans crédit — cerveau écarté 6 h");
+      void Promise.resolve(surSansCredit?.(name, p.raison)).catch(() => undefined);
+    }
+    return;
+  }
   if (p.echecs >= ECHECS_MAX) {
     p.jusqua = Date.now() + PANNE_MS;
     logger.warn({ backend: name, echecs: p.echecs, raison: p.raison }, "cerveau écarté du routage pour 10 minutes");

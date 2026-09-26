@@ -35,6 +35,7 @@ import { adresse, definirMotDePasse, envoyerCode, motDePasseDefini, pageConnexio
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, REGLES_MAX, personnalite } from "./personality.js";
 import { adresseCrochet, basculerCrochet, creerCrochet, recevoir, regenererSecret, supprimerCrochet, traiter as traiterCrochet } from "./crochets.js";
 import { supprimerRefus } from "./refus.js";
+import { quandSansCredit } from "./llm/router.js";
 import { veillerDepense } from "./scheduler.js";
 import { VOIX_MODES, synthese } from "./voice.js";
 import { estCommandeEcran, ouvrirSurEcran, sitesConnectes, telecommande } from "./navigator.js";
@@ -1067,6 +1068,26 @@ async function main(): Promise<void> {
   ).catch((e) => logger.error({ err: String(e) }, "inspecteur non démarré"));
   await startScheduler();
   if (cfg.HEARTBEAT_ALERTS) { startHeartbeat(); startKeyWatch(); }
+  // Un compte de modèle à sec : un seul message, avec où recharger. Au plus
+  // un toutes les 12 h par service, même après un redémarrage.
+  quandSansCredit(async (cerveau, raison) => {
+    const cle = `alerte_credit_${cerveau}`;
+    const avant = Number(await setting(cle).catch(() => "0")) || 0;
+    if (Date.now() - avant < 12 * 60 * 60_000) return;
+    await setSetting(cle, String(Date.now()));
+    const RECHARGE: Record<string, string> = {
+      deepseek: "platform.deepseek.com (menu Top up)",
+      mistral: "console.mistral.ai (Billing)",
+      claude: "console.anthropic.com (Billing)",
+      anthropic: "console.anthropic.com (Billing)",
+      openai: "platform.openai.com (Billing)",
+      xai: "console.x.ai (Billing)",
+      groq: "console.groq.com (Billing)",
+    };
+    const ou = RECHARGE[cerveau.toLowerCase()] ?? "le site du fournisseur";
+    const to = primaryNumber();
+    if (to) await deliverWhatsApp(to, `💳 Le compte ${cerveau} n'a plus de crédit (${raison.slice(0, 80)}). Je l'écarte 6 h et je passe par les autres modèles. Recharge sur ${ou}.`).catch(() => false);
+  });
   // Veille de dépense : toutes les dix minutes, un message au seuil, un frein au double.
   const veille = () => {
     const to = primaryNumber();

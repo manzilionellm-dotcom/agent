@@ -137,6 +137,108 @@ async function locator(a) {
   return direct; // laisse Playwright produire son message d'erreur habituel
 }
 
+function decrireCible(a) {
+  return a.selector ? `selector ${a.selector}` : a.text ? `texte « ${a.text} »` : a.role ? `role ${a.role}${a.name ? ` « ${a.name} »` : ""}` : a.label ? `label « ${a.label} »` : a.placeholder ? `placeholder « ${a.placeholder} »` : "cible";
+}
+
+/**
+ * La cible, ou une erreur IMMÉDIATE et utile si elle n'existe pas.
+ *
+ * Avant, un sélecteur faux attendait 10 s (clic) ou 30 s (saisie) avant
+ * « Timeout exceeded » : 33 échecs de ce genre le 25 septembre, soit des
+ * minutes perdues par conversation et un message qui ne disait pas quoi
+ * faire. On attend au plus 5 s qu'elle apparaisse (page qui charge), puis on
+ * dit qu'elle n'existe pas, et comment trouver la bonne.
+ */
+async function cible(a) {
+  const l = await locator(a);
+  if (await l.count().then((n) => n > 0).catch(() => false)) return l;
+  const vue = await l.waitFor({ state: "attached", timeout: 5_000 }).then(() => true).catch(() => false);
+  if (!vue) throw new Error(`cible introuvable : ${decrireCible(a)}. Appelle text, links ou form pour voir ce qui est vraiment sur la page, puis vise un texte ou un label qui y figure.`);
+  return l;
+}
+
+/** Une erreur qui veut dire « l'élément existe mais Playwright refuse de cliquer » (recouvert, hors écran, pas stable). */
+const BLOQUE = /Timeout|intercepts pointer events|not visible|outside of the viewport|not stable|element is not enabled/i;
+
+/**
+ * Clic, avec repli. Un bandeau cookies, une bulle de chat ou une animation
+ * recouvre souvent le bouton : Playwright attend alors qu'il soit « cliquable »
+ * et abandonne. Le repli déclenche le clic dans la page (element.click()),
+ * comme le ferait un script du site — l'élément reçoit le clic même recouvert.
+ */
+async function cliquer(l) {
+  try {
+    await l.click({ timeout: 6_000 });
+    return "normal";
+  } catch (e) {
+    if (!BLOQUE.test(String(e))) throw e;
+    await l.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => undefined);
+    await l.evaluate((el) => el.click(), undefined, { timeout: 3_000 });
+    return "dom";
+  }
+}
+
+/**
+ * Écrit une valeur dans un champ en passant par la page. Le « setter » natif
+ * est nécessaire : React et Vue ignorent une valeur posée directement, et le
+ * formulaire se soumet vide alors que le champ affiche le texte.
+ */
+function poserValeur(el, v) {
+  el.focus();
+  if (el.isContentEditable) {
+    el.textContent = v;
+  } else {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const set = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (set) set.call(el, v); else el.value = v;
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/** Nom de fichier propre, avec l'extension déduite du type si l'adresse n'en a pas. */
+function nomFichier(brut, type) {
+  let nom = (brut || `fichier-${Date.now()}`).split(/[?#]/)[0].split("/").pop() || `fichier-${Date.now()}`;
+  try { nom = decodeURIComponent(nom); } catch { /* garde tel quel */ }
+  nom = nom.replace(/[^\w.\-]/g, "_").slice(-100);
+  const ext = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf", "text/csv": ".csv", "application/zip": ".zip" }[(type || "").split(";")[0].trim()];
+  if (ext && !/\.[a-z0-9]{2,5}$/i.test(nom)) nom += ext;
+  return nom;
+}
+
+/**
+ * Récupère un fichier par son adresse, avec les cookies du navigateur (une
+ * photo derrière une connexion reste accessible). C'est le bon chemin pour
+ * une IMAGE : ouvrir l'adresse d'une image l'affiche, ça ne « télécharge »
+ * rien, et attendre un téléchargement tournait 60 s pour rien.
+ */
+async function recupererParAdresse(url) {
+  if (/^(blob|data):/i.test(url)) {
+    // Une adresse blob: n'existe que dans la page : c'est elle qui la lit.
+    const r = await page.evaluate(async (u) => {
+      const b = await (await fetch(u)).blob();
+      if (b.size > 25 * 1024 * 1024) throw new Error(`fichier de ${b.size} octets : trop gros (25 Mo max)`);
+      const buf = new Uint8Array(await b.arrayBuffer());
+      let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return { type: b.type, b64: btoa(s) };
+    }, url);
+    return { corps: Buffer.from(r.b64, "base64"), type: r.type, nom: nomFichier("", r.type) };
+  }
+  const r = await context.request.get(url, { timeout: 60_000, maxRedirects: 10 });
+  if (!r.ok()) throw new Error(`HTTP ${r.status()} en récupérant ${url}`);
+  const type = r.headers()["content-type"] || "";
+  const dispo = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(r.headers()["content-disposition"] || "");
+  return { corps: await r.body(), type, nom: nomFichier(dispo ? dispo[1] : url, type), html: /text\/html/i.test(type) };
+}
+
+function ranger(f) {
+  fs.mkdirSync(DOWNLOADS, { recursive: true });
+  const dest = `${DOWNLOADS}/${Date.now()}-${f.nom}`;
+  fs.writeFileSync(dest, f.corps);
+  return dest;
+}
+
 /**
  * Exécute une action susceptible d'ouvrir un onglet, et suit l'onglet ouvert.
  *
@@ -162,12 +264,29 @@ const handlers = {
   async text(a) { return { url: page.url(), title: await page.title(), text: await text(a.max_chars) }; },
   async html(a) { const h = await (a.selector ? page.locator(a.selector).first().innerHTML() : page.content()); return { html: h.slice(0, a.max_chars || 20_000) }; },
   async click(a) {
-    const l = await locator(a);
-    const suivi = await followPopup(() => l.click({ timeout: 10_000 }));
+    const l = await cible(a);
+    let methode = "normal";
+    const suivi = await followPopup(async () => { methode = await cliquer(l); });
     await page.waitForTimeout(a.settle_ms ?? 800);
-    return { url: page.url(), title: await page.title(), nouvel_onglet: suivi, text: await text(3_000) };
+    return { url: page.url(), title: await page.title(), nouvel_onglet: suivi, clic: methode, text: await text(3_000) };
   },
-  async type(a) { const l = await locator(a); await l.click({ timeout: 10_000 }); if (a.clear !== false) await l.fill(""); await l.type(a.value, { delay: 20 }); if (a.enter) await page.keyboard.press("Enter"); await page.waitForTimeout(a.settle_ms ?? 600); return { ok: true, url: page.url() }; },
+  async type(a) {
+    if (typeof a.value !== "string") throw new Error("value requis : le texte à écrire");
+    const l = await cible(a);
+    await cliquer(l).catch(() => undefined);
+    let methode = "clavier";
+    try {
+      if (a.clear !== false) await l.fill("", { timeout: 6_000 });
+      await l.pressSequentially(a.value, { delay: 20, timeout: 30_000 });
+    } catch (e) {
+      if (!BLOQUE.test(String(e)) && !/not an <input>|not editable/i.test(String(e))) throw e;
+      await l.evaluate(poserValeur, a.value, { timeout: 5_000 });
+      methode = "dom";
+    }
+    if (a.enter) await page.keyboard.press("Enter");
+    await page.waitForTimeout(a.settle_ms ?? 600);
+    return { ok: true, saisie: methode, url: page.url() };
+  },
 
   /**
    * Liste déroulante. `type` ne marche pas sur un <select> : Playwright
@@ -186,9 +305,16 @@ const handlers = {
 
   /** Case à cocher ou interrupteur. `click` fonctionne parfois ; `check` connaît l'état voulu et est donc idempotent. */
   async check(a) {
-    const l = await locator(a);
-    if (a.value === "false" || a.uncheck) await l.uncheck({ timeout: 10_000 });
-    else await l.check({ timeout: 10_000 });
+    const l = await cible(a);
+    const voulu = !(a.value === "false" || a.uncheck);
+    try {
+      if (voulu) await l.check({ timeout: 6_000 }); else await l.uncheck({ timeout: 6_000 });
+    } catch (e) {
+      // Case stylée (l'<input> est caché derrière un dessin) : un clic dans
+      // la page bascule l'état, on ne le fait que si l'état n'est pas déjà bon.
+      if (!BLOQUE.test(String(e)) && !/did not change its state/i.test(String(e))) throw e;
+      if ((await l.isChecked().catch(() => !voulu)) !== voulu) await l.evaluate((el) => el.click(), undefined, { timeout: 3_000 });
+    }
     await page.waitForTimeout(a.settle_ms ?? 400);
     return { ok: true, coche: await l.isChecked().catch(() => null), url: page.url() };
   },
@@ -201,10 +327,29 @@ const handlers = {
       if (!f.startsWith("/work/")) throw new Error(`chemin hors de /work : ${f}`);
       if (!fs.existsSync(f)) throw new Error(`fichier introuvable : ${f}`);
     }
-    const l = await locator(a);
-    await l.setInputFiles(files, { timeout: 15_000 });
+    // Sans cible : le premier champ fichier de la page, visible ou caché —
+    // c'est le cas de presque tous les boutons « Ajouter des photos ».
+    const sansCible = !a.selector && !a.text && !a.role && !a.label && !a.placeholder;
+    const l = sansCible ? page.locator("input[type=file]").first() : await cible(a);
+    let methode = "champ";
+    try {
+      await l.setInputFiles(files, { timeout: 6_000 });
+    } catch (e) {
+      // La cible est un bouton qui OUVRE le sélecteur de fichiers, pas le
+      // champ lui-même : on clique et on répond au sélecteur.
+      try {
+        const [chooser] = await Promise.all([page.waitForEvent("filechooser", { timeout: 8_000 }), cliquer(l)]);
+        await chooser.setFiles(files);
+        methode = "selecteur";
+      } catch {
+        const champ = page.locator("input[type=file]").first();
+        if (!(await champ.count().catch(() => 0))) throw new Error(`aucun champ fichier trouvé (${String(e).split("\n")[0].slice(0, 160)}). Appelle form pour voir les champs.`);
+        await champ.setInputFiles(files, { timeout: 8_000 });
+        methode = "premier_champ_fichier";
+      }
+    }
     await page.waitForTimeout(a.settle_ms ?? 800);
-    return { ok: true, envoyes: files, url: page.url() };
+    return { ok: true, envoyes: files, methode, url: page.url() };
   },
 
   /**
@@ -217,13 +362,36 @@ const handlers = {
    */
   async download(a) {
     fs.mkdirSync(DOWNLOADS, { recursive: true });
-    const wait = page.waitForEvent("download", { timeout: a.timeout_ms ?? 60_000 });
-    if (a.url) await page.goto(a.url).catch(() => undefined);
-    else await (await locator(a)).click({ timeout: 10_000 });
+    // Une adresse : on va chercher le fichier directement. C'est le cas des
+    // photos d'annonce (une image s'affiche, elle ne se « télécharge » pas).
+    if (a.url) {
+      const f = await recupererParAdresse(a.url);
+      if (f.html) throw new Error(`${a.url} est une page web, pas un fichier. Ouvre-la (goto) et clique le lien de téléchargement (download{text}), ou donne l'adresse de l'image elle-même (eval : document.querySelector('img').src).`);
+      const dest = ranger(f);
+      return { ok: true, fichier: dest, octets: f.corps.length, type: f.type, url: page.url() };
+    }
+    const l = await cible(a);
+    // Le `.catch` est posé TOUT DE SUITE : si l'attente expire pendant le clic
+    // (bouton recouvert, repli), une promesse rejetée sans gestionnaire fait
+    // tomber tout le démon — et avec lui la session du navigateur.
+    const wait = page.waitForEvent("download", { timeout: a.timeout_ms ?? 30_000 }).catch(() => null);
+    await cliquer(l);
     const dl = await wait;
-    const nom = (dl.suggestedFilename() || `fichier-${Date.now()}`).replace(/[^\w.\-]/g, "_");
+    if (!dl) throw new Error(`le clic sur ${decrireCible(a)} n'a déclenché aucun téléchargement en ${Math.round((a.timeout_ms ?? 30_000) / 1000)} s. Si c'est une image, donne son adresse : download{url} (trouve-la avec eval ou html).`);
+    const nom = nomFichier(dl.suggestedFilename(), "");
     const dest = `${DOWNLOADS}/${Date.now()}-${nom}`;
-    await dl.saveAs(dest);
+    try {
+      await dl.saveAs(dest);
+    } catch (e) {
+      // Navigateur dans un autre conteneur (écran du serveur) : Chrome a
+      // écrit le fichier chez LUI, et saveAs le cherche ICI — « ENOENT ».
+      // On le reprend par son adresse, avec les mêmes cookies.
+      const url = dl.url();
+      if (!url) throw e;
+      const f = await recupererParAdresse(url);
+      fs.writeFileSync(dest, f.corps);
+      await dl.cancel().catch(() => undefined);
+    }
     return { ok: true, fichier: dest, nom_propose: dl.suggestedFilename(), octets: fs.statSync(dest).size, url: page.url() };
   },
 
@@ -250,7 +418,11 @@ const handlers = {
   },
   async press(a) { await page.keyboard.press(a.key); await page.waitForTimeout(400); return { ok: true, url: page.url() }; },
   async scroll(a) { await page.mouse.wheel(0, a.dy ?? 1200); await page.waitForTimeout(400); return { ok: true }; },
-  async screenshot(a) { const file = `${SHOTS}/${Date.now()}.png`; await page.screenshot({ path: file, fullPage: !!a.full }); return { file, base64: fs.readFileSync(file).toString("base64") }; },
+  // Le fichier seulement, jamais l'image en base64 dans la réponse : une
+  // capture pèse 200 ko à 3 Mo, la sortie du sandbox est coupée à 40 000
+  // caractères, et TOUTES les captures revenaient « réponse illisible »
+  // (27 échecs le 25 septembre). Qui a besoin des octets lit le fichier.
+  async screenshot(a) { fs.mkdirSync(SHOTS, { recursive: true }); const file = `${SHOTS}/${Date.now()}.png`; await page.screenshot({ path: file, fullPage: !!a.full, timeout: 20_000 }); return { file, octets: fs.statSync(file).size, url: page.url() }; },
   async links(a) { const links = await page.$$eval("a[href]", (els) => els.map((e) => ({ text: (e.innerText || "").trim().slice(0, 80), href: e.href })).filter((l) => l.text)); return { links: links.slice(0, a.max ?? 100) }; },
   async eval(a) { const v = await page.evaluate(a.js); return { value: typeof v === "string" ? v.slice(0, 20_000) : v }; },
   async wait(a) { if (a.selector) await page.waitForSelector(a.selector, { timeout: a.timeout_ms ?? 15_000 }); else await page.waitForTimeout(a.ms ?? 1000); return { ok: true }; },
