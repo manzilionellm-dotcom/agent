@@ -44,7 +44,10 @@ export async function signalerRefus(a: { quoi: string; raison?: string; preuve?:
     [a.traceId ?? traceCourante() ?? null, a.peer ?? "", caviarder(a.quoi.trim().slice(0, 300)), caviarder((a.raison ?? "").trim().slice(0, 600)), caviarder((a.preuve ?? "").trim().slice(0, 2000)), a.source ?? "bot"],
   );
   const refus = { ...r.rows[0]!, id: Number(r.rows[0]!.id) };
-  enregistrer({ type: "erreur", niveau: "warn", titre: `Refus : ${refus.quoi}`, detail: `${refus.raison}\n\nPreuve : ${refus.preuve || "(aucune)"}`, ok: false });
+  // Type « systeme », pas « erreur » : l'inspecteur compte les étapes
+  // « erreur » comme des plantages de code. Un refus n'en est pas un — il a
+  // sa propre section, et le compter deux fois ferait crier au crash.
+  enregistrer({ type: "systeme", niveau: "warn", titre: `Refus : ${refus.quoi}`, detail: `${refus.raison}\n\nPreuve : ${refus.preuve || "(aucune)"}`, ok: false });
   return refus;
 }
 

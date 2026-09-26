@@ -156,6 +156,9 @@ Si l'opérateur dit « stop » ou « annule » : réponds « ok » sans rien lan
 
 type Notify = (text: string) => Promise<void>;
 
+/** Début de la réponse quand le modèle n'a rien conclu ; l'inspecteur la compte comme vide. */
+export const SANS_CONCLUSION = "⚠️ Arrêté sans conclusion";
+
 /**
  * « Je bute sur une connexion, viens la faire. »
  *
@@ -791,7 +794,10 @@ async function respond(opts: { channel: "whatsapp" | "api"; peer: string; text: 
     maxIterations: 40,
     budgetUsd: 0.5,
   });
-  const reply = res.finalText || (res.stopReason === "refusal" ? "Je ne peux pas faire ça." : "Fait.");
+  // Le modèle a déjà été relancé pour conclure (openaiCompat.conclure). S'il
+  // n'a toujours rien écrit, on le dit franchement plutôt que « Fait. » : un
+  // « Fait. » qui ne dit pas quoi est pire que pas de réponse.
+  const reply = res.finalText || (res.stopReason === "refusal" ? "Je ne peux pas faire ça." : `${SANS_CONCLUSION} (${res.stopReason === "loop_detected" ? "je tournais en rond" : res.stopReason === "budget_exceeded" ? "budget du message atteint" : "limite d'actions atteinte"}). Écris « où tu en es ? » et je te montre ce qui a été fait.`);
   // Un « je n'ai pas pu » sans entrée au journal des refus est un échec du
   // bot : la ligne est posée d'office, sans preuve, et le panneau la montre.
   await verifierReponse(reply, opts.peer, text).catch((e) => logger.warn({ err: String(e) }, "journal des refus"));

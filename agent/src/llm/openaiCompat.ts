@@ -290,7 +290,69 @@ export async function runOpenAICompat(opts: AgentRunOptions): Promise<AgentRunRe
     }
   }
 
+  // Pas un mot pour Lionel : le modèle a fini sur des appels d'outils (limite
+  // de tours, boucle, budget) ou a rendu un message vide. Il recevait
+  // « Fait. » sans savoir quoi — 8 fois en une journée le 25 septembre. On
+  // redemande une conclusion, sans outil, à partir de ce qu'il vient de faire.
+  if (!finalText.trim() && stop !== "timeout" && !opts.signal?.aborted && usage.iterations > 0) {
+    const conclusion = await conclure(client, opts.model, messages, tools, deepseek, stop).catch((e) => {
+      logger.warn({ err: String(e).slice(0, 300) }, "conclusion forcée impossible");
+      return undefined;
+    });
+    if (conclusion) {
+      finalText = conclusion.texte;
+      usage.iterations += 1;
+      usage.inputTokens += conclusion.usage?.prompt_tokens ?? 0;
+      usage.outputTokens += conclusion.usage?.completion_tokens ?? 0;
+      const cout = coutAppel(opts.model, conclusion.usage);
+      usage.cacheReadTokens += cout.caches;
+      usage.usd += cout.usd;
+    }
+  }
+
   return { finalText, stopReason: stop, usage, messages: [] };
+}
+
+const RAISONS_ARRET: Record<string, string> = {
+  loop_detected: "tu répétais les mêmes actions, le système t'a arrêté",
+  budget_exceeded: "le budget de ce travail est atteint",
+  end_turn: "tu as atteint la limite d'actions, ou tu t'es arrêté sans rien écrire",
+  max_tokens: "ta réponse a été coupée",
+};
+
+/**
+ * Un dernier appel, SANS outil (tool_choice « none »), pour obtenir une
+ * conclusion lisible. Les appels d'outils restés sans réponse (arrêt sur
+ * boucle) reçoivent un résultat « non exécuté » : l'API refuse un fil où un
+ * appel d'outil n'a pas de réponse.
+ */
+export async function conclure(
+  client: OpenAI,
+  model: string,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  deepseek: boolean,
+  stop: string,
+): Promise<{ texte: string; usage?: OpenAI.Completions.CompletionUsage } | undefined> {
+  const fil = [...messages];
+  const dernier = fil[fil.length - 1] as { role: string; tool_calls?: Array<{ id: string }> } | undefined;
+  if (dernier?.role === "assistant" && dernier.tool_calls?.length) {
+    for (const c of dernier.tool_calls) fil.push({ role: "tool", tool_call_id: c.id, content: "Non exécuté : arrêt avant cet appel." });
+  }
+  fil.push({
+    role: "user",
+    content:
+      `Arrêt : ${RAISONS_ARRET[stop] ?? stop}. N'appelle plus aucun outil. Écris maintenant à Lionel, en 1 à 4 lignes : ce qui est FAIT (avec le résultat concret vu dans les outils : lien, prix, nombre, nom), ce qui ne l'est PAS et pourquoi (le message d'erreur exact s'il y en a un), et la prochaine étape. Uniquement ce que les résultats ci-dessus montrent : n'invente rien.`,
+  });
+  const res = await client.chat.completions.create({
+    model,
+    messages: fil,
+    ...(tools.length ? { tools, tool_choice: "none" as const } : {}),
+    max_tokens: 1_500,
+    ...(deepseek ? { reasoning_effort: "low" } : {}),
+  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
+  const texte = res.choices[0]?.message?.content?.trim();
+  return texte ? { texte, usage: res.usage } : undefined;
 }
 
 function pruneOldToolResults(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): void {

@@ -438,7 +438,7 @@ const conversation: Detecteur = {
       if (m.role === "assistant") {
         // « Je ne tape jamais de mot de passe » est une règle, pas un refus.
         if (REFUS.test(t) && !/mot de passe|password|captcha|code (sms|de vérification)/i.test(t)) refus.push(court(t, 200));
-        if (t.trim() === "Fait.") vides.push(heure(m.ts));
+        if (t.trim() === "Fait." || t.startsWith("⚠️ Arrêté sans conclusion")) vides.push(heure(m.ts));
       } else if (m.role === "user") {
         if (FRUSTRATION.test(t)) colere.push(court(t, 200));
         const k = norm(t);
