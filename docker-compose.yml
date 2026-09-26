@@ -37,6 +37,10 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 2
+    # Chromium de secours (quand le bureau ne répond pas) : même langue, même fuseau.
+    environment:
+      BROWSER_LOCALE: ${BROWSER_LOCALE:-sv-SE}
+      BROWSER_TIMEZONE: ${BROWSER_TIMEZONE:-Europe/Stockholm}
     # Sortie internet nécessaire (npm, git, sites à scraper) mais isolé de la DB.
     networks: [egress]
     # Accès au tunnel SSH inverse de ton Chrome (BROWSER_CDP_URL=http://host.docker.internal:9222).
@@ -93,6 +97,10 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 2g
     cpus: 1.5
+    # Langue et fuseau du navigateur (ce que les sites voient). Lus dans le .env.
+    environment:
+      BROWSER_LOCALE: ${BROWSER_LOCALE:-sv-SE}
+      TZ: ${BROWSER_TIMEZONE:-Europe/Stockholm}
     # AUCUN port publié sur l'hôte : ni 6080 ni 9223. L'écran se regarde à
     # travers l'orchestrateur, qui exige un billet ; le pilotage se fait entre
     # conteneurs. Les publier reviendrait à offrir les comptes connectés.

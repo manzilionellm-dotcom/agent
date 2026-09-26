@@ -71,7 +71,9 @@ async function boot() {
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
       acceptDownloads: true,
       viewport: { width: 1280, height: 900 },
-      locale: "fr-FR",
+      // Langue et fuseau de Lionel (Suède). Réglables dans le .env.
+      locale: process.env.BROWSER_LOCALE || "sv-SE",
+      timezoneId: process.env.BROWSER_TIMEZONE || "Europe/Stockholm",
       userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     });
     page = context.pages()[0] || (await context.newPage());
@@ -532,7 +534,12 @@ const handlers = {
   // `status` disait le mode VOULU (la variable d'environnement), pas le mode
   // obtenu. Quand le tunnel est fermé il annonçait donc "cdp" en servant le
   // profil local, ce qui envoie chercher la panne à l'exact opposé.
-  async status() { return { mode, cdp_configure: Boolean(process.env.BROWSER_CDP_URL), cdp_erreur: cdpError, url: page.url(), tabs: context.pages().length }; },
+  // Langue et fuseau lus DANS la page, pas dans la config : en mode CDP c'est
+  // le Chromium du bureau qui décide, et c'est ce que les sites voient.
+  async status() {
+    const vu = await page.evaluate(() => ({ langue: navigator.language, langues: navigator.languages, fuseau: Intl.DateTimeFormat().resolvedOptions().timeZone })).catch(() => null);
+    return { mode, cdp_configure: Boolean(process.env.BROWSER_CDP_URL), cdp_erreur: cdpError, url: page.url(), tabs: context.pages().length, ...(vu || {}) };
+  },
 
   /**
    * Connexion automatique à un site.

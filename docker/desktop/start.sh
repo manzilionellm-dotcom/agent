@@ -97,6 +97,25 @@ if [ -f "$PREFS" ]; then
   sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREFS" 2>/dev/null || true
 fi
 
+# Langue que les sites voient (navigator.languages, Accept-Language).
+# Sous Linux, Chromium ignore --lang : un profil neuf prend la langue dans
+# LANGUAGE, puis la fige dans ses préférences (intl.accept_languages). Un
+# profil existant garde donc l'ancienne langue quoi qu'on passe au lancement :
+# on réécrit la préférence avant de démarrer.
+LOCALE="${BROWSER_LOCALE:-sv-SE}"
+printf %s "$LOCALE" | grep -Eq '^[a-z]{2,3}(-[A-Z]{2})?$' || { log "BROWSER_LOCALE invalide ($LOCALE), sv-SE utilisé"; LOCALE=sv-SE; }
+LANGUE="${LOCALE%%-*}"
+case "$LOCALE" in
+  en-US) LANGUES="en-US,en" ;;
+  en*)   LANGUES="$LOCALE,en" ;;
+  *)     LANGUES="$LOCALE,$LANGUE,en-US,en" ;;
+esac
+export LANGUAGE="${LOCALE/-/_}"
+if [ -f "$PREFS" ]; then
+  sed -i -E "s/\"(accept_languages|selected_languages)\":\"[^\"]*\"/\"\\1\":\"$LANGUES\"/g" "$PREFS" 2>/dev/null || true
+fi
+log "langue : $LANGUES · fuseau : ${TZ:-UTC}"
+
 "$CHROME" \
   --no-sandbox \
   --hide-crash-restore-bubble \
@@ -109,7 +128,7 @@ fi
   --disable-blink-features=AutomationControlled \
   --window-position=0,0 --window-size="$(printf %s "$SCREEN" | cut -d x -f1),$(printf %s "$SCREEN" | cut -d x -f2)" \
   --start-maximized \
-  --lang=fr-FR \
+  --lang="$LOCALE" \
   "about:blank" >/tmp/chrome.log 2>&1 &
 CHROME_PID=$!
 
