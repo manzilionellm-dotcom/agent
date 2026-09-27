@@ -1,0 +1,66 @@
+# Déclencheur : label "grok" sur une issue (plan) ou sur une PR (revue du diff).
+# Le bot COMMENTE uniquement : contents:read => impossible de pousser ou merger.
+# Prérequis : secret XAI_API_KEY, variable XAI_MODEL, fichier .github/grok/system.md
+name: grok-bot
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: grok-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  grok:
+    if: >
+      (github.event_name == 'issues' && github.event.label.name == 'grok') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'grok'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Contexte
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr view "$NUM" --json title,body -q '"PR: " + .title + "\n\n" + (.body // "")' > head.txt
+            gh pr diff "$NUM" | head -c 60000 > ctx.txt
+          else
+            gh issue view "$NUM" --json title,body -q '"ISSUE: " + .title + "\n\n" + (.body // "")' > head.txt
+            git ls-files | head -n 400 > ctx.txt
+          fi
+
+      - name: Appel Grok (xAI API)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          XAI_MODEL: ${{ vars.XAI_MODEL }}
+        run: |
+          test -n "$XAI_API_KEY" || { echo "XAI_API_KEY manquant"; exit 1; }
+          test -n "$XAI_MODEL" || { echo "Variable XAI_MODEL manquante"; exit 1; }
+          jq -n --rawfile sys .github/grok/system.md --rawfile head head.txt --rawfile ctx ctx.txt --arg model "$XAI_MODEL" \
+            '{model:$model, temperature:0.2, messages:[{role:"system",content:$sys},{role:"user",content:($head + "\n\n---\nCONTEXTE:\n" + $ctx)}]}' > req.json
+          curl -sS --fail-with-body https://api.x.ai/v1/chat/completions \
+            -H "Authorization: Bearer $XAI_API_KEY" -H "Content-Type: application/json" \
+            -d @req.json > res.json
+          jq -r '.choices[0].message.content // "Réponse vide de Grok."' res.json > out.md
+          printf '\n\n---\n_Bot Grok — commentaire uniquement. Aucun merge sans OK de @%s._\n' "${{ github.repository_owner }}" >> out.md
+
+      - name: Publier le commentaire
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "$NUM" --body-file out.md
+          else
+            gh issue comment "$NUM" --body-file out.md
+          fi
