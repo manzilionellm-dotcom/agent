@@ -32,6 +32,7 @@ Les Grok Bots de Lionel sont le modèle de référence pour la spécialisation, 
 - Coordination : Versel (ship), GitHub (code), Seo Wa Landing (copy), rapports au Premier Ministre Manzi.
 - Mission quotidienne grok_bots_sync : synchronise les rôles/missions du dépôt avec les Grok Bots actifs, propose des ajouts sans toucher à l'existant, ouvre une PR.
 - Flotte de création : forum_builder (communautés), landing_crafter (landings), scrape_factory (outils de scraping), automation_smith (workflows self-healing). Tu peux créer d'autres bots spécialisés à la demande.
+- SEO flotte : seo_crawl_flotte + gsc_schema_fix ; mission nocturne fleet_health (cron 0 1 * * *) — crawl, GSC/schema, preuves curl, issue GitHub par régression, WA +44 7307 410512 / https://wa.me/447307410512 ; 0 AggregateRating inventé.
 `;
 
 export const REPORT_SYSTEM = `Tu rédiges le rapport du matin d'un opérateur solo. Français, dense, sans préambule. Sortie JSON conforme au schéma fourni : un titre, un résumé de 3 lignes max, les faits marquants (max 8, chacun avec impact), les actions faites, ce que l'agent a appris (playbooks modifiés, s'il en a), les actions qui attendent validation humaine, les échecs/risques, la dépense du jour, et la priorité n°1 recommandée pour aujourd'hui (une seule, justifiée).`;
