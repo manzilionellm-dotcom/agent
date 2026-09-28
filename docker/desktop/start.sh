@@ -163,7 +163,10 @@ fi
 # l'accès humain passe par l'orchestrateur, qui exige déjà un billet à usage
 # unique. Deux mots de passe pour une porte n'ajoutent pas de sécurité, ils
 # ajoutent un mot de passe de plus à perdre.
-x11vnc -display :99 -forever -shared -nopw -listen 127.0.0.1 -rfbport 5900 -noxdamage -quiet >/tmp/x11vnc.log 2>&1 &
+# -nocursor : sans gestionnaire de fenêtres, le curseur de l'écran virtuel est
+# une grosse croix noire qui masquait la page sur le téléphone. La page de
+# l'écran montre elle-même un point à la place sur ordinateur (show_dot).
+x11vnc -display :99 -forever -shared -nopw -listen 127.0.0.1 -rfbport 5900 -noxdamage -nocursor -quiet >/tmp/x11vnc.log 2>&1 &
 X11VNC_PID=$!
 sleep 1
 

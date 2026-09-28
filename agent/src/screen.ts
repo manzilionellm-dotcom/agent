@@ -185,7 +185,7 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
   .etat{display:none}
 }
 </style></head><body>
-<div class="ecran"><iframe src="${SCREEN_ENTRY}" title="Écran du navigateur de ${escHtml(nom)}" allow="clipboard-read; clipboard-write"></iframe></div>
+<div class="ecran"><iframe data-src="${SCREEN_ENTRY}" title="Écran du navigateur de ${escHtml(nom)}" allow="clipboard-read; clipboard-write"></iframe></div>
 <div class="barre">
   <div class="gestes" role="toolbar" aria-label="Télécommande">
     ${b("haut", "⬆", "Monter", "Faire défiler la page vers le haut")}
@@ -283,9 +283,21 @@ label.cache input{width:1.1rem;height:1.1rem;margin:0}
   // intercepte les deux raccourcis AVANT lui (phase de capture), sinon il
   // les enverrait au bot, qui collerait son propre presse-papiers — vide.
   const cadre = document.querySelector("iframe");
+  // Au doigt, le point qui remplace le curseur ne sert à rien et masque la
+  // page : on ne le garde que sur un écran à souris.
+  const doigt = matchMedia("(pointer: coarse)").matches;
+  cadre.src = doigt ? cadre.dataset.src.replace("show_dot=true", "show_dot=false") : cadre.dataset.src;
   function brancher() {
     let w;
     try { w = cadre.contentWindow; w.document; } catch { return; }
+    // La poignée noire de noVNC, collée à gauche, couvrait la page : la
+    // télécommande en dessous fait déjà tout ce que ce menu faisait.
+    if (w.document.head && !w.document.getElementById("sans-poignee")) {
+      const s = w.document.createElement("style");
+      s.id = "sans-poignee";
+      s.textContent = "#noVNC_control_bar_anchor{display:none!important}";
+      w.document.head.appendChild(s);
+    }
     w.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
       const k = e.key.toLowerCase();
