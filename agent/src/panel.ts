@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { dailyBudget, plafondTexte, vercelProject } from "./providers.js";
 import { spentToday } from "./memory/store.js";
-import { CATEGORIES, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
+import { CATEGORIES, DEPOT_IDS, ROLES, listProviders, spendByDay, spendByMission, usageByProvider, type Category, type MissionCost, type PublicProvider } from "./providers.js";
 import { approbationsActives } from "./channels/approvals.js";
 import { CARACTERES, EMOJIS, LANGUES, LIBRE_MAX, LONGUEURS, NOM_MAX, REFLEXIONS, REGLES_MAX, blocPersonnalite, personnalite, type Personnalite } from "./personality.js";
 import { VOIX_MODES, voixReglages, type VoixReglages } from "./voice.js";
@@ -304,6 +304,27 @@ ${etat}
  * navigateur) ou le coffre (identifiant + mot de passe chiffrés, que le bot
  * tape seul le jour où la session expire). La page dit lequel sert à quoi.
  */
+/**
+ * « Déposer une clé » : une case et un bouton, sans le formulaire complet
+ * d'un service (identifiant, type d'API, priorité…) qui n'a rien à faire là
+ * quand on veut juste remplacer une clé refusée.
+ */
+function sectionCle(st: PanelState, tous: PublicProvider[]): string {
+  const choix = [...tous.map((s) => ({ id: s.id, label: s.label || s.id })), ...DEPOT_IDS.filter((id) => !tous.some((s) => s.id === id)).map((id) => ({ id, label: id === "github" ? "GitHub" : "Vercel" }))];
+  const options = choix.map((c) => `<option value="${esc(c.id)}"${c.id === "github" ? " selected" : ""}>${esc(c.label)}</option>`).join("");
+  const off = st.coffre ? "" : " disabled";
+  return `<h2 id="cle">Déposer une clé</h2>
+<form class="ajout" method="post" autocomplete="off">
+  <input type="hidden" name="op" value="depot">
+  <div class="grille">
+    <label>Pour quel service<select name="id"${off}>${options}</select></label>
+    <label>Clé API / secrète<input name="cle" type="password" autocomplete="off" spellcheck="false" placeholder="Colle ta clé ici" required${off}></label>
+  </div>
+  <button class="principal"${off}>Enregistrer de manière sécurisée</button>
+  <p class="aide">Chiffrée sur ton serveur et jamais réaffichée : ni ici, ni au bot, ni dans WhatsApp. Elle est testée auprès du service dès l'enregistrement, et le résultat s'affiche en haut de la page. Elle reste en place jusqu'à ce que tu en colles une autre.${st.coffre ? "" : " <b>Indisponible : VAULT_KEY absente du serveur.</b>"}</p>
+</form>`;
+}
+
 function sectionNavigateur(st: PanelState): string {
   const n = st.navigateur;
   const etat = !n.branche
@@ -430,6 +451,8 @@ ${st.depense.jour > 0 && total24 === 0 ? `<p class="notice warn">« Dépensé au
 </div>
 
 ${sectionDiagnostic(st.diag)}
+
+${sectionCle(st, tous)}
 
 ${sectionBoiteNoire(st.diag)}
 

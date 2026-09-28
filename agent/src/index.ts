@@ -44,7 +44,7 @@ import { oublierFait, oublierFichierProfil, oublierTout } from "./souvenirs.js";
 import { apprendre, basculerCompetence, oublierCompetence } from "./competences.js";
 import { genererImage, typeImage } from "./images.js";
 import { basculerDeclencheur, creerDeclencheur, decrire, demarrerDeclencheurs, supprimerDeclencheur } from "./declencheurs.js";
-import { SANS_LIMITE, bumpProviderPriority, deleteProvider, getProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
+import { SANS_LIMITE, bumpProviderPriority, deleteProvider, deposerCle, getProvider, listProviders, putProvider, seedFromEnv, setProviderEnabled, setSetting, setting, testProvider, type Category } from "./providers.js";
 
 const PUBLIC_PAGES: Record<string, () => string> = {
   "/": homePage,
@@ -296,6 +296,9 @@ async function panelRoute(req: IncomingMessage, res: ServerResponse, url: URL): 
         // Le seul bouton qui répond à « pourquoi il n'a pas accès à GitHub ? »
         // sans ouvrir un terminal : il appelle vraiment le service.
         case "test": { const t = await testProvider(id); notice = t.message; ton = t.ok ? "bon" : "bad"; break; }
+        // « Déposer une clé » : la clé ne repart jamais dans la page, seul le
+        // verdict du test s'affiche.
+        case "depot": { const t = await deposerCle(id, f.get("cle") ?? ""); notice = t.ok ? `Clé enregistrée et testée : ${t.message}` : t.message; ton = t.ok ? "bon" : "bad"; break; }
         case "memoire": {
           const off = g("etat") === "off";
           await setSetting("MEMOIRE", off ? "off" : "on");
@@ -1212,7 +1215,7 @@ function startKeyWatch(): void {
       ];
       if (base) {
         const t = await createVaultTicket(15).catch(() => undefined);
-        if (t) lignes.push("", "Corrige-la ici :", `${base}/panel?t=${t.id}`, "", "Valable 15 min.");
+        if (t) lignes.push("", "Colle la nouvelle clé ici :", `${base}/panel?t=${t.id}&s=cle`, "", "Valable 15 min.");
       }
       await deliverWhatsApp(to, lignes.join("\n")).catch(() => false);
     }

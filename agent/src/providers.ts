@@ -489,6 +489,46 @@ export async function secretFor(id: string, fallback?: string): Promise<string |
  */
 export type TestResult = { ok: boolean; message: string };
 
+/**
+ * Les services qu'on peut créer d'un seul geste depuis « Déposer une clé » :
+ * la clé suffit, le reste est connu d'avance. Pour les autres (un modèle a
+ * besoin d'une adresse et d'un nom de modèle), la carte doit déjà exister.
+ */
+const DEPOT_DEFAUTS: Record<string, NewProvider> = {
+  github: { id: "github", category: "dev", label: "GitHub", baseUrl: "https://api.github.com", priority: 10, note: "clé déposée depuis le panneau" },
+  vercel: { id: "vercel", category: "dev", label: "Vercel", baseUrl: "https://api.vercel.com", priority: 10, note: "clé déposée depuis le panneau" },
+};
+export const DEPOT_IDS = Object.keys(DEPOT_DEFAUTS);
+
+/**
+ * « Déposer une clé » : une case, un bouton. Lionel colle une clé ; elle est
+ * chiffrée, mise en service et testée pour de vrai dans la foulée.
+ *
+ * Seule la clé change : le libellé, la priorité, le plafond d'une carte
+ * existante restent tels quels. Le verdict du test remet aussi à jour la
+ * surveillance des clés, pour que le diagnostic arrête de dire « refusée »
+ * dès la clé remplacée, sans attendre sa prochaine ronde de six heures.
+ */
+export async function deposerCle(id: string, cle: string): Promise<TestResult> {
+  const nom = id.trim().toLowerCase();
+  // Une clé n'a jamais d'espace : ceux qui traînent viennent du copier-coller.
+  const valeur = cle.replace(/\s+/g, "");
+  if (valeur.length < 8 || valeur.length > 1000) return { ok: false, message: "La case est vide ou ne contient pas une clé entière : recolle-la." };
+  if (!vaultEnabled()) return { ok: false, message: "VAULT_KEY absente du serveur : impossible de chiffrer une clé, donc rien n'a été enregistré." };
+  if (await getProvider(nom)) {
+    await db().query(`UPDATE providers SET api_key=$2, enabled=true, updated_at=now() WHERE id=$1`, [nom, encryptSecret(valeur)]);
+    invalidate();
+  } else if (DEPOT_DEFAUTS[nom]) {
+    await putProvider({ ...DEPOT_DEFAUTS[nom], apiKey: valeur });
+  } else {
+    return { ok: false, message: `Aucun service « ${nom} » : ajoute-le d'abord dans « Ajouter ».` };
+  }
+  emitEvent({ kind: "provider.changed", message: `clé de ${nom} déposée depuis le panneau`, data: { id: nom } });
+  const t = await testProvider(nom);
+  await setSetting(`alerte_cle_${nom}`, t.ok ? "ok" : "ko").catch(() => undefined);
+  return t;
+}
+
 const TEST_TIMEOUT_MS = 8_000;
 
 async function probe(url: string, headers: Record<string, string>): Promise<{ status: number; body: unknown; texte: string }> {

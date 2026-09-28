@@ -124,8 +124,8 @@ const cles: Detecteur = {
       usd: 0,
       exemples: [],
       traces: [],
-      correction: `Panneau → Services → carte « ${x.label} » → Modifier : recolle une clé valide, puis « Tester la clé ».`,
-      section: "services" as SectionId,
+      correction: `Panneau → « Déposer une clé » : choisis ${x.label}, colle une clé valide, « Enregistrer de manière sécurisée ». Elle est testée dans la foulée.`,
+      section: "cle" as SectionId,
     }));
   },
 };

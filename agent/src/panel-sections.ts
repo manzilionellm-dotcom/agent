@@ -13,6 +13,7 @@
 
 export const SECTIONS = {
   diagnostic: { titre: "Diagnostic", pour: "sa santé sur 100, les problèmes trouvés chaque jour par l'inspecteur, et quoi faire pour chacun" },
+  cle: { titre: "Déposer une clé", pour: "coller une clé (GitHub, Vercel, un modèle…) dans une seule case : chiffrée sur le serveur, testée tout de suite, jamais réaffichée" },
   boitenoire: { titre: "Boîte noire", pour: "l'enregistrement de tout ce qu'il a fait, travail par travail, étape par étape, avec durées, coûts et erreurs" },
   personnalite: { titre: "Personnalité", pour: "son nom, son caractère, sa façon de réfléchir, tes consignes" },
   voix: { titre: "Voix", pour: "les réponses en note vocale" },
