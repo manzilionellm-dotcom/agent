@@ -113,8 +113,17 @@ const Env = z.object({
   /**
    * Navigateur : URL CDP de TON Chrome (via tunnel SSH inverse + host.docker.internal),
    * ex: http://host.docker.internal:9222. Vide = Chromium persistant dans le sandbox.
+   * Préférer CDP (Chrome réel) ; sinon stealth sandbox (BROWSER_STEALTH). Voir docs/STEALTH.md.
    */
   BROWSER_CDP_URL: z.string().url().optional(),
+  /**
+   * Stealth Chromium sandbox (défaut true). Ignoré si BROWSER_CDP_URL (Chrome réel déjà « humain »).
+   */
+  BROWSER_STEALTH: z.coerce.boolean().default(true),
+  /** Locale Playwright du contexte (sv-SE défaut pour Europe/Stockholm ; fr-FR, fr-CA, en-CA…). */
+  BROWSER_LOCALE: z.string().default("sv-SE"),
+  /** Fuseau IANA du contexte navigateur. */
+  BROWSER_TIMEZONE: z.string().default("Europe/Stockholm"),
   /**
    * Adresse de l'écran du navigateur du serveur (conteneur `desktop`).
    * Jamais publiée sur l'hôte : on y accède par /screen, qui exige un billet.

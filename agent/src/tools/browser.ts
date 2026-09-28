@@ -13,6 +13,7 @@ import { findSite } from "../browsing/sites.js";
  * Navigateur complet, piloté pas à pas (comme « Claude dans Chrome ») :
  *   - BROWSER_CDP_URL défini → TON Chrome, avec toutes tes sessions (via tunnel SSH) ;
  *   - sinon → Chromium persistant dans le sandbox (connexions conservées entre missions).
+ *     Avec BROWSER_STEALTH=true (défaut) : patches fingerprint (voir docs/STEALTH.md).
  * L'état (onglets, page courante) persiste entre les appels d'une même mission grâce au
  * démon (docker/browser/daemon.js). Les captures reviennent en image quand le modèle
  * les accepte (Claude), en fichier sinon.
@@ -29,6 +30,18 @@ const Action = z.enum([
   // Gmail à l'écran, quand l'API Google n'est pas là.
   "gmail",
 ]);
+
+/** Env BROWSER_* transmis au sandbox pour le démon (CDP + stealth). */
+function browserEnv(): Record<string, string> {
+  const cfg = config();
+  const env: Record<string, string> = {
+    BROWSER_STEALTH: cfg.BROWSER_STEALTH ? "true" : "false",
+    BROWSER_LOCALE: cfg.BROWSER_LOCALE,
+    BROWSER_TIMEZONE: cfg.BROWSER_TIMEZONE,
+  };
+  if (cfg.BROWSER_CDP_URL) env.BROWSER_CDP_URL = cfg.BROWSER_CDP_URL;
+  return env;
+}
 
 export function makeBrowserTool(container?: string) {
   return betaZodTool({
@@ -84,10 +97,6 @@ export function makeBrowserTool(container?: string) {
       const target = i.url ?? (action === "tabs" && i.op === "new" ? i.url : undefined);
       if (target && isDenied(target)) return `Error: domaine interdit par BROWSER_DENY_DOMAINS (${new URL(target).hostname})`;
 
-      // `login` ne passe pas par le chemin commun : les identifiants sont
-      // résolus ICI, côté orchestrateur, et poussés au sandbox par l'entrée
-      // standard. Le modèle a demandé « connecte-toi à linkedin » ; il n'a
-      // jamais vu, et ne verra jamais, ce qui a été tapé.
       if (action === "login") {
         const asked = i.site ?? i.url;
         if (!asked) return "Error: précise le site, ex: {action:'login', site:'linkedin.com'}";
@@ -103,19 +112,12 @@ export function makeBrowserTool(container?: string) {
         }
         if (!cred) return `Error: identifiant « ${site} »${i.compte ? ` compte « ${i.compte} »` : ""} introuvable (vault_list donne les comptes disponibles)`;
 
-        // Un code TOTP change toutes les 30 s et la connexion prend une
-        // dizaine de secondes. En calculer un qui expire pendant la
-        // navigation donne un « code invalide » qu'on mettrait une heure à
-        // comprendre : on attend la fenêtre suivante.
         let totp: string | undefined;
         if (cred.totp) {
           if (totpRemaining() < 12) await new Promise((r) => setTimeout(r, (totpRemaining() + 1) * 1000));
           totp = totpCode(cred.totp);
         }
         logger.info({ container, site, totp: Boolean(totp) }, "browser login");
-        // Les indices du registre passent devant les heuristiques du démon :
-        // « input[name=session_key] » de LinkedIn ne se devine pas, et le
-        // deviner mal remplit le champ de recherche avec une adresse e-mail.
         const profile = findSite(site);
         const payload = JSON.stringify({ url: i.url ?? profile?.loginUrl ?? cred.url, login: cred.login, secret: cred.secret, totp, hints: profile?.hints });
         const out = await runBctl("login", payload, container, cfg.BROWSER_CDP_URL, true);
@@ -130,7 +132,7 @@ export function makeBrowserTool(container?: string) {
       const r = await sandboxExec(`node /opt/browser/bctl.js ${shellQuote(action)} ${shellQuote(JSON.stringify(args))}`, {
         timeoutMs: 150_000,
         container,
-        env: cfg.BROWSER_CDP_URL ? { BROWSER_CDP_URL: cfg.BROWSER_CDP_URL } : {},
+        env: browserEnv(),
       });
       let out: { ok?: boolean; error?: string; base64?: string; file?: string } & Record<string, unknown>;
       try {
@@ -140,31 +142,18 @@ export function makeBrowserTool(container?: string) {
       }
       if (!out.ok) return `Error: ${out.error ?? "échec"}`;
       if (action === "screenshot" && out.file) {
-        // Mémorisée pour que `send_screenshot` puisse l'envoyer sans que le
-        // modèle ait à recopier le chemin exactement — une capture qui
-        // n'arrive pas parce qu'un caractère du chemin a été mal recopié est
-        // une capture perdue pour rien.
         lastShot.set(container ?? "", String(out.file));
         const voit = cfg.LLM_PROVIDER_CRITICAL === "anthropic" || cfg.LLM_PROVIDER === "anthropic";
-        // Les octets ne passent plus par la réponse du démon (coupée à
-        // 40 000 caractères) : on ne lit le fichier que pour un modèle qui
-        // sait regarder une image, avec une sortie assez large pour elle.
         let data = out.base64;
         if (voit && !data) {
           const lu = await sandboxExec(`base64 -w0 ${shellQuote(String(out.file))}`, { timeoutMs: 30_000, container, maxOutput: 12_000_000 });
           data = lu.code === 0 ? lu.stdout.trim() : undefined;
         }
         const img: Anthropic.Beta.Messages.BetaImageBlockParam | undefined = data ? { type: "image", source: { type: "base64", media_type: "image/png", data } } : undefined;
-        // Le modèle qui ne VOIT pas l'image peut parfaitement l'ENVOYER.
-        // L'ancien texte disait « utilise text/links » : lu comme « laisse
-        // tomber la capture », il expliquait à lui seul pourquoi Lionel ne
-        // recevait jamais rien. Dans les deux cas on redit quoi en faire.
         const suite = `capture prise : ${out.file}. Envoie-la à Lionel avec send_screenshot pour qu'il la voie.`;
         return voit && img ? [{ type: "text", text: suite }, img] : `${suite} (tu ne peux pas la regarder toi-même avec ce modèle ; pour LIRE la page, utilise text ou links)`;
       }
       delete out.base64;
-      // Une clé d'API affichée dans la page (création de clé, tableau de
-      // bord) ne doit jamais entrer dans le contexte du modèle.
       const body = masquerCles(JSON.stringify(out, null, 1)).slice(0, 30_000);
       return ["goto", "text", "html", "click", "links", "eval"].includes(action) ? untrusted(String(out.url ?? i.url ?? "navigateur"), body) : body;
     },
@@ -173,13 +162,6 @@ export function makeBrowserTool(container?: string) {
 
 export const browserTool = makeBrowserTool();
 
-/**
- * La dernière capture prise, par conteneur.
- *
- * Elle sert de valeur par défaut à `send_screenshot` : le modèle décrit ce
- * qu'il veut montrer, la machine retrouve le fichier. Un chemin recopié de
- * travers ne doit pas coûter la preuve.
- */
 const lastShot = new Map<string, string>();
 
 export function lastScreenshot(container?: string): string | undefined {
@@ -188,35 +170,22 @@ export function lastScreenshot(container?: string): string | undefined {
 
 type BctlOut = { ok?: boolean; error?: string; base64?: string; file?: string } & Record<string, unknown>;
 
-/**
- * Appelle le client du démon navigateur. `viaStdin` envoie les arguments par
- * l'entrée standard au lieu de la ligne de commande : obligatoire dès qu'ils
- * contiennent un secret, puisque le sandbox exécute aussi du code proposé par
- * un modèle, et qu'un `ps aux` y suffirait sinon.
- * Rend l'objet analysé, ou une chaîne « Error: … » prête à rendre au modèle.
- */
 export async function runBctl(action: string, payload: string, container: string | undefined, cdp: string | undefined, viaStdin = false): Promise<BctlOut | string> {
+  const env = browserEnv();
+  if (cdp) env.BROWSER_CDP_URL = cdp;
   const r = await sandboxExec(`node /opt/browser/bctl.js ${shellQuote(action)} ${viaStdin ? "-" : shellQuote(payload)}`, {
     timeoutMs: 150_000,
     container,
-    env: cdp ? { BROWSER_CDP_URL: cdp } : {},
+    env,
     stdin: viaStdin ? payload : undefined,
   });
   try {
     return JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}") as BctlOut;
   } catch {
-    // La sortie brute peut contenir l'entrée, donc le mot de passe : on la
-    // passe au filtre avant de la montrer, et on la coupe court.
     return `Error: réponse navigateur illisible\n${redactSecrets(r.stdout.slice(-800))}`;
   }
 }
 
-/**
- * Ce que le modèle a le droit de savoir du coffre : où il peut se connecter,
- * sous quel compte. Jamais le mot de passe — il n'en a pas besoin pour
- * appeler `browser{action:"login"}`, et un secret qui entre dans un contexte
- * de modèle ressort dans un journal.
- */
 export const vaultListTool = betaZodTool({
   name: "vault_list",
   description:
@@ -232,7 +201,6 @@ export const vaultListTool = betaZodTool({
   },
 });
 
-/** Domaines où l'agent n'a rien à faire (banque, paiement, admin de comptes). Liste dans .env, wildcard par suffixe. */
 export function isDenied(url: string): boolean {
   const host = new URL(url).hostname.toLowerCase();
   return config()
