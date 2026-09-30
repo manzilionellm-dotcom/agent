@@ -1,7 +1,14 @@
 import { config } from "../config.js";
 import { runAgent, structured, resolveModel, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
-import { memoryDigest, agentMemoryRoot, openEpisode, closeEpisode } from "../memory/store.js";
+import {
+  memoryDigest,
+  agentMemoryRoot,
+  openEpisode,
+  closeEpisode,
+  readMissionMemory,
+  writeMissionMemory,
+} from "../memory/store.js";
 import { ROLES, roleTools, type RoleName } from "./roles.js";
 
 /**
@@ -36,6 +43,10 @@ export type SwarmPlan = { objective: string; subtasks: Subtask[]; merge_instruct
 export type SubtaskResult = { id: string; role: RoleName; status: "ok" | "failed" | "budget" | "skipped"; output: string; usage: Usage; seconds: number };
 
 export type SwarmResult = { plan: SwarmPlan; results: SubtaskResult[]; merged: string; totalUsd: number; wallSeconds: number };
+
+/** Clés de mémoire — identiques aux noms d'épisode, pour que les deux se relisent ensemble. */
+const SWARM_KEY = "swarm";
+const roleKey = (role: RoleName): string => `${SWARM_KEY}:${role}`;
 
 const PLAN_SCHEMA = {
   type: "json_schema" as const,
@@ -75,15 +86,15 @@ const PLANNER_SYSTEM = `Tu es le coordinateur d'un essaim d'agents. Découpe l'o
 - Le spec de chaque sous-tâche doit être auto-suffisant : l'agent ne voit ni l'objectif global ni les autres specs, sauf les résultats de ses dépendances.
 - 3 à 10 sous-tâches. Pas plus de 12.`;
 
-export async function planSwarm(objective: string, memory: string): Promise<SwarmPlan> {
-  const cfg = config();
+/** `previous` : bloc <passage_precedent> de l'essaim, pour ne pas replanifier à l'identique un découpage qui a échoué. */
+export async function planSwarm(objective: string, memory: string, previous = ""): Promise<SwarmPlan> {
   const roles = Object.values(ROLES).map((r) => `- ${r.name}: ${r.description}`).join("\n");
   const { value } = await structured<SwarmPlan>({
     ...resolveModel("planner"),
     system: PLANNER_SYSTEM,
     effort: "high",
     schema: PLAN_SCHEMA,
-    prompt: `Date: ${new Date().toISOString()}\nRôles disponibles:\n${roles}\n\nOBJECTIF:\n${objective}\n\n<memoire_coordinateur>\n${memory}\n</memoire_coordinateur>`,
+    prompt: `Date: ${new Date().toISOString()}\nRôles disponibles:\n${roles}\n\nOBJECTIF:\n${objective}\n\n${previous}<memoire_coordinateur>\n${memory}\n</memoire_coordinateur>`,
   });
   // Validation du DAG : ids uniques, dépendances existantes, pas de cycle.
   const ids = new Set(value.subtasks.map((s) => s.id));
@@ -133,100 +144,139 @@ class SandboxPool {
 export async function runSwarm(objective: string, opts: { budgetUsd?: number; signal?: AbortSignal } = {}): Promise<SwarmResult> {
   const cfg = config();
   const started = Date.now();
-  const episodeId = await openEpisode("swarm", { objective: objective.slice(0, 500) });
+  // Avant openEpisode, comme pour une mission : l'épisode courant ne se relit pas lui-même.
+  const previousSwarm = await readMissionMemory(SWARM_KEY);
+  const episodeId = await openEpisode(SWARM_KEY, { objective: objective.slice(0, 500) });
   const log = logger.child({ swarm: episodeId });
   const budget = opts.budgetUsd ?? cfg.SWARM_BUDGET_USD;
   const pool = new SandboxPool(cfg.SANDBOX_POOL.split(",").map((s) => s.trim()).filter(Boolean));
 
-  const plan = await planSwarm(objective, await memoryDigest(8_000));
-  log.info({ subtasks: plan.subtasks.map((s) => `${s.id}:${s.role}${s.depends_on.length ? `←${s.depends_on.join(",")}` : ""}`) }, "plan");
+  /*
+   * Tout ce qui suit est sous try : sans lui, un plan invalide ou un blocage
+   * d'ordonnancement laissait l'épisode « swarm » au statut running pour
+   * toujours et ne laissait AUCUN passage — exactement l'oubli qu'on corrige.
+   * L'erreur d'origine est relancée telle quelle.
+   */
+  try {
+    const plan = await planSwarm(objective, await memoryDigest(8_000), previousSwarm);
+    log.info({ subtasks: plan.subtasks.map((s) => `${s.id}:${s.role}${s.depends_on.length ? `←${s.depends_on.join(",")}` : ""}`) }, "plan");
 
-  const results = new Map<string, SubtaskResult>();
-  let spent = 0;
-  let running = 0;
-  const pending = new Set(plan.subtasks.map((s) => s.id));
+    const results = new Map<string, SubtaskResult>();
+    let spent = 0;
+    let running = 0;
+    const pending = new Set(plan.subtasks.map((s) => s.id));
 
-  const runOne = async (s: Subtask): Promise<void> => {
-    const role = ROLES[s.role];
-    const deps = s.depends_on.map((d) => results.get(d)!);
-    if (deps.some((d) => d.status !== "ok")) {
-      results.set(s.id, { id: s.id, role: s.role, status: "skipped", output: `dépendance en échec: ${deps.filter((d) => d.status !== "ok").map((d) => d.id).join(", ")}`, usage: zeroUsage(), seconds: 0 });
-      return;
-    }
-    if (spent >= budget) {
-      results.set(s.id, { id: s.id, role: s.role, status: "skipped", output: "budget d'essaim épuisé", usage: zeroUsage(), seconds: 0 });
-      return;
-    }
-    const container = role.needsSandbox ? await pool.acquire() : undefined;
-    const t0 = Date.now();
-    const sub = await openEpisode(`swarm:${s.role}`, { parent: episodeId, subtask: s.id, container });
-    try {
-      const depContext = deps.length
-        ? `\n\n<resultats_dependances>\n${deps.map((d) => `## ${d.id} (${d.role})\n${d.output}`).join("\n\n")}\n</resultats_dependances>`
-        : "";
-      const task = `Date: ${new Date().toISOString()}\nSous-tâche ${s.id} — ${s.title}\n\n${s.spec}\n\nCritères d'acceptation:\n${s.acceptance.map((a) => `- ${a}`).join("\n")}${depContext}\n\n<memoire>\n${await memoryDigest(6_000, agentMemoryRoot(s.role))}\n</memoire>`;
-      const res = await runAgent({
-        ...resolveModel(role.model),
-        system: role.system,
-        task,
-        tools: roleTools(role, container),
-        effort: role.effort,
-        maxIterations: role.maxIterations,
-        budgetUsd: Math.min(role.budgetUsd, budget - spent),
-        signal: opts.signal,
-      });
-      spent += res.usage.usd;
-      const status = res.stopReason === "budget_exceeded" ? "budget" : res.stopReason === "refusal" ? "failed" : "ok";
-      const output = extractResult(res.finalText);
-      results.set(s.id, { id: s.id, role: s.role, status, output, usage: res.usage, seconds: (Date.now() - t0) / 1000 });
-      await closeEpisode(sub, status, output, res.usage);
-      log.info({ id: s.id, role: s.role, status, usd: res.usage.usd.toFixed(3), s: Math.round((Date.now() - t0) / 1000) }, "sous-tâche terminée");
-    } catch (err) {
-      results.set(s.id, { id: s.id, role: s.role, status: "failed", output: String(err).slice(0, 2000), usage: zeroUsage(), seconds: (Date.now() - t0) / 1000 });
-      await closeEpisode(sub, "failed", "", zeroUsage(), String(err));
-      log.error({ id: s.id, err: String(err) }, "sous-tâche en erreur");
-    } finally {
-      pool.release(container);
-    }
-  };
-
-  // Boucle d'ordonnancement : lance tout ce qui est prêt, jusqu'à la concurrence max.
-  await new Promise<void>((resolve, reject) => {
-    const tick = () => {
-      if (pending.size === 0 && running === 0) return resolve();
-      const ready = plan.subtasks.filter((s) => pending.has(s.id) && s.depends_on.every((d) => results.has(d)));
-      for (const s of ready) {
-        if (running >= cfg.SWARM_CONCURRENCY) break;
-        pending.delete(s.id);
-        running += 1;
-        runOne(s)
-          .catch(reject)
-          .finally(() => {
-            running -= 1;
-            tick();
-          });
+    const runOne = async (s: Subtask): Promise<void> => {
+      const role = ROLES[s.role];
+      const deps = s.depends_on.map((d) => results.get(d)!);
+      if (deps.some((d) => d.status !== "ok")) {
+        results.set(s.id, { id: s.id, role: s.role, status: "skipped", output: `dépendance en échec: ${deps.filter((d) => d.status !== "ok").map((d) => d.id).join(", ")}`, usage: zeroUsage(), seconds: 0 });
+        return;
       }
-      if (running === 0 && pending.size > 0) reject(new Error("blocage d'ordonnancement (dépendances non satisfiables)"));
+      if (spent >= budget) {
+        results.set(s.id, { id: s.id, role: s.role, status: "skipped", output: "budget d'essaim épuisé", usage: zeroUsage(), seconds: 0 });
+        return;
+      }
+      const container = role.needsSandbox ? await pool.acquire() : undefined;
+      const t0 = Date.now();
+      // La mémoire est celle du RÔLE, pas de la sous-tâche : un `coder` retrouve ce
+      // que le dernier `coder` a appris, même si le plan du jour l'appelle autrement.
+      const previousRole = await readMissionMemory(roleKey(s.role));
+      const sub = await openEpisode(roleKey(s.role), { parent: episodeId, subtask: s.id, container });
+      try {
+        const depContext = deps.length
+          ? `\n\n<resultats_dependances>\n${deps.map((d) => `## ${d.id} (${d.role})\n${d.output}`).join("\n\n")}\n</resultats_dependances>`
+          : "";
+        const task = `Date: ${new Date().toISOString()}\nSous-tâche ${s.id} — ${s.title}\n\n${s.spec}\n\nCritères d'acceptation:\n${s.acceptance.map((a) => `- ${a}`).join("\n")}${depContext}\n\n${previousRole}<memoire>\n${await memoryDigest(6_000, agentMemoryRoot(s.role))}\n</memoire>`;
+        const res = await runAgent({
+          ...resolveModel(role.model),
+          system: role.system,
+          task,
+          tools: roleTools(role, container),
+          effort: role.effort,
+          maxIterations: role.maxIterations,
+          budgetUsd: Math.min(role.budgetUsd, budget - spent),
+          signal: opts.signal,
+        });
+        spent += res.usage.usd;
+        const status = res.stopReason === "budget_exceeded" ? "budget" : res.stopReason === "refusal" ? "failed" : "ok";
+        const output = extractResult(res.finalText);
+        results.set(s.id, { id: s.id, role: s.role, status, output, usage: res.usage, seconds: (Date.now() - t0) / 1000 });
+        await closeEpisode(sub, status, output, res.usage);
+        await writeMissionMemory(roleKey(s.role), {
+          status,
+          summary: output,
+          usd: res.usage.usd,
+          ...(status === "ok" ? {} : { error: `stop=${res.stopReason}` }),
+        });
+        log.info({ id: s.id, role: s.role, status, usd: res.usage.usd.toFixed(3), s: Math.round((Date.now() - t0) / 1000) }, "sous-tâche terminée");
+      } catch (err) {
+        results.set(s.id, { id: s.id, role: s.role, status: "failed", output: String(err).slice(0, 2000), usage: zeroUsage(), seconds: (Date.now() - t0) / 1000 });
+        // Même discipline que dans runMission : la clôture ne doit pas remplacer l'erreur d'origine.
+        await closeEpisode(sub, "failed", "", zeroUsage(), String(err)).catch((closeErr) =>
+          log.warn({ id: s.id, err: String(closeErr) }, "sous-épisode non clôturé"),
+        );
+        await writeMissionMemory(roleKey(s.role), { status: "failed", summary: "", usd: 0, error: String(err) });
+        log.error({ id: s.id, err: String(err) }, "sous-tâche en erreur");
+      } finally {
+        pool.release(container);
+      }
     };
-    tick();
-  });
 
-  // Fusion.
-  const ordered = topoOrder(plan.subtasks).map((id) => results.get(id)!);
-  const merged = await mergeResults(plan, ordered);
-  const totalUsd = ordered.reduce((a, r) => a + r.usage.usd, 0) + 0.05;
-  const wallSeconds = (Date.now() - started) / 1000;
-  await closeEpisode(episodeId, ordered.every((r) => r.status === "ok") ? "ok" : "failed", merged, {
-    ...zeroUsage(),
-    usd: totalUsd,
-    iterations: ordered.reduce((a, r) => a + r.usage.iterations, 0),
-  });
-  log.info({ usd: totalUsd.toFixed(2), wall: Math.round(wallSeconds), sequentialEstimate: Math.round(ordered.reduce((a, r) => a + r.seconds, 0)) }, "essaim terminé");
-  return { plan, results: ordered, merged, totalUsd, wallSeconds };
+    // Boucle d'ordonnancement : lance tout ce qui est prêt, jusqu'à la concurrence max.
+    await new Promise<void>((resolve, reject) => {
+      const tick = () => {
+        if (pending.size === 0 && running === 0) return resolve();
+        const ready = plan.subtasks.filter((s) => pending.has(s.id) && s.depends_on.every((d) => results.has(d)));
+        for (const s of ready) {
+          if (running >= cfg.SWARM_CONCURRENCY) break;
+          pending.delete(s.id);
+          running += 1;
+          runOne(s)
+            .catch(reject)
+            .finally(() => {
+              running -= 1;
+              tick();
+            });
+        }
+        if (running === 0 && pending.size > 0) reject(new Error("blocage d'ordonnancement (dépendances non satisfiables)"));
+      };
+      tick();
+    });
+
+    // Fusion.
+    const ordered = topoOrder(plan.subtasks).map((id) => results.get(id)!);
+    const merged = await mergeResults(plan, ordered);
+    const totalUsd = ordered.reduce((a, r) => a + r.usage.usd, 0) + 0.05;
+    const wallSeconds = (Date.now() - started) / 1000;
+    const allOk = ordered.every((r) => r.status === "ok");
+    await closeEpisode(episodeId, allOk ? "ok" : "failed", merged, {
+      ...zeroUsage(),
+      usd: totalUsd,
+      iterations: ordered.reduce((a, r) => a + r.usage.iterations, 0),
+    });
+    await writeMissionMemory(SWARM_KEY, {
+      status: allOk ? "ok" : "failed",
+      summary: merged,
+      usd: totalUsd,
+      ...(allOk
+        ? {}
+        : { error: ordered.filter((r) => r.status !== "ok").map((r) => `${r.id}(${r.role}):${r.status}`).join(", ") }),
+    });
+    log.info({ usd: totalUsd.toFixed(2), wall: Math.round(wallSeconds), sequentialEstimate: Math.round(ordered.reduce((a, r) => a + r.seconds, 0)) }, "essaim terminé");
+    return { plan, results: ordered, merged, totalUsd, wallSeconds };
+  } catch (err) {
+    // Même discipline que runMission : la clôture ne remplace pas l'erreur d'origine.
+    await closeEpisode(episodeId, "failed", "", zeroUsage(), String(err)).catch((closeErr) =>
+      log.warn({ err: String(closeErr) }, "épisode d'essaim non clôturé"),
+    );
+    await writeMissionMemory(SWARM_KEY, { status: "failed", summary: "", usd: 0, error: String(err) });
+    log.error({ err: String(err) }, "essaim en erreur");
+    throw err;
+  }
 }
 
 async function mergeResults(plan: SwarmPlan, results: SubtaskResult[]): Promise<string> {
-  const cfg = config();
   const { value } = await structured<{ deliverable: string; human_actions: string[]; open_issues: string[] }>({
     ...resolveModel("planner"),
     system: "Tu es le coordinateur. Fusionne les résultats des sous-agents en UN livrable cohérent, résous les contradictions en citant la source la plus fiable, liste les actions qui exigent une validation humaine et les points ouverts. Français, dense.",
