@@ -93,7 +93,26 @@ services:
     networks: [internal]
 
 volumes:
+  # ⚠️  NE JAMAIS lancer `docker compose down -v` ni `docker volume prune`.
+  #     Les deux détruisent ce volume sans confirmation, donc TOUTE la mémoire
+  #     de l'agent : memory_files, episodes, facts, tasks, spend, reports.
+  #     Pour arrêter la stack : `docker compose down` (sans -v).
+  #     En cas de perte : bash deploy/restore.sh backups/manzi-AAAA-MM-JJ.sql.gz
+  #
+  # `name:` fige le nom réel du volume. Sans lui, Compose le préfixe par le nom
+  # du projet — c'est-à-dire le nom du RÉPERTOIRE — et renommer ou déplacer le
+  # dossier suffit à faire repartir Postgres sur un volume vide, en silence.
+  #
+  # La valeur ci-dessous est celle que le volume porte déjà avec l'installation
+  # par défaut : install.sh ligne 17 pose DIR="${MANZI_DIR:-$HOME/manzi-junior}"
+  # et aucun COMPOSE_PROJECT_NAME n'est défini nulle part dans le dépôt.
+  #
+  # À VÉRIFIER SUR LA MACHINE AVANT LE PREMIER `up` :
+  #     docker volume ls | grep pgdata
+  # Si le nom affiché diffère (répertoire d'installation personnalisé), reporter
+  # CE nom-là ici. Sinon Docker créera un volume neuf et vide.
   pgdata:
+    name: manzi-junior_pgdata
   work:
 
 networks:
