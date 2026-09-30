@@ -15,5 +15,10 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // Les tests tournent sous tsx (`npm test`) et n'ont rien à faire dans dist/ :
+  // `npm start` lance dist/index.js, pas une suite de tests. Contrepartie
+  // assumée : ce fichier n'est pas couvert par `npm run typecheck` — c'est
+  // `npm test` qui le fait échouer, et c'est là qu'on le regarde.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }
