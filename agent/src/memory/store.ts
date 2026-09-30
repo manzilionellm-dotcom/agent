@@ -2,6 +2,7 @@ import { betaMemoryTool, type MemoryToolHandlers } from "@anthropic-ai/sdk/helpe
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { db } from "./db.js";
+import { logger } from "../logger.js";
 import type { Usage } from "../llm.js";
 
 /* ------------------------------------------------------------------------ */
@@ -257,7 +258,123 @@ export async function markReportDelivered(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------------ */
-/* 5. Auto-évaluation : l'agent relit son propre journal                     */
+/* 5. Mémoire de mission : ce que l'exécution précédente a laissé            */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Racine délibérément SÉPARÉE de /memories.
+ *
+ * `memoryDigest()` interroge `path = prefix OR path LIKE prefix || '/%'` avec
+ * pour préfixe /memories : un passage rangé sous /runs n'y entre donc jamais.
+ * C'est le but. /memories est ce que l'agent a CHOISI de retenir ; /runs est un
+ * état machine que l'orchestrateur réinjecte au bon endroit. Les confondre
+ * ferait grossir chaque prompt de toutes les exécutions passées, et le digest
+ * cesserait d'être une mémoire pour devenir un journal.
+ *
+ * Conséquence pratique : l'outil memory du modèle refuse tout chemin hors de
+ * /memories (`makeNormalize`), donc le modèle ne peut ni lire ni écraser ces
+ * fichiers. Seul le code ci-dessous y touche.
+ */
+const RUNS_ROOT = "/runs";
+
+/** Un nom de mission peut contenir « : » (swarm:coder) — on le garde, il fait partie de la clé. */
+export function missionRunPath(mission: string): string {
+  return `${RUNS_ROOT}/${mission.replace(/[^a-z0-9_:.-]/gi, "_")}/last_run.md`;
+}
+
+export type MissionOutcome = {
+  status: "ok" | "failed" | "budget" | "skipped";
+  summary: string;
+  usd?: number;
+  error?: string;
+};
+
+/**
+ * Le passage précédent, prêt à coller dans un prompt.
+ *
+ * Renvoie le bloc <passage_precedent> complet, ou "" s'il n'y a rien à dire —
+ * de sorte qu'un appelant puisse toujours écrire `${await readMissionMemory(m)}`
+ * sans laisser une balise vide dans le prompt. Le nom de la balise vit ici, en
+ * un seul endroit, plutôt que recopié sur les cinq sites d'appel.
+ *
+ * Ne lève jamais : une base injoignable doit coûter la mémoire, pas la mission.
+ */
+export async function readMissionMemory(mission: string): Promise<string> {
+  try {
+    const [file, eps] = await Promise.all([
+      db().query<{ content: string; updated_at: string }>(
+        `SELECT content, updated_at FROM memory_files WHERE path = $1`,
+        [missionRunPath(mission)],
+      ),
+      db().query<{ status: string; summary: string | null; usd: string; error: string | null; finished_at: string }>(
+        `SELECT status, summary, usd, error, finished_at
+           FROM episodes
+          WHERE mission = $1 AND finished_at IS NOT NULL
+          ORDER BY finished_at DESC
+          LIMIT 3`,
+        [mission],
+      ),
+    ]);
+
+    const parts: string[] = [];
+    const last = file.rows[0];
+    if (last?.content) {
+      parts.push(`## Dernière exécution (${new Date(last.updated_at).toISOString()})\n${last.content}`);
+    }
+    if (eps.rowCount) {
+      const lines = eps.rows.map(
+        (e) =>
+          `- ${new Date(e.finished_at).toISOString().slice(0, 16).replace("T", " ")} — ${e.status} — ${Number(e.usd).toFixed(2)} USD` +
+          `${e.summary ? `\n  ${e.summary.replace(/\s+/g, " ").slice(0, 400)}` : ""}` +
+          `${e.error ? `\n  ERREUR: ${e.error.replace(/\s+/g, " ").slice(0, 200)}` : ""}`,
+      );
+      parts.push(`## 3 derniers épisodes terminés\n${lines.join("\n")}`);
+    }
+    if (parts.length === 0) return "";
+    return `<passage_precedent>\n${parts.join("\n\n")}\n</passage_precedent>\n\n`;
+  } catch (err) {
+    logger.warn({ mission, err: String(err) }, "mémoire de mission illisible — on continue sans");
+    return "";
+  }
+}
+
+/**
+ * Écrit le passage de cette exécution, en REMPLAÇANT le précédent.
+ *
+ * `ON CONFLICT (path) DO UPDATE` sur la clé primaire : un chemin = une ligne,
+ * donc pas de doublon qui s'accumulerait au fil des nuits. On garde la dernière
+ * exécution seulement ; l'historique long vit dans `episodes`, qui est le
+ * journal immuable.
+ *
+ * Ne lève jamais, et pour la même raison que la lecture : c'est la dernière
+ * chose que fait une mission, souvent dans un `catch`. Une écriture qui échoue
+ * ne doit pas transformer une mission réussie en mission perdue, ni masquer
+ * l'erreur d'origine.
+ */
+export async function writeMissionMemory(mission: string, outcome: MissionOutcome): Promise<void> {
+  const body = [
+    `- statut: ${outcome.status}`,
+    outcome.usd !== undefined ? `- coût: ${outcome.usd.toFixed(2)} USD` : undefined,
+    outcome.error ? `- erreur: ${outcome.error.replace(/\s+/g, " ").slice(0, 1_000)}` : undefined,
+    "",
+    outcome.summary.trim() ? outcome.summary.trim().slice(0, 8_000) : "(aucun compte rendu)",
+  ]
+    .filter((l) => l !== undefined)
+    .join("\n");
+
+  try {
+    await db().query(
+      `INSERT INTO memory_files(path, content) VALUES ($1, $2)
+       ON CONFLICT (path) DO UPDATE SET content = EXCLUDED.content, updated_at = now()`,
+      [missionRunPath(mission), body],
+    );
+  } catch (err) {
+    logger.warn({ mission, err: String(err) }, "mémoire de mission non écrite — on continue");
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* 6. Auto-évaluation : l'agent relit son propre journal                     */
 /* ------------------------------------------------------------------------ */
 
 export const episodesTool = betaZodTool({
