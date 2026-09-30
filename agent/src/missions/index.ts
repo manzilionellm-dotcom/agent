@@ -1,7 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
-import { runAgent, resolveModel, structured, type Effort, type Usage } from "../llm.js";
+import { runAgent, resolveModel, structured, type AgentTool, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { OPERATOR_SYSTEM } from "../prompts.js";
 import {
@@ -37,7 +36,7 @@ export type Mission = {
   maxIterations: number;
   mcpServers: string[];
   allowIrreversible?: boolean;
-  tools: (BetaRunnableTool<any> | Anthropic.Beta.Messages.BetaToolUnion)[];
+  tools: AgentTool[];
   task: (ctx: MissionContext) => string;
 };
 

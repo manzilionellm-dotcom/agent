@@ -53,6 +53,25 @@ export function priceOf(model: string, u: Anthropic.Beta.Messages.BetaUsage): nu
   );
 }
 
+/**
+ * Un outil exécutable dont on ne connaît pas — et n'a pas besoin de connaître —
+ * le type d'entrée.
+ *
+ * `BetaRunnableTool<Input>` place `Input` en position de PARAMÈTRE
+ * (`run: (args: Input) => …`). Sous `strictFunctionTypes`, cette position est
+ * contravariante : un `BetaRunnableTool<{query: string}>` n'est donc PAS
+ * assignable à `BetaRunnableTool<unknown>`. `unknown` ne peut pas remplacer
+ * `any` ici, et un tableau hétérogène d'outils n'a pas d'autre écriture.
+ *
+ * Le `any` est donc réel mais confiné : une seule occurrence, documentée, au
+ * lieu de douze disséminées. Les sites d'appel nomment l'intention.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyRunnableTool = BetaRunnableTool<any>;
+
+/** Ce qu'un agent peut recevoir : outils clients exécutables + outils serveur. */
+export type AgentTool = AnyRunnableTool | Anthropic.Beta.Messages.BetaToolUnion;
+
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type Provider = "anthropic" | "openai_compat";
@@ -87,7 +106,7 @@ export type AgentRunOptions = {
   system: string;
   /** Instruction de mission (tout le cahier des charges en une fois). */
   task: string;
-  tools: (BetaRunnableTool<any> | Anthropic.Beta.Messages.BetaToolUnion)[];
+  tools: AgentTool[];
   effort?: Effort;
   maxIterations?: number;
   budgetUsd?: number;

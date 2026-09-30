@@ -1,9 +1,8 @@
 import OpenAI from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import type { AgentRunOptions, AgentRunResult, Usage } from "../llm.js";
+import type { AgentRunOptions, AgentRunResult, AgentTool, AnyRunnableTool, Usage } from "../llm.js";
 
 /**
  * Boucle agentique pour tout endpoint compatible OpenAI (DeepSeek, Moonshot/Kimi,
@@ -17,7 +16,7 @@ import type { AgentRunOptions, AgentRunResult, Usage } from "../llm.js";
  *     vos propres missions : comptez les tours en erreur par mission).
  */
 
-type ToolLike = BetaRunnableTool<any> | Anthropic.Beta.Messages.BetaToolUnion;
+type ToolLike = AgentTool;
 
 const MEMORY_SCHEMA = {
   type: "object",
@@ -36,11 +35,11 @@ const MEMORY_SCHEMA = {
   required: ["command"],
 };
 
-function isRunnable(t: ToolLike): t is BetaRunnableTool<any> {
-  return typeof (t as BetaRunnableTool<any>).run === "function";
+function isRunnable(t: ToolLike): t is AnyRunnableTool {
+  return typeof (t as AnyRunnableTool).run === "function";
 }
 
-function toOpenAITool(t: BetaRunnableTool<any>): OpenAI.Chat.Completions.ChatCompletionTool {
+function toOpenAITool(t: AnyRunnableTool): OpenAI.Chat.Completions.ChatCompletionTool {
   const anyT = t as unknown as { name: string; description?: string; input_schema?: Record<string, unknown>; type?: string };
   const parameters = anyT.type === "memory_20250818" ? MEMORY_SCHEMA : (anyT.input_schema ?? { type: "object", properties: {} });
   return {

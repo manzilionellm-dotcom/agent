@@ -3,9 +3,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mcpTools, type MCPClientLike, type MCPCallToolResultLike } from "@anthropic-ai/sdk/helpers/beta/mcp";
-import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { z } from "zod";
 import { config } from "../config.js";
+import type { AnyRunnableTool } from "../llm.js";
 import { logger } from "../logger.js";
 import { untrusted } from "../safety.js";
 import { requestApproval } from "../channels/approvals.js";
@@ -39,7 +39,7 @@ const FileSchema = z.object({ servers: z.record(z.string(), ServerSchema) });
 
 export type McpServerConfig = z.infer<typeof ServerSchema>;
 
-type Connected = { name: string; client: Client; cfg: McpServerConfig; tools: BetaRunnableTool<any>[] };
+type Connected = { name: string; client: Client; cfg: McpServerConfig; tools: AnyRunnableTool[] };
 
 const connected = new Map<string, Connected>();
 
@@ -75,7 +75,7 @@ export async function connectMcpServers(): Promise<void> {
         const allowed = cfg.allow.length ? tools.filter((t) => cfg.allow.includes(t.name)) : tools;
         // Le SDK MCP type callTool en union (résultat legacy `toolResult`) ; on adapte à l'interface attendue.
         const like: MCPClientLike = { callTool: (p) => client.callTool(p) as Promise<MCPCallToolResultLike> };
-        const runnable: BetaRunnableTool<any>[] = mcpTools(allowed, like).map((t) => {
+        const runnable: AnyRunnableTool[] = mcpTools(allowed, like).map((t) => {
           const original = t.run;
           const full = `${name}__${t.name}`;
           // Les contenus lus via MCP (e-mails, issues, pages) sont des données externes.
@@ -100,8 +100,8 @@ export async function connectMcpServers(): Promise<void> {
  * Retourne les outils MCP demandés, avec gating des outils irréversibles.
  * `servers` : liste des serveurs à exposer pour cette mission.
  */
-export function mcpToolsFor(servers: string[], opts: { allowIrreversible?: boolean } = {}): BetaRunnableTool<any>[] {
-  const out: BetaRunnableTool<any>[] = [];
+export function mcpToolsFor(servers: string[], opts: { allowIrreversible?: boolean } = {}): AnyRunnableTool[] {
+  const out: AnyRunnableTool[] = [];
   for (const s of servers) {
     const c = connected.get(s);
     if (!c) continue;
@@ -117,7 +117,7 @@ export function mcpToolsFor(servers: string[], opts: { allowIrreversible?: boole
             if (decision === "denied") return "REFUSÉ par l'opérateur. N'insiste pas ; note-le dans le rapport.";
             return `EN ATTENTE / DRY-RUN (outil irréversible, pas d'approbation reçue). Appel prévu: ${t.name}(${JSON.stringify(args).slice(0, 1500)}). Décris cette action dans le rapport pour validation humaine.`;
           },
-        }) as BetaRunnableTool<any>;
+        }) as AnyRunnableTool;
         out.push(gated);
       } else {
         out.push(t);

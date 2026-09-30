@@ -1,7 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { config } from "../config.js";
-import type { Effort } from "../llm.js";
+import type { AgentTool, Effort } from "../llm.js";
 import { makeMemoryTool, agentMemoryRoot, rememberFact, recallFacts, taskTool } from "../memory/store.js";
 import { mcpToolsFor } from "../mcp/registry.js";
 import { makeSandboxTools } from "../tools/sandbox.js";
@@ -52,7 +51,7 @@ export type Role = {
   mcpServers: string[];
   allowIrreversible?: boolean;
   system: string;
-  tools: (container?: string) => (BetaRunnableTool<any> | Anthropic.Beta.Messages.BetaToolUnion)[];
+  tools: (container?: string) => AgentTool[];
 };
 
 const claudeWeb = () => (config().LLM_PROVIDER === "anthropic" ? [webSearchTool, webFetchTool] : []);
