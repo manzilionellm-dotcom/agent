@@ -1,4 +1,3 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import type { AgentTool, Effort } from "../llm.js";
 import { makeMemoryTool, agentMemoryRoot, rememberFact, recallFacts, taskTool } from "../memory/store.js";

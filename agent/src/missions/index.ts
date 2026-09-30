@@ -1,4 +1,3 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import { runAgent, resolveModel, structured, type AgentTool, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
