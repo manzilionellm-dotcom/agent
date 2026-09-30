@@ -4,7 +4,18 @@ import { config } from "../config.js";
 import { runAgent, resolveModel, structured, type Effort, type Usage } from "../llm.js";
 import { logger } from "../logger.js";
 import { OPERATOR_SYSTEM } from "../prompts.js";
-import { memoryTool, memoryDigest, rememberFact, recallFacts, taskTool, episodesTool, openEpisode, closeEpisode } from "../memory/store.js";
+import {
+  memoryTool,
+  memoryDigest,
+  rememberFact,
+  recallFacts,
+  taskTool,
+  episodesTool,
+  openEpisode,
+  closeEpisode,
+  readMissionMemory,
+  writeMissionMemory,
+} from "../memory/store.js";
 import { mcpToolsFor } from "../mcp/registry.js";
 import { bashTool, readFileTool, writeFileTool } from "../tools/sandbox.js";
 import { coderTool } from "../tools/coder.js";
@@ -224,9 +235,12 @@ export function findMission(name: string): Mission | undefined {
 export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}): Promise<{ text: string; usage: Usage; status: "ok" | "failed" | "budget" }> {
   const cfg = config();
   const target = resolveModel(m.model);
+  // AVANT openEpisode : l'épisode de cette exécution ne doit pas se relire lui-même.
+  // (readMissionMemory ne retient que les épisodes terminés, mais l'ordre reste le bon.)
+  const previous = await readMissionMemory(m.name);
   const episodeId = await openEpisode(m.name, { model: target.model, provider: target.provider, effort: m.effort });
   const log = logger.child({ mission: m.name, episode: episodeId });
-  log.info("mission démarrée");
+  log.info({ resumed: previous.length > 0 }, "mission démarrée");
 
   const ctx: MissionContext = {
     now: new Date(),
@@ -236,7 +250,7 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
   };
   const playbook = await memoryDigest(6_000, `/memories/playbooks/${m.name}.md`);
   const global = await memoryDigest(3_000, "/memories/playbooks/_global.md");
-  const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${m.task(ctx)}\n\n<memoire>\n${ctx.memory}\n</memoire>`;
+  const task = `<playbook>\n${global}\n${playbook}\n</playbook>\n\n${m.task(ctx)}\n\n${previous}<memoire>\n${ctx.memory}\n</memoire>`;
   const tools = [...m.tools, ...mcpToolsFor(m.mcpServers, { allowIrreversible: m.allowIrreversible })];
 
   const timeout = AbortSignal.timeout(cfg.MISSION_TIMEOUT_MIN * 60_000);
@@ -269,11 +283,30 @@ export async function runMission(m: Mission, opts: { signal?: AbortSignal } = {}
       }
     }
     await closeEpisode(episodeId, status, text, res.usage, status === "ok" ? undefined : `stop=${res.stopReason}`);
+    // Succès, échec ET budget dépassé : les trois laissent une trace pour demain.
+    // Un budget dépassé sans trace, c'est la mission qui recommence du début
+    // chaque nuit et redépense le même budget au même endroit.
+    await writeMissionMemory(m.name, {
+      status,
+      summary: text,
+      usd: res.usage.usd,
+      ...(status === "ok" ? {} : { error: `stop=${res.stopReason}` }),
+    });
     log.info({ status, usd: res.usage.usd.toFixed(3), iterations: res.usage.iterations, stop: res.stopReason }, "mission terminée");
     return { text, usage: res.usage, status };
   } catch (err) {
     const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, usd: 0, iterations: 0 };
-    await closeEpisode(episodeId, "failed", "", usage, String(err));
+    /*
+     * closeEpisode écrit en base — et la panne de base est justement l'une des
+     * causes qui nous amènent ici. S'il lève, son erreur remplacerait `err` et
+     * on perdrait la cause réelle de l'échec de la mission. On le confine donc :
+     * ce qu'on doit remonter, c'est l'erreur d'origine.
+     * (writeMissionMemory, lui, avale déjà ses propres erreurs.)
+     */
+    await closeEpisode(episodeId, "failed", "", usage, String(err)).catch((closeErr) =>
+      log.warn({ err: String(closeErr) }, "épisode non clôturé — l'erreur d'origine est conservée"),
+    );
+    await writeMissionMemory(m.name, { status: "failed", summary: "", usd: 0, error: String(err) });
     log.error({ err: String(err) }, "mission en erreur");
     return { text: "", usage, status: "failed" };
   }
@@ -288,14 +321,24 @@ async function verify(m: Mission, finalText: string): Promise<Verdict> {
     effort: "low",
     system:
       "Tu es un vérificateur sévère mais juste. On te donne le cahier des charges d'une mission et le compte rendu final de l'agent. Note de 0 à 10 : le critère de succès est-il atteint avec des PREUVES concrètes (URL, sortie de commande, chiffres sourcés, fichiers nommés) ? Un compte rendu qui affirme sans preuve, contredit le cahier des charges, ou contient des chiffres non sourcés est pénalisé. pass = score ≥ 6. Liste les problèmes en une ligne chacun (max 6). Ne juge pas le style.",
+    /*
+     * `structured` attend l'enveloppe { type: "json_schema", schema }, pas le
+     * schéma nu — d'où TS2322 ici. additionalProperties: false comme dans les
+     * autres schémas du dépôt (report.ts, coordinator.ts) : sans lui, un champ
+     * en trop passe la validation et JSON.parse rend un objet qu'on croit typé.
+     */
     schema: {
-      type: "object",
-      properties: {
-        score: { type: "number" },
-        pass: { type: "boolean" },
-        issues: { type: "array", items: { type: "string" } },
+      type: "json_schema",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["score", "pass", "issues"],
+        properties: {
+          score: { type: "number" },
+          pass: { type: "boolean" },
+          issues: { type: "array", items: { type: "string" } },
+        },
       },
-      required: ["score", "pass", "issues"],
     },
     prompt: `Cahier des charges:\n${spec}\n\nCompte rendu final:\n${finalText}`,
   });
