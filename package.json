@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "aio:llms": "node scripts/aio-llms.mjs",
+    "aio:check": "node scripts/aio-check.mjs"
   },
   "dependencies": {
     "next": "16.2.4",
