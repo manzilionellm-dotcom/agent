@@ -27,6 +27,12 @@ export default function InstallationPage() {
           {howto.name}
         </h1>
         <p>{howto.description}</p>
+        {howto.lead ? (
+          <>
+            <h2 className="text-xl font-semibold text-black dark:text-zinc-50">{howto.lead.q}</h2>
+            <p>{howto.lead.a}</p>
+          </>
+        ) : null}
         <ol className="flex flex-col gap-8">
           {howto.steps.map((step, index) => (
             <li id={step.id} key={step.id}>

@@ -28,6 +28,7 @@ type AioConfig = {
   howto: {
     name: string;
     description: string;
+    lead?: { q: string; a: string } | null;
     steps: { id: string; name: string; text: string }[];
   } | null;
   i18n: Record<

@@ -36,6 +36,10 @@
   "howto": {
     "name": "Installer Manzi Junior en profil éco",
     "description": "Installation du profil éco reprise de docs/GETTING-STARTED.md : fork GitHub, clés API, VPS, install.sh avec l’option eco, puis contrôle healthz. Le README documente aussi l’installation par curl du script install.sh avec l’option eco.",
+    "lead": {
+      "q": "D’où viennent les étapes de cette installation ?",
+      "a": "Ces étapes reprennent le document GETTING STARTED : fork GitHub, jeton limité au dépôt, clés d’API, VPS Debian illustré par un Hetzner CX22, puis le script install avec l’option eco. Le README ajoute la variante curl du même script. Le premier build y dure 5 à 10 minutes, et le contrôle se fait sur le port 8787."
+    },
     "steps": [
       {
         "id": "fork",

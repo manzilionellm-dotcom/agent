@@ -10,6 +10,13 @@ const wc = (s) => [
   (s.match(/[\p{L}\p{N}€$%]+(?:['’][\p{L}]+)?/gu) || []).length,
 ];
 
+if (c.howto?.lead) {
+  const [lw1, lw2] = wc(c.howto.lead.a);
+  if (!/\?\s*$/.test(c.howto.lead.q) || lw1 < 40 || lw1 > 60 || lw2 < 40 || lw2 > 60) {
+    console.error(`Tutoriel : citation hors 40–60 mots (${lw1}/${lw2}) : ${c.howto.lead.q}`);
+    process.exit(1);
+  }
+}
 if (!Array.isArray(i.faq) || i.faq.length !== 10) {
   console.error(`llms.txt : ${i?.faq?.length ?? 0} questions, 10 attendues (ne pas inventer le reste)`);
   process.exit(1);
