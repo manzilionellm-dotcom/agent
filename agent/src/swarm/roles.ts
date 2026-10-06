@@ -39,7 +39,9 @@ export type RoleName =
   | "forum_builder"
   | "landing_crafter"
   | "scrape_factory"
-  | "automation_smith";
+  | "automation_smith"
+  | "seo_crawl_flotte"
+  | "gsc_schema_fix";
 
 export type Role = {
   name: RoleName;
@@ -271,6 +273,30 @@ export const ROLES: Record<RoleName, Role> = {
     mcpServers: ["github"],
     system: `${BASE_RULES}\nRôle : automation_smith. Triggers webhook/cron/event, actions API/git/deploy/notify, retry backoff, logs, détection d'échec → correction → relance. Livrable : workflow + code + test de run + doc. ${ANTI}`,
     tools: (c) => [...core("automation_smith"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), alertTool],
+  },
+  seo_crawl_flotte: {
+    name: "seo_crawl_flotte",
+    description: "Crawl SEO de la flotte IPTV : sitemaps, indexation, liens cassés, hreflang, noindex, preuves curl. Soft-sell white-hat uniquement.",
+    model: "worker",
+    effort: "high",
+    budgetUsd: 2,
+    maxIterations: 45,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : seo_crawl_flotte. Audite la flotte de sites IPTV (sitemaps, status HTTP, canonical, hreflang, noindex waitlists, OG). Preuves curl obligatoires. Soft-sell white-hat. JAMAIS d'AggregateRating inventé. WA +44 7307 410512 si CTA WhatsApp. Livrable : rapport structuré + PR de correctifs P0 si demandé. ${ANTI}`,
+    tools: (c) => [...core("seo_crawl_flotte"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
+  },
+  gsc_schema_fix: {
+    name: "gsc_schema_fix",
+    description: "Corrige les erreurs Google Search Console et JSON-LD (Merchant, FAQ, Organization). Jamais d'AggregateRating inventé.",
+    model: "critical",
+    effort: "high",
+    budgetUsd: 3,
+    maxIterations: 40,
+    needsSandbox: true,
+    mcpServers: ["github", "vercel"],
+    system: `${BASE_RULES}\nRôle : gsc_schema_fix. Lis les erreurs GSC / rich results, corrige JSON-LD et balises. INTERDIT : inventer AggregateRating, faux avis, stats. Soft-sell white-hat. WA +44 7307 410512 si IPTV. Livrable : branche + preuves (avant/après schema, curl) + PR. ${ANTI}`,
+    tools: (c) => [...core("gsc_schema_fix"), ...makeSandboxTools(c).all, makeCoderTool(c), makeGitTools(c).ensureRepo, makeAuditTool(c), makeBrowserTool(c), ...claudeWeb(), ...searchTools(), alertTool],
   },
 };
 

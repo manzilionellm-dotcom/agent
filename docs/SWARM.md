@@ -1,4 +1,4 @@
-# Essaim — 15 sous-agents parallèles
+# Essaim — 19 sous-agents parallèles
 
 ## Lancer
 
@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 2. **Vagues parallèles** — tout ce dont les dépendances sont satisfaites part en même temps, jusqu'à `SWARM_CONCURRENCY` (10). Un rôle qui touche du code prend un conteneur dans `SANDBOX_POOL` (attend s'il n'y en a plus). Chaque sous-agent : son prompt système, sa mémoire (`/memories/agents/<rôle>`), ses outils, son budget ; il reçoit les `<result>` de ses dépendances, rien d'autre.
 3. **Fusion** — le coordinateur relit tous les résultats, tranche les contradictions, produit le livrable, la liste des actions humaines et les points ouverts. Tout est journalisé (`episodes` : `swarm` + `swarm:<rôle>`), avec durée mur et estimation séquentielle pour mesurer le gain.
 
-## Les 15 rôles
+## Les 19 rôles
 
 | Rôle | Modèle | Sandbox | Outils clés | Livrable |
 |---|---|---|---|---|
@@ -38,10 +38,14 @@ curl -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" http://127.0.0.1:8787/swarm/
 | inbox | Sonnet 5 | non | gmail, gcal (dry-run) | tri, brouillons, créneaux |
 | analyst | Opus 5 | oui | sandbox (python/node), site_audit | chiffres calculés par code, méthode visible |
 | grok_bot_mirror | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | réflexe Grok Bot natif : intuition, vitesse <30s, mémoire vive du profil Lionel, anti-jobs, coordination Versel/GitHub, rapports au Premier Ministre |
+| fleet_builder | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | coordonne forum_builder, landing_crafter, scrape_factory, automation_smith |
+| self_healer | Opus 5 (critical) | oui | sandbox, coder, git, audit, alert | auto-réparation : détecte, corrige, relance |
 | forum_builder | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | communauté complète : DB, API, UI, modération, déploiement Vercel |
 | landing_crafter | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | landing de conversion : copy, tracking, Lighthouse > 90, preview Vercel |
 | scrape_factory | Sonnet 5 | oui | sandbox, coder, git, scrape, browser, search, alert | module de scraping réutilisable : parser, scheduler, stockage, alertes |
 | automation_smith | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | workflow self-healing : triggers, actions, retry, logs, doc |
+| seo_crawl_flotte | Sonnet 5 (worker) | oui | sandbox, coder, git, audit, browser, search, alert | crawl SEO flotte IPTV : sitemaps, HTTP, hreflang, noindex, preuves curl |
+| gsc_schema_fix | Opus 5 (critical) | oui | sandbox, coder, git, audit, browser, search, alert | correctifs GSC / JSON-LD (Merchant, FAQ, Organization) ; jamais d'AggregateRating inventé |
 
 Ajouter un rôle : une entrée dans `swarm/roles.ts` (description, modèle, effort, budget, outils, prompt). Le planificateur le voit immédiatement.
 
@@ -60,6 +64,13 @@ Quatre rôles spécialisés dans la création de produits web à la demande :
 - **automation_smith** : crée des workflows self-healing (triggers webhook/cron/event, actions API/git/deploy/notify, conditions, retry backoff, logs, détection d'échec → correction → relance). Livrable : workflow JSON/YAML + code + test de run + doc.
 
 Ces rôles peuvent aussi créer d'autres bots spécialisés (forums, communautés, landings, scrapers, automatisations) à la demande de Lionel, coordonnés par grok_bot_mirror.
+
+## SEO flotte
+
+Deux rôles + une mission pour la santé SEO de la flotte IPTV :
+- **seo_crawl_flotte** (worker/Sonnet, sandbox oui) : crawl sitemaps, status HTTP, canonical, hreflang, noindex waitlists, OG ; preuves curl obligatoires ; soft-sell white-hat ; jamais d'AggregateRating inventé ; WA +44 7307 410512 / https://wa.me/447307410512 si CTA WhatsApp.
+- **gsc_schema_fix** (critical/Opus, sandbox oui) : corrige erreurs Google Search Console et JSON-LD (Merchant, FAQ, Organization) ; INTERDIT d'inventer AggregateRating / faux avis ; livrable branche + preuves avant/après + PR.
+- **Mission `fleet_health`** (cron `0 1 * * *`) : santé quotidienne de la flotte — curl par site, rapport `/memories/flotte/health-<date>.md`, PR pour P0, **issue GitHub par régression**, CTA WhatsApp `https://wa.me/447307410512`.
 
 ## Ce que « diviser le temps par dix » veut dire vraiment
 

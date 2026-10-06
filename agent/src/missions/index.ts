@@ -217,6 +217,28 @@ Critère de succès : rapport listant bots synchronisés + écarts + PR ouverte 
 Règles : français, concis, ne rien casser, compatible mode manuel et profil éco. Si tu bloques sur une clé ou un outil, dis-le dans le rapport.`,
 });
 
+MISSIONS.push({
+  name: "fleet_health",
+  cron: "0 1 * * *",
+  model: "worker",
+  effort: "high",
+  budgetUsd: 2,
+  maxIterations: 40,
+  mcpServers: ["github", "vercel"],
+  tools: [...CORE_TOOLS, ...SANDBOX_TOOLS, ...CLAUDE_WEB(), ...searchTools(), auditTool, browserTool, ensureRepoTool, coderTool, alertTool],
+  task: ({ now, repo }) => `Date: ${now.toISOString()}. Dépôt: ${repo}.
+Mission FLEET_HEALTH — santé quotidienne de la flotte IPTV (seo_crawl_flotte + gsc_schema_fix).
+1. Liste les sites de la flotte dans /memories/flotte/sites.md (crée-le si absent avec les domaines connus).
+2. Pour chaque site : HTTP status (curl), sitemap, robots, canonical, noindex waitlist, OG de base. Preuves curl obligatoires.
+3. Signale erreurs schema / rich results évidentes (JSON-LD cassé, AggregateRating inventé INTERDIT — si trouvé, ouvre correctif pour le retirer).
+4. Écris /memories/flotte/health-${now.toISOString().slice(0, 10)}.md : P0/P1/P2, URL, preuve, action proposée.
+5. Si P0 (site down, noindex sur page $$, schema dangereux) : branche fix/fleet-health-<date>, correctif minimal, typecheck, commit. Ne merge pas. Ouvre une PR.
+6. Pour chaque régression trouvée (P0/P1) : ouvre une issue GitHub (titre clair + preuve curl + URL) en plus de la PR P0.
+7. Soft-sell white-hat, 0 M3U, WA +44 7307 410512 (https://wa.me/447307410512) si CTA WhatsApp.
+Critère de succès : rapport health du jour avec preuves curl pour chaque site, P0 traités ou PR ouverte, issues ouvertes pour chaque régression.`,
+});
+
+
 export function findMission(name: string): Mission | undefined {
   return MISSIONS.find((m) => m.name === name);
 }
