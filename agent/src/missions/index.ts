@@ -311,15 +311,15 @@ async function verify(m: Mission, finalText: string): Promise<Verdict> {
     system:
       "Tu es un vérificateur sévère mais juste. On te donne le cahier des charges d'une mission et le compte rendu final de l'agent. Note de 0 à 10 : le critère de succès est-il atteint avec des PREUVES concrètes (URL, sortie de commande, chiffres sourcés, fichiers nommés) ? Un compte rendu qui affirme sans preuve, contredit le cahier des charges, ou contient des chiffres non sourcés est pénalisé. pass = score ≥ 6. Liste les problèmes en une ligne chacun (max 6). Ne juge pas le style.",
     schema: {
-      type: "object",
-      properties: {
-        score: { type: "number" },
-        pass: { type: "boolean" },
-        issues: { type: "array", items: { type: "string" } },
+      type: "json_schema",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["score", "pass", "issues"],
+        properties: { score: { type: "integer", minimum: 0, maximum: 10 }, pass: { type: "boolean" }, issues: { type: "array", items: { type: "string" }, maxItems: 6 } },
       },
-      required: ["score", "pass", "issues"],
     },
-    prompt: `Cahier des charges:\n${spec}\n\nCompte rendu final:\n${finalText}`,
+    prompt: `<cahier_des_charges>\n${spec.slice(0, 6000)}\n</cahier_des_charges>\n\n<compte_rendu>\n${finalText.slice(0, 12_000) || "(vide)"}\n</compte_rendu>`,
   });
   return { ...value, usd };
 }
