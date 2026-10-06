@@ -1,0 +1,119 @@
+{
+  "_doc": "Source unique AIO (llms.txt, FAQPage, HowTo, Citation Hooks). Ne mettre ici que des faits lisibles dans le README, les docs ou le code. Toute valeur inconnue = null et listée dans aio.todo.md.",
+  "siteName": "Manzi Junior",
+  "siteUrl": "https://agent-sandy-delta.vercel.app",
+  "defaultLang": "fr",
+  "currency": null,
+  "contact": null,
+  "plans": null,
+  "videoTranscript": null,
+  "services": [
+    "Agent autonome open source (licence MIT), auto-hébergé sur le VPS de l’opérateur. Rien ne s’exécute sans un ordre explicite (WhatsApp, Jarvis ou API) ou un planning que l’opérateur a lui-même ordonné. Aucune règle cachée, aucune mise à jour silencieuse : chaque ligne se lit, se modifie, se forke et se déploie.",
+    "Veille web et X, surveillance des concurrents avec alertes, comparateur IPTV, article SEO/GEO quotidien, code vers GitHub puis Vercel, Gmail et agenda, audit de site (README).",
+    "Essaim de 15 sous-agents, dont grok_bot_mirror et la flotte de création (forum_builder, landing_crafter, scrape_factory, automation_smith). Profil --swarm : 5 sandboxes, VPS 16 Go. Profil éco : concurrence 3, un seul sandbox (docs/ECO.md).",
+    "Couche vocale Jarvis (Whisper, Claude, Kokoro, voix féminine française), mémoire Postgres, rapport chaque matin, auto-révision nocturne des playbooks.",
+    "Site public : https://agent-sandy-delta.vercel.app/ . Tutoriel d’installation repris de docs/GETTING-STARTED.md : /installation"
+  ],
+  "pricingNotes": [
+    "Aucun abonnement n’est vendu sur ce site. Licence MIT. plans = null, currency = null.",
+    "Profil éco documenté (README et docs/ECO.md), coûts de fournisseurs tiers et non un prix de vente : environ 25 à 45 euros par mois.",
+    "Détail docs/ECO.md : Hetzner CX22 environ 4 euros ; DeepSeek 2 à 6 euros ; Claude Sonnet 5 15 à 30 euros ; Tavily 0 euro (1 000 crédits par mois) à 30 dollars si dépassement ; WhatsApp 0 à 2 euros ; Cloudflare Tunnel, GitHub et Vercel Hobby 0 euro.",
+    "Profil complet documenté (docs/HOSTING.md), ordre de grandeur et non une offre du site : 120 à 250 dollars par mois d’usage LLM ; VPS base 4 à 8 euros ; essaim 15 à 25 euros ; Vercel Pro 20 dollars si ce palier est choisi."
+  ],
+  "tech": {
+    "maxResolution": null,
+    "bitrate": null,
+    "devices": null,
+    "activationMinutes": null,
+    "channelCount": null
+  },
+  "techNotes": [
+    "Site Next.js 16, React 19, Tailwind CSS 4 (README). package.json : next 16.2.4, react 19.2.4.",
+    "Orchestrateur Node, mémoire Postgres, contrôle de santé documenté sur http://127.0.0.1:8787/healthz.",
+    "Profil éco : VPS 4 Go. Profil swarm : VPS 16 Go et 5 sandboxes. Jarvis : machine locale 8 Go (docs/HOSTING.md).",
+    "Voix : Whisper small, Kokoro ff_siwis, Python 3.10 à 3.12 (docs/JARVIS.md). Latence documentée environ 3 s sur CPU et 1,5 s sur GPU pour une phrase de 5 s."
+  ],
+  "howto": {
+    "name": "Installer Manzi Junior en profil éco",
+    "description": "Installation du profil éco reprise de docs/GETTING-STARTED.md : fork GitHub, clés API, VPS, install.sh avec l’option eco, puis contrôle healthz. Le README documente aussi l’installation par curl du script install.sh avec l’option eco.",
+    "lead": {
+      "q": "D’où viennent les étapes de cette installation ?",
+      "a": "Ces étapes reprennent le document GETTING STARTED : fork GitHub, jeton limité au dépôt, clés d’API, VPS Debian illustré par un Hetzner CX22, puis le script install avec l’option eco. Le README ajoute la variante curl du même script. Le premier build y dure 5 à 10 minutes, et le contrôle se fait sur le port 8787."
+    },
+    "steps": [
+      {
+        "id": "fork",
+        "name": "Forker le dépôt",
+        "text": "Sur GitHub, forker manzilionellm-dotcom/agent, ou créer un dépôt vide et y pousser ce code. Créer ensuite un jeton fine-grained limité à ce dépôt, avec Contents RW, Pull requests RW, Issues RW et Metadata R. Ce jeton est GITHUB_TOKEN. Le document précise qu’aucun secret n’est versionné."
+      },
+      {
+        "id": "cles",
+        "name": "Créer les clés",
+        "text": "Renseigner les clés listées dans docs/GETTING-STARTED.md : OPENAI_COMPAT_API_KEY chez DeepSeek (usage indiqué environ 2 à 6 euros par mois), ANTHROPIC_API_KEY (environ 15 à 30 euros par mois), TAVILY_API_KEY (1 000 crédits gratuits par mois), les valeurs WhatsApp du document ECO, CLOUDFLARE_TUNNEL_TOKEN, GITHUB_TOKEN, et VERCEL_TOKEN en option (palier Hobby gratuit)."
+      },
+      {
+        "id": "serveur",
+        "name": "Préparer le VPS",
+        "text": "L’exemple du document est un Hetzner Cloud CX22, Debian 12, 4 Go, environ 4 euros. En root, le script deploy/vps-bootstrap.sh est lancé avec l’utilisateur manzi et l’URL du fork. Il installe Docker, crée cet utilisateur, ne laisse ouvert que SSH, active les mises à jour de sécurité, clone le fork dans /home/manzi/manzi-junior et installe le service systemd."
+      },
+      {
+        "id": "lancer",
+        "name": "Lancer le profil éco",
+        "text": "Avec l’utilisateur manzi, ouvrir le fichier .env pour y coller les clés, le profil éco étant déjà prévu, puis lancer install.sh avec l’option eco. Le script construit, démarre, et s’arrête en listant les clés manquantes. Le premier build est indiqué de 5 à 10 minutes."
+      },
+      {
+        "id": "verifier",
+        "name": "Vérifier que le bot répond",
+        "text": "Contrôler la santé sur http://127.0.0.1:8787/healthz. Le document propose ensuite un essai de veille par docker compose, d’un coût indiqué d’environ 0,20 dollar, puis d’écrire salut sur WhatsApp au numéro du bot."
+      }
+    ]
+  },
+  "i18n": {
+    "fr": {
+      "description": "Manzi Junior est un agent autonome open source (MIT), auto-hébergé : veille web et X, comparateur IPTV, article SEO/GEO, code vers GitHub et Vercel, Gmail, audit, essaim de 15 sous-agents et voix Jarvis. Rien ne tourne sans un ordre explicite ou un planning ordonné.",
+      "productDescription": null,
+      "faq": [
+        {
+          "q": "Qu’est-ce que Manzi Junior ?",
+          "a": "Manzi Junior est un agent autonome open source sous licence MIT, auto-hébergé sur votre VPS. Rien ne tourne sans un ordre explicite via WhatsApp, Jarvis ou l’API, ou sans un planning que vous avez ordonné. Le README dit qu’il n’y a aucune règle cachée ni mise à jour silencieuse. Chaque ligne se lit et se déploie chez vous."
+        },
+        {
+          "q": "Que fait Manzi Junior quand on lui donne un ordre ?",
+          "a": "Le README décrit la veille du web et de X, la surveillance des concurrents avec alertes, un comparateur IPTV et un article SEO ou GEO quotidien. Il cite aussi le code vers GitHub puis Vercel, Gmail et l’agenda, l’audit de site, un essaim de quinze sous-agents, la voix Jarvis, une mémoire Postgres et un rapport chaque matin."
+        },
+        {
+          "q": "Combien coûte le profil économique documenté ?",
+          "a": "Le README indique pour l’option eco un VPS de 4 Go, DeepSeek, Claude, WhatsApp, et 25 à 45 euros par mois. Le document ECO détaille Hetzner CX22 environ 4 euros, DeepSeek 2 à 6 euros, Claude Sonnet 5 de 15 à 30 euros, Tavily jusqu’à 30 dollars hors quota gratuit, et WhatsApp de 0 à 2 euros."
+        },
+        {
+          "q": "Ce site vend-il un abonnement Manzi Junior ?",
+          "a": "Le dépôt est sous licence MIT et le README le présente comme open source et auto-hébergé. Aucun prix de vente n’est affiché sur la page publiée. Les montants cités dans les documents ECO et HOSTING sont des coûts de VPS et d’API réglés à des tiers, pas un abonnement vendu ici. Ni débit ni résolution n’y figurent."
+        },
+        {
+          "q": "Comment installe-t-on Manzi Junior sur un VPS ?",
+          "a": "GETTING STARTED part d’un fork GitHub, d’un jeton limité au dépôt et des clés d’API, puis d’un VPS Debian. Le script documenté est vps bootstrap, puis le script install avec l’option eco. Le README donne aussi curl vers ce script. Le premier build y dure 5 à 10 minutes, avant le contrôle healthz sur le port 8787."
+        },
+        {
+          "q": "Que signifie le mode d’autonomie manual ?",
+          "a": "Le mode manual est le défaut décrit dans GETTING STARTED et dans le document ECO. Rien ne s’exécute sans votre ordre ou sans un planning que vous avez ordonné, visible via schedules ou montre le planning sur WhatsApp. Les playbooks ne changent que si vous demandez une réflexion, et le code seulement par une pull request."
+        },
+        {
+          "q": "Quels canaux servent à donner des ordres ?",
+          "a": "Le README indique WhatsApp comme canal principal, par exemple lancer la veille, planifier le rapport à 7 h 30, montrer le planning ou lancer un essaim. GETTING STARTED ajoute Jarvis et la route POST chat. Pour le navigateur, votre Chrome passe par un tunnel SSH, sinon le Chromium persistant du sandbox est utilisé."
+        },
+        {
+          "q": "Comment fonctionne la voix Jarvis ?",
+          "a": "Le document JARVIS présente la voix ainsi, Whisper en entrée, Claude et MCP au milieu, Kokoro en voix féminine française en sortie, mémoire SQLite locale. L’installation documentée est le script jarvis sur la machine qui a le micro, en Python 3.10 à 3.12. Les tâches longues partent sur le VPS par un tunnel SSH vers le port 8787."
+        },
+        {
+          "q": "Qu’est-ce que l’essaim de sous-agents ?",
+          "a": "Le document SWARM décrit quinze rôles. Un plan découpe l’objectif en sous-tâches, des vagues parallèles les exécutent, puis une fusion produit le livrable. Le README oppose l’option swarm, cinq sandboxes sur un VPS de 16 Go, au profil eco, limité selon ECO à trois tâches simultanées et à un seul sandbox."
+        },
+        {
+          "q": "Quelles caractéristiques techniques sont réellement écrites ?",
+          "a": "Le site ne publie ni débit, ni résolution, ni nombre de chaînes. Le README indique Next 16, React 19 et Tailwind CSS 4, un orchestrateur Node, une mémoire Postgres et un contrôle de santé sur le port 8787. HOSTING indique 4 Go de RAM pour la base, 16 Go pour l’essaim, et 8 Go sur la machine locale pour Jarvis."
+        }
+      ]
+    }
+  }
+}
